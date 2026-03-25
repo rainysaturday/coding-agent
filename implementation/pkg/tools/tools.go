@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -320,6 +321,12 @@ func (t *Tools) ReplaceLinesTool() Tool {
 	}
 }
 
+// ToolCall represents a tool call
+type ToolCall struct {
+	Name string
+	Args map[string]interface{}
+}
+
 // ToolError represents an error from a tool
 type ToolError struct {
 	ToolName string
@@ -328,6 +335,127 @@ type ToolError struct {
 
 func (e *ToolError) Error() string {
 	return "tool " + e.ToolName + " error: " + e.Message
+}
+
+// ExtractToolCalls extracts tool calls from user message
+func ExtractToolCalls(msg string) []ToolCall {
+	var calls []ToolCall
+	
+	// Pattern: [tool:tool_name(param1="val1", param2="val2")]
+	start := strings.Index(msg, "[tool:")
+	for start != -1 {
+		end := strings.Index(msg[start:], "]")
+		if end == -1 {
+			break
+		}
+		end += start
+		callStr := msg[start+6 : end] // Skip "[tool:"
+		
+		// Extract tool name
+		colonIdx := strings.Index(callStr, "(")
+		if colonIdx == -1 {
+			start = strings.Index(msg[end+1:], "[tool:")
+			if start != -1 {
+				start += end + 1
+			}
+			continue
+		}
+		
+		toolName := callStr[:colonIdx]
+		paramsStr := callStr[colonIdx+1 : len(callStr)-1] // Skip "(" and ")"
+		
+		// Parse parameters
+		args := parseParameters(paramsStr)
+		
+		calls = append(calls, ToolCall{
+			Name: toolName,
+			Args: args,
+		})
+		
+		// Continue searching
+		start = strings.Index(msg[end+1:], "[tool:")
+		if start != -1 {
+			start += end + 1
+		}
+	}
+	
+	return calls
+}
+
+// parseParameters parses the parameter string into a map
+func parseParameters(paramsStr string) map[string]interface{} {
+	args := make(map[string]interface{})
+	
+	// Simple parameter parsing
+	// Format: param1="value1", param2=value2, param3="line1\nline2"
+	current := ""
+	inQuote := false
+	quoteChar := byte(0)
+	
+	for i := 0; i < len(paramsStr); i++ {
+		c := paramsStr[i]
+		
+		if !inQuote {
+			if c == '"' || c == '\'' {
+				inQuote = true
+				quoteChar = c
+				continue
+			}
+			if c == ',' {
+				// Save parameter
+				saveParam(current, args)
+				current = ""
+				continue
+			}
+		} else {
+			if c == quoteChar && (i == 0 || paramsStr[i-1] != '\\') {
+				inQuote = false
+				quoteChar = 0
+				continue
+			}
+		}
+		
+		current += string(c)
+	}
+	
+	// Save last parameter
+	if current != "" {
+		saveParam(current, args)
+	}
+	
+	return args
+}
+
+// saveParam saves a parsed parameter to the args map
+func saveParam(paramStr string, args map[string]interface{}) {
+	paramStr = strings.TrimSpace(paramStr)
+	if paramStr == "" {
+		return
+	}
+	
+	eqIdx := strings.Index(paramStr, "=")
+	if eqIdx == -1 {
+		return
+	}
+	
+	key := strings.TrimSpace(paramStr[:eqIdx])
+	value := strings.TrimSpace(paramStr[eqIdx+1:])
+	
+	// Remove quotes if present
+	if (value[0] == '"' && value[len(value)-1] == '"') ||
+		(value[0] == '\'' && value[len(value)-1] == '\'') {
+		value = value[1 : len(value)-1]
+		// Unescape newlines
+		value = strings.ReplaceAll(value, "\\n", "\n")
+	}
+	
+	// Try to parse as integer
+	if intValue, err := strconv.Atoi(value); err == nil {
+		args[key] = intValue
+		return
+	}
+	
+	args[key] = value
 }
 
 // Helper function for min

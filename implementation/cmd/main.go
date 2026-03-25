@@ -47,7 +47,7 @@ func main() {
 
 	// Initialize components
 	statsTracker := stats.NewStats()
-	ctxManager := agentcontext.NewContext("You are a helpful coding assistant. You can use tools to read, write, and execute code.", cfg.ContextSize)
+	ctxManager := agentcontext.NewContext(cfg.ContextSize)
 	toolsManager := tools.NewTools()
 	inferenceClient := inference.NewClient(cfg)
 
@@ -126,7 +126,7 @@ func processUserInput(userMsg string, ctxManager *agentcontext.Context, toolsMan
 	messages := ctxManager.GetMessages()
 
 	// Check for tool calls in the user message
-	toolCalls := extractToolCalls(userMsg)
+	toolCalls := tools.ExtractToolCalls(userMsg)
 	if len(toolCalls) > 0 {
 		return processToolCalls(toolCalls, ctxManager, toolsManager, statsTracker, inferenceClient)
 	}
@@ -160,7 +160,7 @@ func processUserInput(userMsg string, ctxManager *agentcontext.Context, toolsMan
 }
 
 // processToolCalls handles tool call messages
-func processToolCalls(toolCalls []toolCall, ctxManager *agentcontext.Context, toolsManager *tools.Tools, statsTracker *stats.Stats, inferenceClient *inference.Client) (string, error) {
+func processToolCalls(toolCalls []tools.ToolCall, ctxManager *agentcontext.Context, toolsManager *tools.Tools, statsTracker *stats.Stats, inferenceClient *inference.Client) (string, error) {
 	var results []string
 
 	for _, tc := range toolCalls {
@@ -193,13 +193,4 @@ type toolCall struct {
 	Args map[string]interface{}
 }
 
-// extractToolCalls extracts tool calls from user message
-func extractToolCalls(msg string) []toolCall {
-	// Simple pattern matching for tool calls
-	// Format: [tool:tool_name(arg1, arg2, ...)]
-	var calls []toolCall
-	
-	// This is a simplified implementation
-	// A proper implementation would use a more robust parser
-	return calls
-}
+

@@ -12,11 +12,20 @@ A minimal coding agent harness written in Go with a basic TUI and support for va
 - **Streaming Inference**: Real-time token display with configurable timeout (default: 2 hours)
 - **Supported Tools**:
   - `bash`: Execute shell commands
+    - Format: `[tool:bash(command="ls -la")]`
   - `read_file`: Read entire file contents
+    - Format: `[tool:read_file(path="/path/to/file.txt")]`
   - `write_file`: Write content to files
+    - Format: `[tool:write_file(path="/path/to/file.txt", content="Hello")]`
   - `read_lines`: Read specific line ranges
+    - Format: `[tool:read_lines(path="/path/to/file.txt", start=1, end=10)]`
   - `insert_lines`: Insert lines at specific positions
+    - Format: `[tool:insert_lines(path="/path/to/file.txt", line=5, lines="new line")]`
   - `replace_lines`: Replace line ranges
+    - Format: `[tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines="new content")]`
+
+- **Tool Calling Format**: Standardized `[tool:tool_name(param="value")]` format
+- **System Prompt**: Complete tool list and format always prefixed to context
 
 ## Installation
 
