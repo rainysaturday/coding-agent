@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -335,6 +336,28 @@ type ToolError struct {
 
 func (e *ToolError) Error() string {
 	return "tool " + e.ToolName + " error: " + e.Message
+}
+
+// FormatToolResult formats a tool result as a user message
+func FormatToolResult(toolName string, result map[string]interface{}, err error) string {
+	var sb strings.Builder
+	
+	sb.WriteString(fmt.Sprintf("Tool '%s' executed:", toolName))
+	
+	if err != nil {
+		sb.WriteString(fmt.Sprintf(" FAILED: %v\n", err))
+	} else {
+		sb.WriteString(" SUCCESS\n")
+		
+		// Format the result as JSON-like output
+		sb.WriteString("{\n")
+		for k, v := range result {
+			sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+		}
+		sb.WriteString("}\n")
+	}
+	
+	return sb.String()
 }
 
 // ExtractToolCalls extracts tool calls from user message

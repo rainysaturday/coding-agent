@@ -159,30 +159,35 @@ func processUserInput(userMsg string, ctxManager *agentcontext.Context, toolsMan
 	return response, nil
 }
 
-// processToolCalls handles tool call messages
+// processToolCalls handles tool call messages and adds results to context
 func processToolCalls(toolCalls []tools.ToolCall, ctxManager *agentcontext.Context, toolsManager *tools.Tools, statsTracker *stats.Stats, inferenceClient *inference.Client) (string, error) {
 	var results []string
+	var formattedResults []string
 
 	for _, tc := range toolCalls {
 		result, err := toolsManager.CallTool(tc.Name, tc.Args)
 		if err != nil {
 			statsTracker.RecordFailedToolCall()
+			formattedResults = append(formattedResults, tools.FormatToolResult(tc.Name, nil, err))
 			results = append(results, fmt.Sprintf("Tool '%s' failed: %v", tc.Name, err))
 		} else {
 			statsTracker.RecordToolCall()
+			formattedResults = append(formattedResults, tools.FormatToolResult(tc.Name, result, nil))
 			results = append(results, fmt.Sprintf("Tool '%s' result: %v", tc.Name, result))
 		}
 	}
 
-	// Add tool results to context and get response
-	toolResultMsg := "Tool results:\n" + strings.Join(results, "\n")
+	// Add tool results to context as user message so AI can see and iterate
+	toolResultMsg := "Tool results:\n" + strings.Join(formattedResults, "\n")
 	ctxManager.AddUserMessage(toolResultMsg)
 
+	// AI can now see the results and iterate further
 	resp, err := inferenceClient.Chat(context.Background(), ctxManager.GetMessages(), ctxManager.GetContextSize())
 	if err != nil {
 		return "", err
 	}
 
+	// Add AI's response to context for next iteration
 	ctxManager.AddAssistantMessage(resp.Choices[0].Message.Content)
 	return resp.Choices[0].Message.Content, nil
 }
