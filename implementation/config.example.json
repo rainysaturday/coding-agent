@@ -1,0 +1,11 @@
+{
+  "inference_endpoint": "http://localhost:8080/v1",
+  "api_key": "not-needed",
+  "model": "llama-cpp",
+  "context_size": 128000,
+  "initial_token_timeout": 7200,
+  "streaming_enabled": true,
+  "connection_timeout": 30,
+  "read_timeout": 300,
+  "max_iterations": 50
+}
