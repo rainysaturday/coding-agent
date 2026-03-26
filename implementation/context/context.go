@@ -18,6 +18,11 @@ type Context struct {
 	maxSize      int
 }
 
+// GetMaxSize returns the maximum context size
+func (c *Context) GetMaxSize() int {
+	return c.maxSize
+}
+
 // NewContext creates a new context with the given system prompt and max size
 func NewContext(systemPrompt string, maxSize int) *Context {
 	ctx := &Context{

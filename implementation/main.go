@@ -141,16 +141,21 @@ func main() {
 		select {
 		case <-sigChan:
 			fmt.Println("\nShutting down...")
-			tui.DisplayStats()
+			tui.DisplayStats(ctx)
 			return
 		default:
 		}
 
-		// Display prompt
+		// Display context info before prompt
+		tui.DisplayContextInfo(ctx)
 		tui.DisplayPrompt()
 
-		// Read input
-		input, err := tui.ReadInput("")
+		// Read input with history and cancellation support
+		input, canceled, err := tui.ReadInput("")
+		if canceled {
+			tui.AddOutput("Request cancelled")
+			continue
+		}
 		if err != nil {
 			if err.Error() == "EOF" {
 				fmt.Println("\nGoodbye!")
@@ -166,8 +171,11 @@ func main() {
 			return
 		}
 
+		// Add to history before processing
+		tui.AddToHistory(input)
+
 		// Process commands
-		if !tui.ProcessCommand(input) {
+		if !tui.ProcessCommand(input, ctx) {
 			continue
 		}
 
