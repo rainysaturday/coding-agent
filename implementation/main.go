@@ -246,12 +246,19 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 
 		// Execute tool calls
 		for _, tc := range toolCalls {
-			t.AddOutputf("Calling tool: %s", tc.Name)
+			// Display tool call with key parameters
+			keyParam := tools.GetRelevantParameter(tc.Name, tc.Params)
+			if keyParam != "" {
+				t.AddOutputf("Calling tool: %s (%s)", tc.Name, keyParam)
+			} else {
+				t.AddOutputf("Calling tool: %s", tc.Name)
+			}
 
 			tool, ok := registry.Get(tc.Name)
 			if !ok {
-				t.AddOutputf("Unknown tool: %s", tc.Name)
-				ctx.AddToolResult(tc.Name, false, "", fmt.Sprintf("unknown tool: %s", tc.Name))
+				errorMsg := fmt.Sprintf("unknown tool: %s", tc.Name)
+				t.AddOutputf("  \033[31mERROR: %s\033[0m", errorMsg)
+				ctx.AddToolResult(tc.Name, false, "", errorMsg)
 				stats.AddFailedToolCall()
 				continue
 			}
@@ -261,13 +268,19 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 
 			if !result.Success {
 				stats.AddFailedToolCall()
+				// Display error prominently
+				t.AddOutputf("  \033[31mTool '%s' failed: %s\033[0m", tc.Name, result.Error)
+			} else {
+				// Display success with formatted output
+				t.AddOutputf("  \033[32mTool '%s' executed successfully\033[0m", tc.Name)
+				// Truncate long output for display
+				displayOutput := tools.TruncateOutput(result.Output, 500)
+				if displayOutput != "" {
+					t.AddOutput("  " + displayOutput)
+				}
 			}
 
-			// Format and display result
-			formattedResult := tools.FormatToolResult(tc.Name, result)
-			t.AddOutput(formattedResult)
-
-			// Add result to context
+			// Add result to context (full output, not truncated)
 			ctx.AddToolResult(tc.Name, result.Success, result.Output, result.Error)
 		}
 

@@ -239,11 +239,72 @@ func ExtractToolCalls(text string) ([]*ToolCall, error) {
 	return calls, nil
 }
 
-// FormatToolResult formats a tool result for context
+// FormatToolResult formats a tool result for context (for LLM)
 func FormatToolResult(toolName string, result ToolResult) string {
 	if result.Success {
 		jsonData, _ := json.MarshalIndent(result, "", "  ")
 		return fmt.Sprintf("Tool '%s' executed successfully:\n%s", toolName, string(jsonData))
 	}
 	return fmt.Sprintf("Tool '%s' failed: %s", toolName, result.Error)
+}
+
+// GetRelevantParameter returns a brief parameter summary for TUI display
+func GetRelevantParameter(toolName string, params map[string]string) string {
+	switch toolName {
+	case "bash":
+		if cmd, ok := params["command"]; ok {
+			if len(cmd) > 40 {
+				return "command: \"" + cmd[:37] + "...\""
+			}
+			return "command: \"" + cmd + "\""
+		}
+	case "read_file", "write_file":
+		if path, ok := params["path"]; ok {
+			return "path: \"" + path + "\""
+		}
+	case "read_lines":
+		if path, ok := params["path"]; ok {
+			start, _ := params["start"]
+			end, _ := params["end"]
+			return fmt.Sprintf("path: \"%s\", lines: %s-%s", path, start, end)
+		}
+	case "insert_lines":
+		if path, ok := params["path"]; ok {
+			line, _ := params["line"]
+			return fmt.Sprintf("path: \"%s\", line: %s", path, line)
+		}
+	case "replace_lines":
+		if path, ok := params["path"]; ok {
+			start, _ := params["start"]
+			end, _ := params["end"]
+			return fmt.Sprintf("path: \"%s\", lines: %s-%s", path, start, end)
+		}
+	}
+	return ""
+}
+
+// TruncateOutput truncates output for TUI display with ellipsis indication
+func TruncateOutput(output string, maxLen int) string {
+	if output == "" {
+		return ""
+	}
+	
+	lines := strings.Split(output, "\n")
+	var result []string
+	totalLen := 0
+	
+	for _, line := range lines {
+		if totalLen+len(line) > maxLen {
+			remaining := maxLen - totalLen
+			if remaining > 10 {
+				result = append(result, line[:remaining-3]+"...")
+			}
+			result = append(result, fmt.Sprintf("[... truncated %d characters ...]", len(output)-totalLen))
+			break
+		}
+		result = append(result, line)
+		totalLen += len(line) + 1 // +1 for newline
+	}
+	
+	return strings.Join(result, "\n")
 }

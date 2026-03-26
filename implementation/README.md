@@ -6,6 +6,11 @@ A minimal coding agent harness written in Go with a basic TUI supporting an inpu
 
 - **Minimal TUI with input prompt**: Terminal user interface for user interaction
 - **Runtime statistics tracking**: Tracks tokens, tool calls, and performance metrics
+- **Tool feedback display**: Brief, relevant feedback for tool calls in TUI
+  - Tool name and key parameters shown before execution
+  - Success messages with truncated output for long results
+  - Error messages displayed prominently with color coding
+- **LLM error reporting**: Failed tool calls reported back to LLM with actionable error messages
 - **Basic tool support**: 
   - `bash`: Execute shell commands
   - `read_file`: Read file contents

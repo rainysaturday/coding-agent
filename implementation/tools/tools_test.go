@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -291,6 +293,106 @@ func TestToolRegistry_GetNonExistent(t *testing.T) {
 	_, ok := registry.Get("nonexistent")
 	if ok {
 		t.Error("Expected to not find 'nonexistent' tool")
+	}
+}
+
+func TestGetRelevantParameter_Bash(t *testing.T) {
+	params := map[string]string{"command": "ls -la /home/user/documents"}
+	result := GetRelevantParameter("bash", params)
+	expected := "command: \"ls -la /home/user/documents\""
+	if result != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, result)
+	}
+}
+
+func TestGetRelevantParameter_Bash_LongCommand(t *testing.T) {
+	longCmd := "this is a very long command that should be truncated for display purposes"
+	params := map[string]string{"command": longCmd}
+	result := GetRelevantParameter("bash", params)
+	
+	if !strings.Contains(result, "command:") {
+		t.Error("Expected result to contain 'command:'")
+	}
+	if !strings.Contains(result, "...\"") {
+		t.Error("Expected result to indicate truncation with '...'")
+	}
+}
+
+func TestGetRelevantParameter_ReadFile(t *testing.T) {
+	params := map[string]string{"path": "/path/to/file.txt"}
+	result := GetRelevantParameter("read_file", params)
+	expected := "path: \"/path/to/file.txt\""
+	if result != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, result)
+	}
+}
+
+func TestGetRelevantParameter_ReadLines(t *testing.T) {
+	params := map[string]string{"path": "/path/to/file.txt", "start": "1", "end": "10"}
+	result := GetRelevantParameter("read_lines", params)
+	expected := "path: \"/path/to/file.txt\", lines: 1-10"
+	if result != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, result)
+	}
+}
+
+func TestGetRelevantParameter_UnknownTool(t *testing.T) {
+	params := map[string]string{"unknown": "value"}
+	result := GetRelevantParameter("unknown_tool", params)
+	if result != "" {
+		t.Errorf("Expected empty result for unknown tool, got '%s'", result)
+	}
+}
+
+func TestGetRelevantParameter_MissingParam(t *testing.T) {
+	params := map[string]string{}
+	result := GetRelevantParameter("bash", params)
+	if result != "" {
+		t.Errorf("Expected empty result for missing param, got '%s'", result)
+	}
+}
+
+func TestTruncateOutput_Empty(t *testing.T) {
+	result := TruncateOutput("", 100)
+	if result != "" {
+		t.Errorf("Expected empty string, got '%s'", result)
+	}
+}
+
+func TestTruncateOutput_Short(t *testing.T) {
+	output := "short output"
+	result := TruncateOutput(output, 100)
+	if result != output {
+		t.Errorf("Expected '%s', got '%s'", output, result)
+	}
+}
+
+func TestTruncateOutput_Long(t *testing.T) {
+	output := "line1\nline2\nline3\nline4\nline5"
+	result := TruncateOutput(output, 15)
+	
+	if !strings.Contains(result, "line1") {
+		t.Error("Expected result to contain first line")
+	}
+	if !strings.Contains(result, "truncated") {
+		t.Error("Expected result to indicate truncation")
+	}
+}
+
+func TestTruncateOutput_Multiline(t *testing.T) {
+	lines := make([]string, 100)
+	for i := 0; i < 100; i++ {
+		lines[i] = fmt.Sprintf("line %d", i)
+	}
+	output := strings.Join(lines, "\n")
+	
+	result := TruncateOutput(output, 50)
+	
+	if !strings.Contains(result, "line 0") {
+		t.Error("Expected result to contain first line")
+	}
+	if !strings.Contains(result, "truncated") {
+		t.Error("Expected result to indicate truncation")
 	}
 }
 
