@@ -366,3 +366,91 @@ func TestReplaceLinesTool_Execute_ZeroStart(t *testing.T) {
 		t.Error("Expected failure for zero start")
 	}
 }
+
+func TestParseReplaceLines_RawMode(t *testing.T) {
+	input := `[tool:replace_lines(path="/tmp/test.txt", start=1, end=3, lines=<<<RAW>>>
+replacement A
+replacement B
+<<<END_RAW>>>)]`
+	
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+	
+	if call.Name != "replace_lines" {
+		t.Errorf("Expected 'replace_lines', got '%s'", call.Name)
+	}
+	if call.Params["path"] != "/tmp/test.txt" {
+		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
+	}
+	if call.Params["start"] != "1" {
+		t.Errorf("Expected start '1', got '%s'", call.Params["start"])
+	}
+	if call.Params["end"] != "3" {
+		t.Errorf("Expected end '3', got '%s'", call.Params["end"])
+	}
+	expected := "replacement A\nreplacement B"
+	if call.Params["lines"] != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, call.Params["lines"])
+	}
+}
+
+func TestReplaceLines_Tool_RawMode(t *testing.T) {
+	// Create test file
+	testFile := "/tmp/replace_test.txt"
+	initialContent := "line 1\nline 2\nline 3\nline 4\n"
+	
+	if err := os.WriteFile(testFile, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer os.Remove(testFile)
+	
+	// Parse raw mode tool call
+	input := `[tool:replace_lines(path="/tmp/replace_test.txt", start=2, end=3, lines=<<<RAW>>>
+replaced A
+replaced B
+<<<END_RAW>>>)]`
+	
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+	
+	// Execute
+	result := NewReplaceLinesTool().Execute(call.Params)
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	
+	// Verify
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	
+	expected := "line 1\nreplaced A\nreplaced B\nline 4\n"
+	if string(content) != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, string(content))
+	}
+}
+
+func TestFormatReplaceLines_RawMode(t *testing.T) {
+	params := map[string]string{
+		"path": "/tmp/test.txt",
+		"start": "1",
+		"end": "5",
+		"lines": "line1\nline2\nline3",
+	}
+	result := FormatToolCall("replace_lines", params)
+	
+	if !contains(result, "replace_lines") {
+		t.Error("Expected 'replace_lines' in result")
+	}
+	if !contains(result, RawStartMarker) {
+		t.Error("Expected raw mode marker")
+	}
+	if !contains(result, RawEndMarker) {
+		t.Error("Expected raw mode end marker")
+	}
+}

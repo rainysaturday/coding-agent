@@ -284,3 +284,87 @@ func TestInsertLinesTool_Execute_EmptyLines(t *testing.T) {
 		t.Errorf("Expected unchanged content '%s', got '%s'", initialContent, string(content))
 	}
 }
+
+func TestParseInsertLines_RawMode(t *testing.T) {
+	input := `[tool:insert_lines(path="/tmp/test.txt", line=5, lines=<<<RAW>>>
+new line 1
+new line 2
+<<<END_RAW>>>)]`
+	
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+	
+	if call.Name != "insert_lines" {
+		t.Errorf("Expected 'insert_lines', got '%s'", call.Name)
+	}
+	if call.Params["path"] != "/tmp/test.txt" {
+		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
+	}
+	if call.Params["line"] != "5" {
+		t.Errorf("Expected line '5', got '%s'", call.Params["line"])
+	}
+	expected := "new line 1\nnew line 2"
+	if call.Params["lines"] != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, call.Params["lines"])
+	}
+}
+
+func TestInsertLines_Tool_RawMode(t *testing.T) {
+	// Create test file
+	testFile := "/tmp/insert_test.txt"
+	initialContent := "line 1\nline 2\nline 3\n"
+	
+	if err := os.WriteFile(testFile, []byte(initialContent), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	defer os.Remove(testFile)
+	
+	// Parse raw mode tool call
+	input := `[tool:insert_lines(path="/tmp/insert_test.txt", line=2, lines=<<<RAW>>>
+inserted A
+inserted B
+<<<END_RAW>>>)]`
+	
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+	
+	// Execute
+	result := NewInsertLinesTool().Execute(call.Params)
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	
+	// Verify
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	
+	expected := "line 1\ninserted A\ninserted B\nline 2\nline 3\n"
+	if string(content) != expected {
+		t.Errorf("Expected:\n%q\nGot:\n%q", expected, string(content))
+	}
+}
+
+func TestFormatInsertLines_RawMode(t *testing.T) {
+	params := map[string]string{
+		"path": "/tmp/test.txt",
+		"line": "5",
+		"lines": "line1\nline2\nline3",
+	}
+	result := FormatToolCall("insert_lines", params)
+	
+	if !contains(result, "insert_lines") {
+		t.Error("Expected 'insert_lines' in result")
+	}
+	if !contains(result, RawStartMarker) {
+		t.Error("Expected raw mode marker")
+	}
+	if !contains(result, RawEndMarker) {
+		t.Error("Expected raw mode end marker")
+	}
+}
