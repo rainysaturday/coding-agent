@@ -4,7 +4,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting an inpu
 
 ## Features
 
-- **Minimal TUI with input prompt**: Terminal user interface for user interaction
+- **Minimal TUI with input prompt**: Terminal user interface for user interaction (no redundant input echo)
 - **Runtime statistics tracking**: Tracks tokens, tool calls, and performance metrics
 - **Tool feedback display**: Brief, relevant feedback for tool calls in TUI
   - Tool name and key parameters shown before execution

@@ -199,9 +199,9 @@ func main() {
 			continue
 		}
 
-		// Add user message to context
+		// Add user message to context (for LLM)
+		// Note: Not echoing user input to TUI - user can already see what they typed
 		ctx.AddUserMessage(input)
-		tui.AddOutputf("[User] %s", input)
 
 		// Process the conversation
 		if err := processConversation(ctx, client, toolRegistry, statsTracker, cfg.MaxIterations, tui); err != nil {
