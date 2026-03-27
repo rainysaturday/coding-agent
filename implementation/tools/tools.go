@@ -68,10 +68,12 @@ type ToolCall struct {
 
 // ParseToolCall parses a tool call string into a ToolCall struct
 // Format: [tool:tool_name(param_name="param_value", ...)]
+// Supports raw mode with <<<RAW>>> and <<<END_RAW>>> markers
 func ParseToolCall(input string) (*ToolCall, error) {
 	// Pattern to match tool calls
 	// [tool:tool_name(param_name="param_value", param_name2="param_value2")]
-	pattern := regexp.MustCompile(`\[tool:(\w+)\((.*)\)\]`)
+	// Use [\s\S]* to match newlines in raw mode
+	pattern := regexp.MustCompile(`\[tool:(\w+)\(([\s\S]*)\)\]`)
 	match := pattern.FindStringSubmatch(input)
 
 	if match == nil {
@@ -97,12 +99,23 @@ func ParseToolCall(input string) (*ToolCall, error) {
 	}, nil
 }
 
+// Raw mode markers
+const (
+	RawStartMarker = "<<<RAW>>>"
+	RawEndMarker   = "<<<END_RAW>>>"
+)
+
 // parseParams parses parameter string into a map
 func parseParams(paramsStr string, params map[string]string) error {
 	// Handle empty string
 	paramsStr = strings.TrimSpace(paramsStr)
 	if paramsStr == "" {
 		return nil
+	}
+
+	// Check for raw mode in the entire params string
+	if strings.Contains(paramsStr, RawStartMarker) {
+		return parseRawParams(paramsStr, params)
 	}
 
 	// Split by comma, but be careful with quoted strings
@@ -164,6 +177,133 @@ func parseParams(paramsStr string, params map[string]string) error {
 	return nil
 }
 
+// parseRawParams parses parameters with raw mode content
+// Format: key=<<<RAW>>>...content...<<<END_RAW>>>
+func parseRawParams(paramsStr string, params map[string]string) error {
+	// Split into segments by finding raw mode blocks and standard segments
+	remaining := paramsStr
+	
+	for len(remaining) > 0 {
+		remaining = strings.TrimSpace(remaining)
+		if remaining == "" {
+			break
+		}
+		
+		// Find the next raw start marker
+		rawStartIdx := strings.Index(remaining, RawStartMarker)
+		
+		if rawStartIdx == -1 {
+			// No more raw mode, parse remaining as standard params
+			// Split by comma and parse each
+			parts := splitParams(remaining)
+			for _, part := range parts {
+				if err := parseSingleParam(strings.TrimSpace(part), params); err != nil {
+					return err
+				}
+			}
+			break
+		}
+		
+		// Parse standard params before the raw marker
+		if rawStartIdx > 0 {
+			beforeRaw := remaining[:rawStartIdx]
+			beforeRaw = strings.TrimRight(beforeRaw, " \t,")
+			if beforeRaw != "" {
+				parts := splitParams(beforeRaw)
+				for _, part := range parts {
+					if err := parseSingleParam(strings.TrimSpace(part), params); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		
+		// Find the key for the raw parameter
+		beforeMarker := remaining[:rawStartIdx]
+		beforeMarker = strings.TrimRight(beforeMarker, " \t,")
+		
+		// Find the last comma to isolate this parameter
+		lastCommaIdx := strings.LastIndex(beforeMarker, ",")
+		var thisParam string
+		if lastCommaIdx == -1 {
+			thisParam = beforeMarker
+		} else {
+			thisParam = beforeMarker[lastCommaIdx+1:]
+		}
+		
+		// Extract key from "key=" 
+		equalsIdx := strings.Index(thisParam, "=")
+		key := ""
+		if equalsIdx != -1 {
+			key = strings.TrimSpace(thisParam[:equalsIdx])
+		}
+		
+		// Find the end marker
+		contentStart := rawStartIdx + len(RawStartMarker)
+		endMarkerIdx := strings.Index(remaining[contentStart:], RawEndMarker)
+		if endMarkerIdx == -1 {
+			return fmt.Errorf("raw mode missing end marker")
+		}
+		
+		contentEnd := contentStart + endMarkerIdx
+		content := remaining[contentStart:contentEnd]
+		
+		// Trim leading and trailing newlines
+		content = strings.TrimPrefix(content, "\n")
+		content = strings.TrimSuffix(content, "\n")
+		
+		if key != "" {
+			params[key] = content
+		}
+		
+		// Move past the end marker
+		remaining = remaining[contentEnd+len(RawEndMarker):]
+	}
+	
+	return nil
+}
+
+// splitParams splits parameter string by commas, respecting quotes
+func splitParams(paramsStr string) []string {
+	var result []string
+	var current strings.Builder
+	inQuotes := false
+	quoteChar := byte(0)
+	
+	for i := 0; i < len(paramsStr); i++ {
+		b := paramsStr[i]
+		
+		if inQuotes {
+			current.WriteByte(b)
+			if b == quoteChar {
+				inQuotes = false
+			}
+			continue
+		}
+		
+		if b == '"' || b == '\'' {
+			inQuotes = true
+			quoteChar = b
+			current.WriteByte(b)
+			continue
+		}
+		
+		if b == ',' {
+			result = append(result, current.String())
+			current.Reset()
+			continue
+		}
+		
+		current.WriteByte(b)
+	}
+	
+	if current.Len() > 0 {
+		result = append(result, current.String())
+	}
+	
+	return result
+}
+
 // parseSingleParam parses a single parameter like key="value" or key=123
 func parseSingleParam(paramStr string, params map[string]string) error {
 	parts := strings.SplitN(paramStr, "=", 2)
@@ -190,6 +330,7 @@ func parseSingleParam(paramStr string, params map[string]string) error {
 }
 
 // FormatToolCall formats a tool call from name and parameters
+// Uses raw mode for multi-line content
 func FormatToolCall(name string, params map[string]string) string {
 	var sb strings.Builder
 	sb.WriteString("[tool:")
@@ -203,12 +344,9 @@ func FormatToolCall(name string, params map[string]string) string {
 		}
 		first = false
 
-		// Check if value contains newlines or special chars
-		if strings.Contains(value, "\n") || strings.Contains(value, "\"") {
-			// Escape and quote
-			escaped := strings.ReplaceAll(value, "\n", "\\n")
-			escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-			sb.WriteString(fmt.Sprintf("%s=\"%s\"", key, escaped))
+		// Check if value contains newlines - use raw mode
+		if strings.Contains(value, "\n") {
+			sb.WriteString(fmt.Sprintf("%s=%s\n%s\n%s", key, RawStartMarker, value, RawEndMarker))
 		} else if _, err := strconv.Atoi(value); err == nil {
 			// Numeric value, no quotes
 			sb.WriteString(fmt.Sprintf("%s=%s", key, value))
@@ -223,17 +361,42 @@ func FormatToolCall(name string, params map[string]string) string {
 }
 
 // ExtractToolCalls extracts all tool calls from a text
+// Supports both standard mode and raw mode with multi-line content
 func ExtractToolCalls(text string) ([]*ToolCall, error) {
-	pattern := regexp.MustCompile(`\[tool:\w+\([^]]*\)\]`)
-	matches := pattern.FindAllString(text, -1)
-
-	calls := make([]*ToolCall, 0, len(matches))
-	for _, match := range matches {
-		call, err := ParseToolCall(match)
-		if err != nil {
-			continue // Skip invalid tool calls
+	// Pattern for standard mode (no newlines in params)
+	standardPattern := regexp.MustCompile(`\[tool:\w+\([^]]+\)\]`)
+	
+	// Pattern for raw mode (allows newlines between markers)
+	rawPattern := regexp.MustCompile(`\[tool:\w+\([^)]*<<<RAW>>>(.*?)<<<END_RAW>>>\)[\s\S]*?\]`)
+	
+	// Find raw mode matches first
+	rawMatches := rawPattern.FindAllString(text, -1)
+	
+	// Find standard mode matches
+	standardMatches := standardPattern.FindAllString(text, -1)
+	
+	// Combine and deduplicate
+	allMatches := make(map[string]bool)
+	calls := make([]*ToolCall, 0)
+	
+	for _, match := range rawMatches {
+		if !allMatches[match] {
+			allMatches[match] = true
+			call, err := ParseToolCall(match)
+			if err == nil {
+				calls = append(calls, call)
+			}
 		}
-		calls = append(calls, call)
+	}
+	
+	for _, match := range standardMatches {
+		if !allMatches[match] {
+			allMatches[match] = true
+			call, err := ParseToolCall(match)
+			if err == nil {
+				calls = append(calls, call)
+			}
+		}
 	}
 
 	return calls, nil

@@ -188,9 +188,12 @@ func TestFormatToolCall_MultilineContent(t *testing.T) {
 		"content": "line1\nline2\nline3",
 	}
 	result := FormatToolCall("write_file", params)
-	// Multiline content should have escaped newlines
-	if !contains(result, "\\n") {
-		t.Errorf("Expected escaped newlines in output, got '%s'", result)
+	// Multiline content should use raw mode
+	if !contains(result, RawStartMarker) {
+		t.Errorf("Expected raw mode marker in output, got '%s'", result)
+	}
+	if !contains(result, RawEndMarker) {
+		t.Errorf("Expected raw mode end marker in output, got '%s'", result)
 	}
 }
 
@@ -417,4 +420,172 @@ func (m *mockTool) Name() string                         { return m.name }
 func (m *mockTool) Description() string                  { return "mock tool" }
 func (m *mockTool) Execute(params map[string]string) ToolResult {
 	return ToolResult{Success: true}
+}
+
+func TestParseToolCall_RawMode_WriteFile(t *testing.T) {
+	input := `[tool:write_file(path="/tmp/test.txt", content=<<<RAW>>>
+line 1
+line 2
+line 3
+<<<END_RAW>>>)]`
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse raw mode tool call: %v", err)
+	}
+
+	if call.Name != "write_file" {
+		t.Errorf("Expected tool name 'write_file', got '%s'", call.Name)
+	}
+	if call.Params["path"] != "/tmp/test.txt" {
+		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
+	}
+	expectedContent := "line 1\nline 2\nline 3"
+	if call.Params["content"] != expectedContent {
+		t.Errorf("Expected content '%s', got '%s'", expectedContent, call.Params["content"])
+	}
+}
+
+func TestParseToolCall_RawMode_InsertLines(t *testing.T) {
+	input := `[tool:insert_lines(path="/tmp/file.txt", line=5, lines=<<<RAW>>>
+new line 1
+new line 2
+<<<END_RAW>>>)]`
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse raw mode tool call: %v", err)
+	}
+
+	if call.Name != "insert_lines" {
+		t.Errorf("Expected tool name 'insert_lines', got '%s'", call.Name)
+	}
+	if call.Params["path"] != "/tmp/file.txt" {
+		t.Errorf("Expected path '/tmp/file.txt', got '%s'", call.Params["path"])
+	}
+	if call.Params["line"] != "5" {
+		t.Errorf("Expected line '5', got '%s'", call.Params["line"])
+	}
+	expectedLines := "new line 1\nnew line 2"
+	if call.Params["lines"] != expectedLines {
+		t.Errorf("Expected lines '%s', got '%s'", expectedLines, call.Params["lines"])
+	}
+}
+
+func TestParseToolCall_RawMode_MixedParams(t *testing.T) {
+	// Test with multiple standard params and one raw param
+	input := `[tool:write_file(path="/tmp/test.txt", mode="w", content=<<<RAW>>>
+#!/bin/bash
+echo "Hello"
+<<<END_RAW>>>)]`
+	call, err := ParseToolCall(input)
+	if err != nil {
+		t.Fatalf("Failed to parse raw mode tool call: %v", err)
+	}
+
+	if call.Params["path"] != "/tmp/test.txt" {
+		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
+	}
+	if call.Params["mode"] != "w" {
+		t.Errorf("Expected mode 'w', got '%s'", call.Params["mode"])
+	}
+	expectedContent := "#!/bin/bash\necho \"Hello\""
+	if call.Params["content"] != expectedContent {
+		t.Errorf("Expected content '%s', got '%s'", expectedContent, call.Params["content"])
+	}
+}
+
+func TestFormatToolCall_RawMode(t *testing.T) {
+	params := map[string]string{
+		"path":    "/tmp/script.sh",
+		"content": "#!/bin/bash\necho 'Hello'",
+	}
+	result := FormatToolCall("write_file", params)
+	
+	if !contains(result, "write_file") {
+		t.Error("Expected result to contain 'write_file'")
+	}
+	if !contains(result, RawStartMarker) {
+		t.Error("Expected result to contain raw start marker")
+	}
+	if !contains(result, RawEndMarker) {
+		t.Error("Expected result to contain raw end marker")
+	}
+	// Should not have escaped newlines
+	if contains(result, "\\n") {
+		t.Error("Expected no escaped newlines in raw mode")
+	}
+}
+
+func TestExtractToolCalls_RawMode(t *testing.T) {
+	text := `Here is my response:
+[tool:write_file(path="/tmp/test.txt", content=<<<RAW>>>
+line 1
+line 2
+<<<END_RAW>>>)]
+And then I'll read it.`
+	calls, err := ExtractToolCalls(text)
+	if err != nil {
+		t.Fatalf("Failed to extract tool calls: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Errorf("Expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Name != "write_file" {
+		t.Errorf("Expected tool name 'write_file', got '%s'", calls[0].Name)
+	}
+}
+
+func TestSplitParams(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			input:    `path="/tmp/test.txt", content="hello"`,
+			expected: []string{`path="/tmp/test.txt"`, ` content="hello"`},
+		},
+		{
+			input:    `path="/tmp/test.txt"`,
+			expected: []string{`path="/tmp/test.txt"`},
+		},
+		{
+			input:    `a=1, b=2, c=3`,
+			expected: []string{`a=1`, ` b=2`, ` c=3`},
+		},
+	}
+
+	for _, tt := range tests {
+		result := splitParams(tt.input)
+		if len(result) != len(tt.expected) {
+			t.Errorf("Input %q: expected %d parts, got %d", tt.input, len(tt.expected), len(result))
+			continue
+		}
+		for i, exp := range tt.expected {
+			if result[i] != exp {
+				t.Errorf("Input %q: expected part %d to be %q, got %q", tt.input, i, exp, result[i])
+			}
+		}
+	}
+}
+
+func TestParseRawParams_Empty(t *testing.T) {
+	params := make(map[string]string)
+	err := parseRawParams("", params)
+	if err != nil {
+		t.Errorf("Expected no error for empty input, got %v", err)
+	}
+	if len(params) != 0 {
+		t.Errorf("Expected empty params, got %v", params)
+	}
+}
+
+func TestParseRawParams_MissingEndMarker(t *testing.T) {
+	params := make(map[string]string)
+	input := `content=<<<RAW>>>
+some content
+no end marker`
+	err := parseRawParams(input, params)
+	if err == nil {
+		t.Error("Expected error for missing end marker")
+	}
 }

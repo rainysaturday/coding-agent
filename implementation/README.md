@@ -98,22 +98,54 @@ Configuration can be set via:
 
 ## Tool Calling Format
 
-All tool calls use a standardized format:
+All tool calls use a standardized format with two modes:
 
+### Standard Mode (for short values)
 ```
 [tool:tool_name(param_name="param_value", ...)]
 ```
 
+### Raw Mode (for multi-line content without escaping)
+```
+[tool:tool_name(path="file.txt", content=<<<RAW>>>
+line 1
+line 2
+line 3
+<<<END_RAW>>>)]
+```
+
 ### Examples
 
+**Standard Mode:**
 ```
 [tool:bash(command="ls -la /home")]
 [tool:read_file(path="/path/to/file.txt")]
 [tool:write_file(path="/path/to/file.txt", content="Hello World")]
-[tool:read_lines(path="/path/to/file.txt", start=1, end=10)]
-[tool:insert_lines(path="/path/to/file.txt", line=5, lines="new line")]
-[tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines="replacement")]
 ```
+
+**Raw Mode (multi-line content):**
+```
+[tool:write_file(path="/path/to/script.sh", content=<<<RAW>>>
+#!/bin/bash
+echo "Hello World"
+for i in {1..10}; do
+    echo "Count: $i"
+done
+<<<END_RAW>>>)]
+
+[tool:insert_lines(path="/path/to/file.txt", line=5, lines=<<<RAW>>>
+new line 1
+new line 2
+new line 3
+<<<END_RAW>>>)]
+```
+
+### When to Use Each Mode
+
+| Mode | Use When |
+|------|----------|
+| Standard | Short values, single-line content, paths, simple commands |
+| Raw | Multi-line content, code, scripts, documents with special characters |
 
 ## Project Structure
 
