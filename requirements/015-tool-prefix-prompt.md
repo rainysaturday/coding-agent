@@ -25,6 +25,9 @@ AVAILABLE TOOLS:
 - bash: Execute a bash command
   Format: [tool:bash(command="command string")]
   Example: [tool:bash(command="ls -la")]
+  Multi-line: [tool:bash(command=<<<RAW>>>
+echo "line 1"
+<<<END_RAW>>>)]
   
 - read_file: Read the contents of a file
   Format: [tool:read_file(path="file path")]
@@ -33,6 +36,9 @@ AVAILABLE TOOLS:
 - write_file: Write content to a file
   Format: [tool:write_file(path="file path", content="file content")]
   Example: [tool:write_file(path="/path/to/file.txt", content="Hello")]
+  Multi-line: [tool:write_file(path="file.txt", content=<<<RAW>>>
+line 1
+<<<END_RAW>>>)]
   
 - read_lines: Read a specific line range from a file
   Format: [tool:read_lines(path="file path", start=line_number, end=line_number)]
@@ -41,17 +47,23 @@ AVAILABLE TOOLS:
 - insert_lines: Insert lines at a specific line number
   Format: [tool:insert_lines(path="file path", line=line_number, lines="lines to insert")]
   Example: [tool:insert_lines(path="/path/to/file.txt", line=5, lines="new line")]
+  Multi-line: [tool:insert_lines(path="file.txt", line=5, lines=<<<RAW>>>
+line 1
+<<<END_RAW>>>)]
   
 - replace_lines: Replace a line range with new lines
   Format: [tool:replace_lines(path="file path", start=line_number, end=line_number, lines="replacement lines")]
   Example: [tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines="new content")]
+  Multi-line: [tool:replace_lines(path="file.txt", start=1, end=3, lines=<<<RAW>>>
+line 1
+<<<END_RAW>>>)]
 
 TOOL CALLING RULES:
 - Use the exact format shown above for tool calls
 - Tool calls must be enclosed in square brackets
 - Tool name must match exactly (case-sensitive)
 - Parameters must be properly quoted
-- Multi-line content uses \\n for line breaks
+- Multi-line content: Use raw mode with <<<RAW>>> and <<<END_RAW>>> markers
 
 Instructions:
 - Analyze the user's request and determine if tools are needed
