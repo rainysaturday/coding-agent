@@ -21,10 +21,13 @@ type TUI struct {
 	history       []string
 	historyIndex  int
 	maxHistory    int
+	gitHash       string
+	gitDirty      string
+	buildTime     string
 }
 
 // NewTUI creates a new TUI instance
-func NewTUI(stats *stats.Stats) *TUI {
+func NewTUI(stats *stats.Stats, gitHash, gitDirty, buildTime string) *TUI {
 	return &TUI{
 		reader:       bufio.NewReader(os.Stdin),
 		output:       make([]string, 0),
@@ -34,6 +37,9 @@ func NewTUI(stats *stats.Stats) *TUI {
 		history:      make([]string, 0),
 		historyIndex: -1,
 		maxHistory:   100,
+		gitHash:      gitHash,
+		gitDirty:     gitDirty,
+		buildTime:    buildTime,
 	}
 }
 
@@ -168,12 +174,27 @@ func (t *TUI) DisplayPrompt() {
 	fmt.Print("\n> ")
 }
 
-// DisplayWelcome displays the welcome message
+// DisplayWelcome displays the welcome message with version info
 func (t *TUI) DisplayWelcome() {
 	t.ClearScreen()
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("  Minimal Coding Agent Harness")
 	fmt.Println(strings.Repeat("=", 60))
+	
+	// Display version information
+	status := t.gitDirty
+	if status == "clean" {
+		fmt.Printf("  Version: %s [clean]\n", t.gitHash)
+	} else if status == "dirty" {
+		fmt.Printf("\033[33m  Version: %s [dirty] ⚠\033[0m\n", t.gitHash)
+	} else {
+		fmt.Printf("  Version: %s\n", t.gitHash)
+	}
+	
+	if t.buildTime != "" {
+		fmt.Printf("  Built: %s\n", t.buildTime)
+	}
+	
 	fmt.Println()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
 	fmt.Println("Type 'stats' to view statistics, 'clear' to clear output.")

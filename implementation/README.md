@@ -35,16 +35,61 @@ A minimal coding agent harness written in Go with a basic TUI supporting an inpu
 
 ## Installation
 
+### Using Make (recommended)
+
+```bash
+cd implementation
+make build
+```
+
+This will embed version information (git hash, dirty status, build time) into the binary.
+
+### Manual Build
+
 ```bash
 cd implementation
 go build -o coding-agent .
 ```
 
+### Version Information
+
+The binary embeds version information at build time:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `gitHash` | Git commit hash (short) | `unknown` |
+| `gitDirty` | Repository clean/dirty status | `unknown` |
+| `buildTime` | UTC build timestamp | `` |
+
+View version info before building:
+```bash
+make version
+```
+
+Build with version info:
+```bash
+make build
+```
+
 ## Usage
 
 ```bash
-# Run with default settings
+# Run with default settings (shows version on startup)
 ./coding-agent
+```
+
+On startup, the agent displays version information:
+
+```
+============================================================
+  Minimal Coding Agent Harness
+============================================================
+  Version: 3eda58c [dirty] ⚠
+  Built: 2026-03-27T12:14:29Z
+
+Type your request below. Use Ctrl+C to exit.
+Type 'stats' to view statistics, 'clear' to clear output.
+```
 
 # Run with custom configuration
 ./coding-agent -config /path/to/config.json
@@ -184,6 +229,17 @@ implementation/
 │   └── tui_test.go
 └── go.mod
 ```
+
+## Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Build the binary with version info |
+| `make test` | Run all tests |
+| `make clean` | Remove binary and clean build artifacts |
+| `make version` | Display version information |
+| `make run` | Build and run the agent |
+| `make all` | Build and test (default) |
 
 ## Running Tests
 

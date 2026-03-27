@@ -12,7 +12,7 @@ import (
 
 func TestNewTUI(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	if tui == nil {
 		t.Fatal("NewTUI returned nil")
@@ -24,7 +24,7 @@ func TestNewTUI(t *testing.T) {
 
 func TestAddOutput(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	tui.AddOutput("line1")
 	tui.AddOutput("line2")
@@ -39,7 +39,7 @@ func TestAddOutput(t *testing.T) {
 
 func TestAddOutputf(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	tui.AddOutputf("Hello %s", "World")
 
@@ -53,7 +53,7 @@ func TestAddOutputf(t *testing.T) {
 
 func TestClearOutput(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	tui.AddOutput("line1")
 	tui.AddOutput("line2")
@@ -66,7 +66,7 @@ func TestClearOutput(t *testing.T) {
 
 func TestProcessCommand_Stats(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	result := tui.ProcessCommand("stats", ctx)
@@ -77,7 +77,7 @@ func TestProcessCommand_Stats(t *testing.T) {
 
 func TestProcessCommand_Clear(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	tui.AddOutput("test line")
@@ -93,7 +93,7 @@ func TestProcessCommand_Clear(t *testing.T) {
 
 func TestProcessCommand_Quit(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	result := tui.ProcessCommand("quit", ctx)
@@ -104,7 +104,7 @@ func TestProcessCommand_Quit(t *testing.T) {
 
 func TestProcessCommand_Exit(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	result := tui.ProcessCommand("exit", ctx)
@@ -115,7 +115,7 @@ func TestProcessCommand_Exit(t *testing.T) {
 
 func TestProcessCommand_Invalid(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	result := tui.ProcessCommand("invalid command", ctx)
@@ -126,7 +126,7 @@ func TestProcessCommand_Invalid(t *testing.T) {
 
 func TestProcessCommand_CaseInsensitive(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	commands := []string{"STATS", "Stats", "CLEAR", "Clear", "QUIT", "Quit"}
@@ -146,7 +146,7 @@ func TestProcessCommand_CaseInsensitive(t *testing.T) {
 
 func TestProcessCommand_ClearHistory(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 
 	tui.AddToHistory("test history")
@@ -171,7 +171,7 @@ func TestDisplayOutput(t *testing.T) {
 	os.Stdout = w
 
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	tui.AddOutput("test output")
 	tui.DisplayOutput()
 
@@ -198,7 +198,7 @@ func TestStatsDisplay(t *testing.T) {
 	s.AddOutputTokens(50)
 	s.AddToolCall()
 
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 	tui.DisplayStats(ctx)
 
@@ -227,7 +227,7 @@ func TestWelcomeDisplay(t *testing.T) {
 	os.Stdout = w
 
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	tui.DisplayWelcome()
 
 	w.Close()
@@ -244,7 +244,7 @@ func TestWelcomeDisplay(t *testing.T) {
 
 func TestHistoryNavigation(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	// Add some history
 	tui.AddToHistory("prompt1")
@@ -280,7 +280,7 @@ func TestHistoryNavigation(t *testing.T) {
 
 func TestHistoryMaxSize(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	tui.maxHistory = 3
 
 	// Add more than max history
@@ -295,7 +295,7 @@ func TestHistoryMaxSize(t *testing.T) {
 
 func TestHistoryNoDuplicate(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	tui.AddToHistory("prompt1")
 	tui.AddToHistory("prompt1") // Duplicate
@@ -307,7 +307,7 @@ func TestHistoryNoDuplicate(t *testing.T) {
 
 func TestEmptyHistoryNavigation(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 
 	// Empty history should not crash
 	result := tui.GetPreviousHistory("current")
@@ -323,7 +323,7 @@ func TestEmptyHistoryNavigation(t *testing.T) {
 
 func TestContextDisplay(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	ctx := context.NewContext("system", 1000)
 	ctx.AddUserMessage("test message")
 
@@ -333,7 +333,7 @@ func TestContextDisplay(t *testing.T) {
 
 func TestContextDisplayWarning(t *testing.T) {
 	s := stats.NewStats()
-	tui := NewTUI(s)
+	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
 	
 	// Create context with small max size to trigger warning
 	ctx := context.NewContext("system", 50)

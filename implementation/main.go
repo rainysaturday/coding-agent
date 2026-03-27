@@ -15,6 +15,13 @@ import (
 	"coding-agent/tui"
 )
 
+// Version information injected at build time via ldflags
+var (
+	gitHash   string = "unknown"
+	gitDirty  string = "unknown"
+	buildTime string = ""
+)
+
 // System prompt with all tools
 const systemPrompt = `You are a helpful coding assistant. You have access to the following tools:
 
@@ -121,7 +128,7 @@ func main() {
 	statsTracker := stats.NewStats()
 
 	// Create TUI
-	tui := tui.NewTUI(statsTracker)
+	tui := tui.NewTUI(statsTracker, gitHash, gitDirty, buildTime)
 	tui.DisplayWelcome()
 
 	// Create tool registry
