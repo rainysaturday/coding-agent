@@ -66,6 +66,18 @@ done
 [tool:read_lines(path="/path/to/file.txt", start=1, end=10)]
 ```
 
+**Bash Tool (Raw Mode):**
+```
+[tool:bash(command=<<<RAW>>>
+#!/bin/bash
+echo "Starting script..."
+for i in {1..5}; do
+    echo "Iteration: $i"
+done
+echo "Done!"
+<<<END_RAW>>>)]
+```
+
 **Insert Lines Tool (Raw Mode):**
 ```
 [tool:insert_lines(path="/path/to/file.txt", line=5, lines=<<<RAW>>>
