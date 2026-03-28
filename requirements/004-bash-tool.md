@@ -6,7 +6,6 @@ The harness must support a `bash` tool that allows execution of shell commands.
 ## Acceptance Criteria
 - [ ] Tool named `bash` is available
 - [ ] Accepts command string as input parameter
-- [ ] Supports multi-line scripts using raw mode markers
 - [ ] Executes command in shell environment
 - [ ] Returns command output (stdout and stderr)
 - [ ] Returns exit code of executed command
@@ -15,54 +14,52 @@ The harness must support a `bash` tool that allows execution of shell commands.
 
 ## Tool Usage
 
-### Standard Mode (single-line commands)
+### Single-line Commands
 ```
-[tool:bash(command="ls -la /home")]
-[tool:bash(command="echo 'Hello World'")]
-[tool:bash(command="grep -r 'pattern' .")]
+[TOOL:{"name":"bash","parameters":{"command":"ls -la /home"}}]
+[TOOL:{"name":"bash","parameters":{"command":"echo \"Hello World\""}}]
+[TOOL:{"name":"bash","parameters":{"command":"grep -r \"pattern\" ."}}]
 ```
 
-### Raw Mode (multi-line scripts)
+### Multi-line Scripts
 ```
-[tool:bash(command=<<<RAW>>>
-#!/bin/bash
-# Multi-line script
-echo "Starting..."
-for i in {1..10}; do
-    echo "Iteration $i"
-done
-echo "Done!"
-<<<END_RAW>>>)]
+[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\n# Multi-line script\necho \"Starting...\"\nfor i in {1..10}; do\n    echo \"Iteration $i\"\ndone\necho \"Done!\""}}]
 ```
 
 ### Parameters
-- `command`: Shell command or script to execute (required)
-  - Use standard mode for simple single-line commands
-  - Use raw mode (`<<<RAW>>>`...`<<<END_RAW>>>`) for multi-line scripts, loops, and complex commands
-  - Raw mode preserves exact formatting and special characters without escaping
+- `command`: Shell command or script to execute (required, string)
+  - Single-line commands use regular JSON strings
+  - Multi-line scripts use `\n` escape sequences
+  - All special characters must be JSON-escaped
 
 ### Examples
 
 **Simple command:**
 ```
-[tool:bash(command="pwd")]
+[TOOL:{"name":"bash","parameters":{"command":"pwd"}}]
 ```
 
 **Command with quotes:**
 ```
-[tool:bash(command="echo \"Hello World\"")]
+[TOOL:{"name":"bash","parameters":{"command":"echo \"Hello World\""}}]
 ```
 
-**Multi-line script (raw mode):**
+**Multi-line script:**
 ```
-[tool:bash(command=<<<RAW>>>
-#!/bin/bash
-set -e
-cd /tmp
-cat > test.txt << EOF
-line 1
-line 2
-EOF
-cat test.txt
-<<<END_RAW>>>)]
+[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\nset -e\ncd /tmp\ncat > test.txt << EOF\nline 1\nline 2\nEOF\ncat test.txt"}}]
 ```
+
+**Complex command with special characters:**
+```
+[TOOL:{"name":"bash","parameters":{"command":"echo \"Price: $100 \\\"special\\\" items\""}}]
+```
+
+## Return Values
+
+On success:
+- `output`: Combined stdout and stderr from command execution
+- `success`: `true`
+
+On failure:
+- `error`: Description of the error
+- `success`: `false`

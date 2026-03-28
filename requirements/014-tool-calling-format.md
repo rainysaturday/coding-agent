@@ -1,16 +1,14 @@
 # Requirement 014: Tool Calling Format
 
 ## Description
-The coding agent harness must use a standardized tool calling format for all tool invocations. The format must be consistent and machine-readable.
+The coding agent harness must use a standardized JSON-based tool calling format for all tool invocations. The format must be consistent, machine-readable, and optimized for LLM generation.
 
 ## Acceptance Criteria
 - [ ] Tool calling format is clearly documented
 - [ ] Format supports calling any available tool
-- [ ] Format includes tool name as first element
-- [ ] Format includes tool parameters as key-value pairs
+- [ ] Format uses JSON structure for parameters
 - [ ] Format can be parsed by both humans and the inference engine
 - [ ] Format is consistent across all tool types
-- [ ] Format supports nested parameters when needed
 - [ ] Invalid tool calls are detected and reported as errors
 - [ ] Tool calling format is included in system prompt/prefix
 
@@ -18,110 +16,104 @@ The coding agent harness must use a standardized tool calling format for all too
 
 ### Syntax
 
-**Standard Mode (for short, single-line values):**
 ```
-[tool:tool_name(param_name="param_value", ...)]
+[TOOL:{"name":"tool_name","parameters":{...}}]
 ```
 
-**Raw Mode (for multi-line content without escaping):**
-```
-[tool:tool_name(path="file.txt", content=<<<RAW>>>
-line 1
-line 2
-line 3
-<<<END_RAW>>>)]
-```
+Where:
+- `name`: The tool name (string, must match registered tool exactly)
+- `parameters`: A JSON object containing all tool-specific parameters
+
+### Parameter Rules
+
+- All parameter values must be valid JSON values (strings, numbers, booleans, arrays, objects)
+- String values must be properly JSON-escaped (quotes, backslashes, newlines, etc.)
+- Numeric values can be unquoted JSON numbers
+- Multi-line content uses `\n` escape sequences in JSON strings
+- The entire tool call must be valid JSON inside the `[TOOL:...]` wrapper
 
 ### Examples
 
-**Bash Tool:**
+**Bash Tool (simple command):**
 ```
-[tool:bash(command="ls -la /home/user")]
+[TOOL:{"name":"bash","parameters":{"command":"ls -la /home/user"}}]
 ```
 
 **Read File Tool:**
 ```
-[tool:read_file(path="/path/to/file.txt")]
+[TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
 ```
 
-**Write File Tool (Standard Mode - short content):**
+**Write File Tool (single line):**
 ```
-[tool:write_file(path="/path/to/file.txt", content="Hello World")]
+[TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello World"}}]
 ```
 
-**Write File Tool (Raw Mode - multi-line content):**
+**Write File Tool (multi-line content):**
 ```
-[tool:write_file(path="/path/to/file.txt", content=<<<RAW>>>
-#!/bin/bash
-# This is a shell script
-echo "Hello World"
-for i in {1..10}; do
-    echo "Count: $i"
-done
-<<<END_RAW>>>)]
+[TOOL:{"name":"write_file","parameters":{"path":"/path/to/script.sh","content":"#!/bin/bash\necho \"Hello World\"\nfor i in {1..10}; do\n    echo \"Count: $i\"\ndone"}}]
 ```
 
 **Read Lines Tool:**
 ```
-[tool:read_lines(path="/path/to/file.txt", start=1, end=10)]
+[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
 ```
 
-**Bash Tool (Raw Mode):**
+**Insert Lines Tool (multi-line content):**
 ```
-[tool:bash(command=<<<RAW>>>
-#!/bin/bash
-echo "Starting script..."
-for i in {1..5}; do
-    echo "Iteration: $i"
-done
-echo "Done!"
-<<<END_RAW>>>)]
+[TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line 1\nnew line 2\nnew line 3"}}]
 ```
 
-**Insert Lines Tool (Raw Mode):**
+**Replace Lines Tool:**
 ```
-[tool:insert_lines(path="/path/to/file.txt", line=5, lines=<<<RAW>>>
-new line 1
-new line 2
-new line 3
-<<<END_RAW>>>)]
+[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"replacement line 1\nreplacement line 2"}}]
 ```
 
-**Replace Lines Tool (Raw Mode):**
+**Bash Tool (multi-line script):**
 ```
-[tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines=<<<RAW>>>
-replacement line 1
-replacement line 2
-<<<END_RAW>>>)]
+[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\necho \"Starting script...\"\nfor i in {1..5}; do\n    echo \"Iteration: $i\"\ndone\necho \"Done!\""}}]
 ```
 
-### Parameter Rules
+### Format Guidelines
 
-**Standard Mode:**
-- All parameters are passed as strings in quotes
-- Multi-line content uses `\n` for line breaks
-- Numeric values can be unquoted integers
-- Special characters must be properly escaped
-- Best for short, single-line values
+**When to use this format:**
+- Always use the JSON-based format `[TOOL:{...}]` for all tool calls
+- Use JSON string escaping (`\n`, `\"`, `\\`, etc.) for special characters
+- Use JSON numbers (no quotes) for numeric parameters like line numbers
+- Keep the tool call on a single line when possible for readability
 
-**Raw Mode:**
-- Content between `<<<RAW>>>` and `<<<END_RAW>>>` is treated literally
-- No escaping required - newlines, quotes, and special characters preserved as-is
-- `<<<RAW>>>` marker must be on its own line immediately after the `=`
-- `<<<END_RAW>>>` marker must be on its own line before the closing `)`
-- Best for multi-line content, code, scripts, and documents
-- The raw content preserves exact formatting and indentation
-- No limit on content size
+**LLM Instructions for Generating Tool Calls:**
+1. Identify which tool is needed for the task
+2. Construct a valid JSON object with `name` and `parameters` keys
+3. JSON-escape any special characters in string values
+4. Wrap the JSON in `[TOOL:...]` brackets
+5. Ensure the entire string is valid JSON inside the wrapper
 
-### Marker Selection
+### Error Handling
 
-**Use Standard Mode when:**
-- Content is short (< 2 lines)
-- Content has no special characters
-- Content is a simple path, command, or single-line value
+**Invalid Tool Call Detection:**
+- Missing or malformed `[TOOL:...]` wrapper
+- Invalid JSON syntax inside the wrapper
+- Unknown tool name (not registered)
+- Missing required parameters
+- Wrong parameter types
 
-**Use Raw Mode when:**
-- Content spans multiple lines
-- Content contains quotes, backslashes, or special characters
-- Content is code, scripts, or formatted documents
-- You want to avoid escaping overhead
+**Error Response Format:**
+```
+Error: Invalid tool call - <specific error message>
+```
+
+### Migration Notes
+
+**From Old Format to New Format:**
+
+| Old Format | New Format |
+|------------|------------|
+| `[tool:bash(command="ls -la")]` | `[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]` |
+| `[tool:read_file(path="/tmp/test.txt")]` | `[TOOL:{"name":"read_file","parameters":{"path":"/tmp/test.txt"}}]` |
+| `[tool:write_file(path="file.txt", content="hello\nworld")]` | `[TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"hello\nworld"}}]` |
+| `[tool:read_lines(path="file.txt", start=1, end=10)]` | `[TOOL:{"name":"read_lines","parameters":{"path":"file.txt","start":1,"end":10}}]` |
+
+**Removed Features:**
+- Raw mode markers (`<<<RAW>>>` / `<<<END_RAW>>>`) are no longer needed
+- JSON escaping handles all multi-line content uniformly

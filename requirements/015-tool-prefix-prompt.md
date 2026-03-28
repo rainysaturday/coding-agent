@@ -1,7 +1,7 @@
 # Requirement 015: Tool Prefix Prompt
 
 ## Description
-The list of available tools and their calling format must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the inference engine has consistent knowledge of available tools.
+The list of available tools and their JSON-based calling format must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the inference engine has consistent knowledge of available tools.
 
 ## Acceptance Criteria
 - [ ] Tool list is included in system prompt at the beginning of every conversation
@@ -23,47 +23,41 @@ You are a helpful coding assistant. You have access to the following tools:
 
 AVAILABLE TOOLS:
 - bash: Execute a bash command
-  Format: [tool:bash(command="command string")]
-  Example: [tool:bash(command="ls -la")]
-  Multi-line: [tool:bash(command=<<<RAW>>>
-echo "line 1"
-<<<END_RAW>>>)]
+  Format: [TOOL:{"name":"bash","parameters":{"command":"command string"}}]
+  Example: [TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
+  Multi-line: [TOOL:{"name":"bash","parameters":{"command":"line1\nline2\nline3"}}]
   
 - read_file: Read the contents of a file
-  Format: [tool:read_file(path="file path")]
-  Example: [tool:read_file(path="/path/to/file.txt")]
+  Format: [TOOL:{"name":"read_file","parameters":{"path":"file path"}}]
+  Example: [TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
   
 - write_file: Write content to a file
-  Format: [tool:write_file(path="file path", content="file content")]
-  Example: [tool:write_file(path="/path/to/file.txt", content="Hello")]
-  Multi-line: [tool:write_file(path="file.txt", content=<<<RAW>>>
-line 1
-<<<END_RAW>>>)]
+  Format: [TOOL:{"name":"write_file","parameters":{"path":"file path","content":"file content"}}]
+  Example: [TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello"}}]
+  Multi-line: [TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"line1\nline2"}}]
   
 - read_lines: Read a specific line range from a file
-  Format: [tool:read_lines(path="file path", start=line_number, end=line_number)]
-  Example: [tool:read_lines(path="/path/to/file.txt", start=1, end=10)]
+  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":line_number}}]
+  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
   
 - insert_lines: Insert lines at a specific line number
-  Format: [tool:insert_lines(path="file path", line=line_number, lines="lines to insert")]
-  Example: [tool:insert_lines(path="/path/to/file.txt", line=5, lines="new line")]
-  Multi-line: [tool:insert_lines(path="file.txt", line=5, lines=<<<RAW>>>
-line 1
-<<<END_RAW>>>)]
+  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":line_number,"lines":"lines to insert"}}]
+  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
+  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
   
 - replace_lines: Replace a line range with new lines
-  Format: [tool:replace_lines(path="file path", start=line_number, end=line_number, lines="replacement lines")]
-  Example: [tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines="new content")]
-  Multi-line: [tool:replace_lines(path="file.txt", start=1, end=3, lines=<<<RAW>>>
-line 1
-<<<END_RAW>>>)]
+  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
+  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
+  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":3,"lines":"line1\nline2"}}]
 
 TOOL CALLING RULES:
-- Use the exact format shown above for tool calls
-- Tool calls must be enclosed in square brackets
-- Tool name must match exactly (case-sensitive)
-- Parameters must be properly quoted
-- Multi-line content: Use raw mode with <<<RAW>>> and <<<END_RAW>>> markers
+- Use the exact JSON format shown above for tool calls
+- Tool calls must be enclosed in [TOOL:...] brackets
+- The content inside brackets must be valid JSON
+- Tool name must match exactly (case-sensitive, use underscore not hyphen)
+- Parameters must be in a JSON object under the "parameters" key
+- String values must be properly JSON-escaped (use \n for newlines, \" for quotes)
+- Numeric values should not be quoted (e.g., "start":1 not "start":"1")
 
 Instructions:
 - Analyze the user's request and determine if tools are needed
@@ -71,6 +65,7 @@ Instructions:
 - Always explain your reasoning before calling tools
 - Provide clear explanations of tool results
 - Continue the conversation after tool execution
+- Generate valid JSON inside the [TOOL:...] wrapper
 ```
 
 ### System Prompt Management
@@ -100,6 +95,35 @@ During context compression:
 [ASSISTANT RESPONSE 2]
 ...
 ```
+
+## JSON Format Details
+
+### Structure
+```json
+{
+  "name": "tool_name",
+  "parameters": {
+    "param1": "value1",
+    "param2": 123,
+    "param3": "value with\nnewlines"
+  }
+}
+```
+
+### Escaping Rules
+- Newlines: `\n`
+- Carriage returns: `\r`
+- Tabs: `\t`
+- Double quotes: `\"`
+- Backslashes: `\\`
+- Unicode: `\uXXXX`
+
+### Common Mistakes to Avoid
+- Using old format `[tool:name(param="value")]` - NOT SUPPORTED
+- Forgetting the `parameters` key wrapper
+- Using hyphens instead of underscores in tool names
+- Forgetting to escape quotes in strings
+- Quoting numeric values (use `"start":1` not `"start":"1"`)
 
 ## Security Considerations
 

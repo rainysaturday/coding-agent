@@ -16,3 +16,51 @@ The harness must support a `read_lines` tool that allows reading a specific line
 - [ ] Handles permission errors gracefully
 - [ ] Returns line numbers with content for reference
 - [ ] Tool call failures are tracked in statistics
+
+## Tool Usage
+
+```
+[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+```
+
+### Parameters
+- `path`: Path to the file to read (required, string)
+- `start`: Starting line number (required, integer, 1-indexed)
+- `end`: Ending line number (required, integer, 1-indexed)
+
+### Examples
+
+**Read first 10 lines:**
+```
+[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+```
+
+**Read lines 100-200:**
+```
+[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/large.txt","start":100,"end":200}}]
+```
+
+**Read specific line:**
+```
+[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":42,"end":42}}]
+```
+
+## Return Values
+
+On success:
+- `output`: The requested lines with line numbers
+- `start`: The start line that was requested
+- `end`: The end line that was requested
+- `success`: `true`
+
+On failure:
+- `error`: Description of the error
+- `success`: `false`
+
+## Behavior Notes
+
+- Line numbers are 1-indexed (first line is line 1)
+- If `start` > `end`, returns empty result or error
+- If `start` is beyond file length, returns empty result
+- If `end` is beyond file length, reads to end of file
+- Returned output includes line numbers for reference

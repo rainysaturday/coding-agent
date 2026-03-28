@@ -21,8 +21,9 @@ When a tool is called and executed, the result of the tool call must be added ba
 ```
 Tool 'tool_name' executed successfully:
 {
-  "result_key": "result_value",
-  "another_key": 123
+  "success": true,
+  "output": "result output",
+  ...additional fields...
 }
 ```
 
@@ -37,7 +38,7 @@ Tool 'tool_name' failed: error message
 
 **AI:** "I'll list the files in /tmp first using the bash tool."
 ```
-[tool:bash(command="ls -la /tmp")]
+[TOOL:{"name":"bash","parameters":{"command":"ls -la /tmp"}}]
 ```
 
 **Tool Result (added to context):**
@@ -45,13 +46,13 @@ Tool 'tool_name' failed: error message
 Tool 'bash' executed successfully:
 {
   "output": "total 24\ndrwxrwxrwt 1 user user 4096 ...",
-  "error": ""
+  "success": true
 }
 ```
 
 **AI (seeing the result):** "The /tmp directory contains several files. Now I'll save this listing to a file."
 ```
-[tool:write_file(path="/tmp/files.txt", content="total 24\ndrwxrwxrwt 1 user user...")]
+[TOOL:{"name":"write_file","parameters":{"path":"/tmp/files.txt","content":"total 24\ndrwxrwxrwt 1 user user 4096..."}}]
 ```
 
 **Tool Result:**
@@ -79,7 +80,7 @@ After a tool call, the context contains:
 
 ### Iteration Process
 1. AI detects need for tool
-2. AI generates tool call in message
+2. AI generates tool call in message using JSON format
 3. System executes tool
 4. System adds result as user message
 5. AI receives result and can:
