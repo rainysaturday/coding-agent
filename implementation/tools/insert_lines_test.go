@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -285,11 +286,8 @@ func TestInsertLinesTool_Execute_EmptyLines(t *testing.T) {
 	}
 }
 
-func TestParseInsertLines_RawMode(t *testing.T) {
-	input := `[tool:insert_lines(path="/tmp/test.txt", line=5, lines=<<<RAW>>>
-new line 1
-new line 2
-<<<END_RAW>>>)]`
+func TestParseInsertLines_JSONFormat(t *testing.T) {
+	input := `[TOOL:{"name":"insert_lines","parameters":{"path":"/tmp/test.txt","line":"5","lines":"new line 1\nnew line 2"}}]`
 	
 	call, err := ParseToolCall(input)
 	if err != nil {
@@ -311,9 +309,9 @@ new line 2
 	}
 }
 
-func TestInsertLines_Tool_RawMode(t *testing.T) {
+func TestInsertLines_Tool_JSONFormat(t *testing.T) {
 	// Create test file
-	testFile := "/tmp/insert_test.txt"
+	testFile := "/tmp/insert_json_test.txt"
 	initialContent := "line 1\nline 2\nline 3\n"
 	
 	if err := os.WriteFile(testFile, []byte(initialContent), 0644); err != nil {
@@ -321,11 +319,8 @@ func TestInsertLines_Tool_RawMode(t *testing.T) {
 	}
 	defer os.Remove(testFile)
 	
-	// Parse raw mode tool call
-	input := `[tool:insert_lines(path="/tmp/insert_test.txt", line=2, lines=<<<RAW>>>
-inserted A
-inserted B
-<<<END_RAW>>>)]`
+	// Parse JSON format tool call
+	input := `[TOOL:{"name":"insert_lines","parameters":{"path":"/tmp/insert_json_test.txt","line":"2","lines":"inserted A\ninserted B"}}]`
 	
 	call, err := ParseToolCall(input)
 	if err != nil {
@@ -350,7 +345,7 @@ inserted B
 	}
 }
 
-func TestFormatInsertLines_RawMode(t *testing.T) {
+func TestFormatInsertLines_JSONFormat(t *testing.T) {
 	params := map[string]string{
 		"path": "/tmp/test.txt",
 		"line": "5",
@@ -358,13 +353,15 @@ func TestFormatInsertLines_RawMode(t *testing.T) {
 	}
 	result := FormatToolCall("insert_lines", params)
 	
-	if !contains(result, "insert_lines") {
+	if !strings.Contains(result, "insert_lines") {
 		t.Error("Expected 'insert_lines' in result")
 	}
-	if !contains(result, RawStartMarker) {
-		t.Error("Expected raw mode marker")
+	if !strings.Contains(result, "\\n") {
+		t.Error("Expected escaped newlines in result")
 	}
-	if !contains(result, RawEndMarker) {
-		t.Error("Expected raw mode end marker")
+	if !strings.HasPrefix(result, "[TOOL:") || !strings.HasSuffix(result, "]") {
+		t.Error("Expected result to be wrapped in [TOOL:...]")
 	}
 }
+
+

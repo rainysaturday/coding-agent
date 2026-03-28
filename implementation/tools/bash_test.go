@@ -3,6 +3,7 @@ package tools
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -177,74 +178,41 @@ func TestBashTool_Execute_ExitCode(t *testing.T) {
 	}
 }
 
-func TestParseBash_RawMode(t *testing.T) {
-	input := `[tool:bash(command=<<<RAW>>>
-#!/bin/bash
-echo "line 1"
-echo "line 2"
-<<<END_RAW>>>)]`
-	
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse: %v", err)
-	}
-	
-	if call.Name != "bash" {
-		t.Errorf("Expected 'bash', got '%s'", call.Name)
-	}
-	expected := "#!/bin/bash\necho \"line 1\"\necho \"line 2\""
-	if call.Params["command"] != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, call.Params["command"])
-	}
-}
+func TestBashTool_Execute_MultilineCommand(t *testing.T) {
+	tool := NewBashTool()
 
-func TestBash_Tool_RawMode(t *testing.T) {
-	// Parse raw mode tool call
-	input := `[tool:bash(command=<<<RAW>>>
-#!/bin/bash
-echo "Hello from raw mode"
-i=1
-echo "Count: $i"
-i=2
-echo "Count: $i"
-<<<END_RAW>>>)]`
-	
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse: %v", err)
-	}
-	
-	// Execute
-	result := NewBashTool().Execute(call.Params)
+	// Multi-line command with \n escapes
+	result := tool.Execute(map[string]string{
+		"command": "#!/bin/bash\necho 'line 1'\necho 'line 2'",
+	})
+
 	if !result.Success {
-		t.Fatalf("Expected success, got error: %s", result.Error)
+		t.Errorf("Expected success, got error: %s", result.Error)
 	}
-	
-	// Verify output contains expected content
-	if !contains(result.Output, "Hello from raw mode") {
-		t.Errorf("Expected output to contain 'Hello from raw mode', got: %s", result.Output)
+	if !strings.Contains(result.Output, "line 1") {
+		t.Errorf("Expected output to contain 'line 1', got: %s", result.Output)
 	}
-	if !contains(result.Output, "Count: 1") {
-		t.Errorf("Expected output to contain 'Count: 1', got: %s", result.Output)
-	}
-	if !contains(result.Output, "Count: 2") {
-		t.Errorf("Expected output to contain 'Count: 2', got: %s", result.Output)
+	if !strings.Contains(result.Output, "line 2") {
+		t.Errorf("Expected output to contain 'line 2', got: %s", result.Output)
 	}
 }
 
-func TestFormatBash_RawMode(t *testing.T) {
-	params := map[string]string{
-		"command": "#!/bin/bash\necho 'Hello'\nfor i in {1..5}; do echo $i; done",
+func TestBashTool_Execute_WithQuotes(t *testing.T) {
+	tool := NewBashTool()
+
+	// Command with quotes
+	result := tool.Execute(map[string]string{
+		"command": "echo \"Hello \\\"World\\\"\"",
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
 	}
-	result := FormatToolCall("bash", params)
-	
-	if !contains(result, "bash") {
-		t.Error("Expected 'bash' in result")
+	if !strings.Contains(result.Output, "Hello") {
+		t.Errorf("Expected output to contain 'Hello', got: %s", result.Output)
 	}
-	if !contains(result, RawStartMarker) {
-		t.Error("Expected raw mode marker")
-	}
-	if !contains(result, RawEndMarker) {
-		t.Error("Expected raw mode end marker")
-	}
+}
+
+func contains(s, substr string) bool {
+	return strings.Contains(s, substr)
 }

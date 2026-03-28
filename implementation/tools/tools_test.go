@@ -1,13 +1,12 @@
 package tools
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestParseToolCall_Bash(t *testing.T) {
-	input := `[tool:bash(command="ls -la /home")]`
+	input := `[TOOL:{"name":"bash","parameters":{"command":"ls -la /home"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -22,7 +21,7 @@ func TestParseToolCall_Bash(t *testing.T) {
 }
 
 func TestParseToolCall_ReadFile(t *testing.T) {
-	input := `[tool:read_file(path="/path/to/file.txt")]`
+	input := `[TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -37,7 +36,7 @@ func TestParseToolCall_ReadFile(t *testing.T) {
 }
 
 func TestParseToolCall_WriteFile(t *testing.T) {
-	input := `[tool:write_file(path="/path/to/file.txt", content="Hello World")]`
+	input := `[TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello World"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -55,7 +54,7 @@ func TestParseToolCall_WriteFile(t *testing.T) {
 }
 
 func TestParseToolCall_ReadLines(t *testing.T) {
-	input := `[tool:read_lines(path="/path/to/file.txt", start=1, end=10)]`
+	input := `[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"10"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -76,7 +75,7 @@ func TestParseToolCall_ReadLines(t *testing.T) {
 }
 
 func TestParseToolCall_InsertLines(t *testing.T) {
-	input := `[tool:insert_lines(path="/path/to/file.txt", line=5, lines="new line 1\nnew line 2")]`
+	input := `[TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":"5","lines":"new line 1\nnew line 2"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -95,7 +94,7 @@ func TestParseToolCall_InsertLines(t *testing.T) {
 }
 
 func TestParseToolCall_ReplaceLines(t *testing.T) {
-	input := `[tool:replace_lines(path="/path/to/file.txt", start=1, end=5, lines="replacement")]`
+	input := `[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"5","lines":"replacement"}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -115,9 +114,10 @@ func TestParseToolCall_ReplaceLines(t *testing.T) {
 func TestParseToolCall_InvalidFormat(t *testing.T) {
 	tests := []string{
 		"not a tool call",
-		"[tool:]",
-		"[tool:bash]",
-		"tool:bash(command=\"test\")",
+		"[TOOL:]",
+		"[TOOL:]",
+		"TOOL:{\"name\":\"bash\"}",
+		"old format [tool:bash(command=\"test\")]",
 	}
 
 	for _, input := range tests {
@@ -129,7 +129,7 @@ func TestParseToolCall_InvalidFormat(t *testing.T) {
 }
 
 func TestParseToolCall_EmptyParams(t *testing.T) {
-	input := `[tool:bash()]`
+	input := `[TOOL:{"name":"bash","parameters":{}}]`
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse tool call: %v", err)
@@ -143,12 +143,38 @@ func TestParseToolCall_EmptyParams(t *testing.T) {
 	}
 }
 
+func TestParseToolCall_MissingName(t *testing.T) {
+	input := `[TOOL:{"parameters":{"command":"test"}}]`
+	_, err := ParseToolCall(input)
+	if err == nil {
+		t.Error("Expected error for missing name")
+	}
+}
+
+func TestParseToolCall_InvalidJSON(t *testing.T) {
+	input := `[TOOL:{not valid json}]`
+	_, err := ParseToolCall(input)
+	if err == nil {
+		t.Error("Expected error for invalid JSON")
+	}
+}
+
 func TestFormatToolCall_Bash(t *testing.T) {
 	params := map[string]string{"command": "ls -la"}
 	result := FormatToolCall("bash", params)
-	expected := `[tool:bash(command="ls -la")]`
-	if result != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, result)
+	
+	// Check that the result contains the tool name and parameters
+	if !strings.Contains(result, "bash") {
+		t.Errorf("Expected result to contain 'bash'")
+	}
+	if !strings.Contains(result, "command") {
+		t.Errorf("Expected result to contain 'command'")
+	}
+	if !strings.Contains(result, "ls -la") {
+		t.Errorf("Expected result to contain 'ls -la'")
+	}
+	if !strings.HasPrefix(result, "[TOOL:") || !strings.HasSuffix(result, "]") {
+		t.Errorf("Expected result to be wrapped in [TOOL:...]: %s", result)
 	}
 }
 
@@ -160,26 +186,14 @@ func TestFormatToolCall_WriteFile(t *testing.T) {
 	result := FormatToolCall("write_file", params)
 
 	// Check that the result contains the tool name and parameters
-	if !contains(result, "write_file") {
+	if !strings.Contains(result, "write_file") {
 		t.Errorf("Expected result to contain 'write_file'")
 	}
-	if !contains(result, "path") {
+	if !strings.Contains(result, "path") {
 		t.Errorf("Expected result to contain 'path'")
 	}
-	if !contains(result, "content") {
+	if !strings.Contains(result, "content") {
 		t.Errorf("Expected result to contain 'content'")
-	}
-}
-
-func TestFormatToolCall_NumericParams(t *testing.T) {
-	params := map[string]string{
-		"start": "1",
-		"end":   "10",
-	}
-	result := FormatToolCall("read_lines", params)
-	// Numeric values should not be quoted
-	if contains(result, "start=\"1\"") {
-		t.Errorf("Expected numeric params without quotes, got '%s'", result)
 	}
 }
 
@@ -188,21 +202,31 @@ func TestFormatToolCall_MultilineContent(t *testing.T) {
 		"content": "line1\nline2\nline3",
 	}
 	result := FormatToolCall("write_file", params)
-	// Multiline content should use raw mode
-	if !contains(result, RawStartMarker) {
-		t.Errorf("Expected raw mode marker in output, got '%s'", result)
+	
+	// Multiline content should be JSON-escaped
+	if !strings.Contains(result, "\\n") {
+		t.Errorf("Expected escaped newlines in output, got '%s'", result)
 	}
-	if !contains(result, RawEndMarker) {
-		t.Errorf("Expected raw mode end marker in output, got '%s'", result)
+}
+
+func TestFormatToolCall_SpecialChars(t *testing.T) {
+	params := map[string]string{
+		"command": `echo "Hello \"World\""`,
+	}
+	result := FormatToolCall("bash", params)
+	
+	// Check that quotes are properly escaped
+	if !strings.Contains(result, "\\\"") {
+		t.Errorf("Expected escaped quotes in output")
 	}
 }
 
 func TestExtractToolCalls(t *testing.T) {
 	text := `
 Here is my response:
-[tool:bash(command="ls -la")]
+[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
 And then I'll read the file:
-[tool:read_file(path="/tmp/test.txt")]
+[TOOL:{"name":"read_file","parameters":{"path":"/tmp/test.txt"}}]
 `
 	calls, err := ExtractToolCalls(text)
 	if err != nil {
@@ -233,6 +257,25 @@ func TestExtractToolCalls_None(t *testing.T) {
 	}
 }
 
+func TestExtractToolCalls_Multiline(t *testing.T) {
+	text := `
+I'll write a script:
+[TOOL:{"name":"write_file","parameters":{"path":"/tmp/test.sh","content":"#!/bin/bash\necho hello"}}]
+Done.
+`
+	calls, err := ExtractToolCalls(text)
+	if err != nil {
+		t.Fatalf("Failed to extract tool calls: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Errorf("Expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Name != "write_file" {
+		t.Errorf("Expected tool name 'write_file', got '%s'", calls[0].Name)
+	}
+}
+
 func TestFormatToolResult_Success(t *testing.T) {
 	result := ToolResult{
 		Success: true,
@@ -240,13 +283,13 @@ func TestFormatToolResult_Success(t *testing.T) {
 	}
 	formatted := FormatToolResult("bash", result)
 
-	if !contains(formatted, "bash") {
+	if !strings.Contains(formatted, "bash") {
 		t.Error("Expected formatted result to contain tool name")
 	}
-	if !contains(formatted, "successfully") {
+	if !strings.Contains(formatted, "successfully") {
 		t.Error("Expected formatted result to contain 'successfully'")
 	}
-	if !contains(formatted, "test output") {
+	if !strings.Contains(formatted, "test output") {
 		t.Error("Expected formatted result to contain output")
 	}
 }
@@ -258,13 +301,13 @@ func TestFormatToolResult_Failure(t *testing.T) {
 	}
 	formatted := FormatToolResult("read_file", result)
 
-	if !contains(formatted, "read_file") {
+	if !strings.Contains(formatted, "read_file") {
 		t.Error("Expected formatted result to contain tool name")
 	}
-	if !contains(formatted, "failed") {
+	if !strings.Contains(formatted, "failed") {
 		t.Error("Expected formatted result to contain 'failed'")
 	}
-	if !contains(formatted, "permission denied") {
+	if !strings.Contains(formatted, "permission denied") {
 		t.Error("Expected formatted result to contain error message")
 	}
 }
@@ -385,7 +428,7 @@ func TestTruncateOutput_Long(t *testing.T) {
 func TestTruncateOutput_Multiline(t *testing.T) {
 	lines := make([]string, 100)
 	for i := 0; i < 100; i++ {
-		lines[i] = fmt.Sprintf("line %d", i)
+		lines[i] = "line " + string(rune('0'+i))
 	}
 	output := strings.Join(lines, "\n")
 	
@@ -399,19 +442,6 @@ func TestTruncateOutput_Multiline(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
-
 type mockTool struct {
 	name string
 }
@@ -422,170 +452,44 @@ func (m *mockTool) Execute(params map[string]string) ToolResult {
 	return ToolResult{Success: true}
 }
 
-func TestParseToolCall_RawMode_WriteFile(t *testing.T) {
-	input := `[tool:write_file(path="/tmp/test.txt", content=<<<RAW>>>
-line 1
-line 2
-line 3
-<<<END_RAW>>>)]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse raw mode tool call: %v", err)
-	}
-
-	if call.Name != "write_file" {
-		t.Errorf("Expected tool name 'write_file', got '%s'", call.Name)
-	}
-	if call.Params["path"] != "/tmp/test.txt" {
-		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
-	}
-	expectedContent := "line 1\nline 2\nline 3"
-	if call.Params["content"] != expectedContent {
-		t.Errorf("Expected content '%s', got '%s'", expectedContent, call.Params["content"])
-	}
-}
-
-func TestParseToolCall_RawMode_InsertLines(t *testing.T) {
-	input := `[tool:insert_lines(path="/tmp/file.txt", line=5, lines=<<<RAW>>>
-new line 1
-new line 2
-<<<END_RAW>>>)]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse raw mode tool call: %v", err)
-	}
-
-	if call.Name != "insert_lines" {
-		t.Errorf("Expected tool name 'insert_lines', got '%s'", call.Name)
-	}
-	if call.Params["path"] != "/tmp/file.txt" {
-		t.Errorf("Expected path '/tmp/file.txt', got '%s'", call.Params["path"])
-	}
-	if call.Params["line"] != "5" {
-		t.Errorf("Expected line '5', got '%s'", call.Params["line"])
-	}
-	expectedLines := "new line 1\nnew line 2"
-	if call.Params["lines"] != expectedLines {
-		t.Errorf("Expected lines '%s', got '%s'", expectedLines, call.Params["lines"])
-	}
-}
-
-func TestParseToolCall_RawMode_MixedParams(t *testing.T) {
-	// Test with multiple standard params and one raw param
-	input := `[tool:write_file(path="/tmp/test.txt", mode="w", content=<<<RAW>>>
-#!/bin/bash
-echo "Hello"
-<<<END_RAW>>>)]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse raw mode tool call: %v", err)
-	}
-
-	if call.Params["path"] != "/tmp/test.txt" {
-		t.Errorf("Expected path '/tmp/test.txt', got '%s'", call.Params["path"])
-	}
-	if call.Params["mode"] != "w" {
-		t.Errorf("Expected mode 'w', got '%s'", call.Params["mode"])
-	}
-	expectedContent := "#!/bin/bash\necho \"Hello\""
-	if call.Params["content"] != expectedContent {
-		t.Errorf("Expected content '%s', got '%s'", expectedContent, call.Params["content"])
-	}
-}
-
-func TestFormatToolCall_RawMode(t *testing.T) {
-	params := map[string]string{
-		"path":    "/tmp/script.sh",
-		"content": "#!/bin/bash\necho 'Hello'",
-	}
-	result := FormatToolCall("write_file", params)
+func TestValidateToolCall(t *testing.T) {
+	params := map[string]string{"path": "/test.txt", "start": "1"}
 	
-	if !contains(result, "write_file") {
-		t.Error("Expected result to contain 'write_file'")
-	}
-	if !contains(result, RawStartMarker) {
-		t.Error("Expected result to contain raw start marker")
-	}
-	if !contains(result, RawEndMarker) {
-		t.Error("Expected result to contain raw end marker")
-	}
-	// Should not have escaped newlines
-	if contains(result, "\\n") {
-		t.Error("Expected no escaped newlines in raw mode")
-	}
-}
-
-func TestExtractToolCalls_RawMode(t *testing.T) {
-	text := `Here is my response:
-[tool:write_file(path="/tmp/test.txt", content=<<<RAW>>>
-line 1
-line 2
-<<<END_RAW>>>)]
-And then I'll read it.`
-	calls, err := ExtractToolCalls(text)
+	// Valid case
+	err := ValidateToolCall("read_lines", params, []string{"path", "start"})
 	if err != nil {
-		t.Fatalf("Failed to extract tool calls: %v", err)
+		t.Errorf("Expected no error for valid params, got %v", err)
 	}
-
-	if len(calls) != 1 {
-		t.Errorf("Expected 1 tool call, got %d", len(calls))
-	}
-	if calls[0].Name != "write_file" {
-		t.Errorf("Expected tool name 'write_file', got '%s'", calls[0].Name)
-	}
-}
-
-func TestSplitParams(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected []string
-	}{
-		{
-			input:    `path="/tmp/test.txt", content="hello"`,
-			expected: []string{`path="/tmp/test.txt"`, ` content="hello"`},
-		},
-		{
-			input:    `path="/tmp/test.txt"`,
-			expected: []string{`path="/tmp/test.txt"`},
-		},
-		{
-			input:    `a=1, b=2, c=3`,
-			expected: []string{`a=1`, ` b=2`, ` c=3`},
-		},
-	}
-
-	for _, tt := range tests {
-		result := splitParams(tt.input)
-		if len(result) != len(tt.expected) {
-			t.Errorf("Input %q: expected %d parts, got %d", tt.input, len(tt.expected), len(result))
-			continue
-		}
-		for i, exp := range tt.expected {
-			if result[i] != exp {
-				t.Errorf("Input %q: expected part %d to be %q, got %q", tt.input, i, exp, result[i])
-			}
-		}
-	}
-}
-
-func TestParseRawParams_Empty(t *testing.T) {
-	params := make(map[string]string)
-	err := parseRawParams("", params)
-	if err != nil {
-		t.Errorf("Expected no error for empty input, got %v", err)
-	}
-	if len(params) != 0 {
-		t.Errorf("Expected empty params, got %v", params)
-	}
-}
-
-func TestParseRawParams_MissingEndMarker(t *testing.T) {
-	params := make(map[string]string)
-	input := `content=<<<RAW>>>
-some content
-no end marker`
-	err := parseRawParams(input, params)
+	
+	// Invalid case - missing param
+	err = ValidateToolCall("read_lines", params, []string{"path", "start", "end"})
 	if err == nil {
-		t.Error("Expected error for missing end marker")
+		t.Error("Expected error for missing 'end' parameter")
+	}
+}
+
+func TestParseNumericParam(t *testing.T) {
+	params := map[string]string{"start": "10", "end": "20"}
+	
+	// Valid case
+	num, err := ParseNumericParam(params, "start")
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+	if num != 10 {
+		t.Errorf("Expected 10, got %d", num)
+	}
+	
+	// Invalid case - missing
+	_, err = ParseNumericParam(params, "missing")
+	if err == nil {
+		t.Error("Expected error for missing param")
+	}
+	
+	// Invalid case - not numeric
+	params["invalid"] = "not-a-number"
+	_, err = ParseNumericParam(params, "invalid")
+	if err == nil {
+		t.Error("Expected error for non-numeric value")
 	}
 }
