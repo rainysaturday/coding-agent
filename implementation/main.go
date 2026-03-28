@@ -1,18 +1,17 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-
 	"coding-agent/config"
 	"coding-agent/context"
 	"coding-agent/inference"
 	"coding-agent/stats"
 	"coding-agent/tools"
 	"coding-agent/tui"
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 // Version information injected at build time via ldflags
@@ -212,8 +211,8 @@ func main() {
 
 // processConversation handles a single user request, including tool calls
 func processConversation(ctx *context.Context, client *inference.InferenceClient,
-	registry *tools.ToolRegistry, stats *stats.Stats, maxIterations int, t *tui.TUI) error {
-
+	registry *tools.ToolRegistry, stats *stats.Stats, maxIterations int, t *tui.TUI,
+) error {
 	iterations := 0
 	for {
 		iterations++
@@ -249,7 +248,6 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 				t.DisplayError("Inference error: %v", err)
 			},
 		})
-
 		if err != nil {
 			return fmt.Errorf("inference failed: %w", err)
 		}
@@ -258,6 +256,12 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 		toolCalls, err := tools.ExtractToolCalls(assistantContent)
 		if err != nil {
 			t.DisplayError("Failed to parse tool calls: %v", err)
+			// Failing to extract tools is a failure from LLM since it has probably generated bad call syntax
+			stats.AddFailedToolCall()
+			// Display error prominently
+			t.AddOutputf("  \033[31mTool '%s' failed: %s\033[0m", "unknown", err)
+			errorMsg := fmt.Sprintf("Failed to parse tool calls: %s", err)
+			ctx.AddToolResult("unknown", false, errorMsg, errorMsg)
 			continue
 		}
 

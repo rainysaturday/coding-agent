@@ -113,7 +113,7 @@ func ParseToolCall(input string) (*ToolCall, error) {
 	// Parse JSON
 	var request ToolCallRequest
 	if err := json.Unmarshal([]byte(jsonStr), &request); err != nil {
-		return nil, fmt.Errorf("invalid JSON in tool call: %w", err)
+		return nil, fmt.Errorf("invalid JSON in tool call: '%w' for tool call %s", err, input)
 	}
 
 	if request.Name == "" {
@@ -156,7 +156,7 @@ func FormatToolCall(name string, params map[string]string) string {
 // Supports the JSON-based format: [TOOL:{...}]
 func ExtractToolCalls(text string) ([]*ToolCall, error) {
 	calls := make([]*ToolCall, 0)
-	
+
 	// Find all [TOOL:... patterns
 	searchStart := 0
 	for {
@@ -165,7 +165,7 @@ func ExtractToolCalls(text string) ([]*ToolCall, error) {
 			break
 		}
 		startIdx += searchStart // Adjust to global index
-		
+
 		// Find the matching closing ]
 		jsonStart := startIdx + 6 // len("[TOOL:")
 		braceCount := 0
@@ -200,8 +200,10 @@ func ExtractToolCalls(text string) ([]*ToolCall, error) {
 		call, err := ParseToolCall(toolCallStr)
 		if err == nil {
 			calls = append(calls, call)
+		} else {
+			return nil, err
 		}
-		
+
 		// Move past this tool call
 		searchStart = endIdx
 	}
