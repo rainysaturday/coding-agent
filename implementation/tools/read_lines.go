@@ -68,8 +68,8 @@ func (t *ReadLinesTool) Execute(params map[string]string) ToolResult {
 
 	if start > end {
 		return ToolResult{
-			Success: true,
-			Output:  "",
+			Success: false,
+			Error:   "Start must be before end",
 		}
 	}
 
