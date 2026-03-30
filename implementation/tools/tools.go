@@ -81,33 +81,15 @@ func ParseToolCall(input string) (*ToolCall, error) {
 	}
 
 	// Find the matching closing ]
-	// We need to handle nested braces in JSON
+	// We need to handle nested braces in JSON, accounting for strings
 	jsonStart := startIdx + 6 // len("[TOOL:")
-	braceCount := 0
-	foundOpen := false
-	endIdx := -1
-
-	for i := jsonStart; i < len(input); i++ {
-		if input[i] == '{' {
-			braceCount++
-			foundOpen = true
-		} else if input[i] == '}' {
-			braceCount--
-			if foundOpen && braceCount == 0 {
-				// Found the matching close brace
-				// Check if followed by ]
-				if i+1 < len(input) && input[i+1] == ']' {
-					endIdx = i + 1
-					break
-				}
-			}
-		}
-	}
+	endIdx := findMatchingJSONEnd(input, jsonStart)
 
 	if endIdx == -1 {
 		return nil, fmt.Errorf("invalid tool call format: %s", input)
 	}
 
+	// Extract JSON - endIdx points to the closing ]
 	jsonStr := input[jsonStart:endIdx]
 
 	// Parse JSON
@@ -133,6 +115,63 @@ func ParseToolCall(input string) (*ToolCall, error) {
 	}, nil
 }
 
+// findMatchingJSONEnd finds the end index of a JSON object starting at the given position
+// Properly handles nested objects, arrays, and strings with special characters
+// Returns the index of the closing ']' if found, or -1 if not found
+func findMatchingJSONEnd(s string, start int) int {
+	if start >= len(s) {
+		return -1
+	}
+
+	// The character at start should be '{' for valid JSON
+	if s[start] != '{' {
+		return -1
+	}
+
+	braceCount := 0
+	inString := false
+	escapeNext := false
+
+	for i := start; i < len(s); i++ {
+		c := s[i]
+
+		if escapeNext {
+			escapeNext = false
+			continue
+		}
+
+		if c == '\\' && inString {
+			escapeNext = true
+			continue
+		}
+
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+
+		if inString {
+			continue
+		}
+
+		if c == '{' {
+			braceCount++
+		} else if c == '}' {
+			braceCount--
+			if braceCount == 0 {
+				// Found the matching close brace
+				// Return index of ']' if present
+				if i+1 < len(s) && s[i+1] == ']' {
+					return i + 1
+				}
+				return i
+			}
+		}
+	}
+
+	return -1
+}
+
 // FormatToolCall formats a tool call from name and parameters using JSON format
 // Uses JSON escaping for special characters in values
 func FormatToolCall(name string, params map[string]string) string {
@@ -154,6 +193,7 @@ func FormatToolCall(name string, params map[string]string) string {
 
 // ExtractToolCalls extracts all tool calls from a text
 // Supports the JSON-based format: [TOOL:{...}]
+// Skips malformed tool calls and continues searching for valid ones
 func ExtractToolCalls(text string) ([]*ToolCall, error) {
 	calls := make([]*ToolCall, 0)
 
@@ -168,26 +208,7 @@ func ExtractToolCalls(text string) ([]*ToolCall, error) {
 
 		// Find the matching closing ]
 		jsonStart := startIdx + 6 // len("[TOOL:")
-		braceCount := 0
-		foundOpen := false
-		endIdx := -1
-
-		for i := jsonStart; i < len(text); i++ {
-			if text[i] == '{' {
-				braceCount++
-				foundOpen = true
-			} else if text[i] == '}' {
-				braceCount--
-				if foundOpen && braceCount == 0 {
-					// Found the matching close brace
-					// Check if followed by ]
-					if i+1 < len(text) && text[i+1] == ']' {
-						endIdx = i + 2 // Include the ]
-						break
-					}
-				}
-			}
-		}
+		endIdx := findMatchingJSONEnd(text, jsonStart)
 
 		if endIdx == -1 {
 			// No valid closing found, move past this [TOOL:
@@ -196,16 +217,15 @@ func ExtractToolCalls(text string) ([]*ToolCall, error) {
 		}
 
 		// Extract the tool call
-		toolCallStr := text[startIdx:endIdx]
+		toolCallStr := text[startIdx : endIdx+1]
 		call, err := ParseToolCall(toolCallStr)
 		if err == nil {
 			calls = append(calls, call)
-		} else {
-			return nil, err
 		}
+		// Skip malformed tool calls and continue searching
 
-		// Move past this tool call
-		searchStart = endIdx
+		// Move past this tool call attempt
+		searchStart = endIdx + 1
 	}
 
 	return calls, nil
