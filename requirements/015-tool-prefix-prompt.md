@@ -43,18 +43,18 @@ AVAILABLE TOOLS:
   Multi-line: [TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"line1\nline2"}}]
 
 - read_lines: Read a specific line range from a file
-  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":"line_number"}}]
-  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"10"}}]
+  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":line_number}}]
+  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
 
 - insert_lines: Insert lines at a specific line number
-  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":"line_number","lines":"lines to insert"}}]
-  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":"5","lines":"new line"}}]
-  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":"5","lines":"line1\nline2"}}]
+  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":line_number,"lines":"lines to insert"}}]
+  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
+  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
 
 - replace_lines: Replace a line range with new lines
-  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":"line_number","end":"line_number","lines":"replacement lines"}}]
-  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"5","lines":"new content"}}]
-  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":"1,"end":"3","lines":"line1\nline2"}}]
+  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
+  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
+  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":3,"lines":"line1\nline2"}}]
 
 TOOL CALLING RULES:
 - Use the exact JSON format shown above for tool calls
@@ -63,7 +63,7 @@ TOOL CALLING RULES:
 - Tool name must match exactly (case-sensitive, use underscore not hyphen)
 - Parameters must be in a JSON object under the "parameters" key
 - String values must be properly JSON-escaped (use \n for newlines, \" for quotes)
-- Numeric values are still strings (e.g. "start":"1")
+- Numeric values should be JSON numbers without quotes (e.g. "start":1, "end":10)
 
 Instructions:
 - Analyze the user's request and determine if tools are needed
