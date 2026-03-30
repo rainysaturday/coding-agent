@@ -1,9 +1,11 @@
 # Requirement 015: Tool Prefix Prompt
 
 ## Description
+
 The list of available tools and their JSON-based calling format must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the inference engine has consistent knowledge of available tools.
 
 ## Acceptance Criteria
+
 - [ ] Tool list is included in system prompt at the beginning of every conversation
 - [ ] Tool calling format is included in system prompt
 - [ ] System prompt is preserved during context compression
@@ -13,6 +15,10 @@ The list of available tools and their JSON-based calling format must ALWAYS be p
 - [ ] System prompt is sent with every inference request
 - [ ] System prompt remains constant throughout conversation lifecycle
 - [ ] System prompt is compressed along with context when needed
+- [ ] System prompt instructs agent to double-check and verify all work
+- [ ] Agent verifies correctness of files created/modified before considering task complete
+- [ ] Agent tests code execution or validates output when possible
+- [ ] Agent confirms changes match user requirements
 
 ## Implementation Details
 
@@ -26,29 +32,29 @@ AVAILABLE TOOLS:
   Format: [TOOL:{"name":"bash","parameters":{"command":"command string"}}]
   Example: [TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
   Multi-line: [TOOL:{"name":"bash","parameters":{"command":"line1\nline2\nline3"}}]
-  
+
 - read_file: Read the contents of a file
   Format: [TOOL:{"name":"read_file","parameters":{"path":"file path"}}]
   Example: [TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
-  
+
 - write_file: Write content to a file
   Format: [TOOL:{"name":"write_file","parameters":{"path":"file path","content":"file content"}}]
   Example: [TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello"}}]
   Multi-line: [TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"line1\nline2"}}]
-  
+
 - read_lines: Read a specific line range from a file
-  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":line_number}}]
-  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
-  
+  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":"line_number"}}]
+  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"10"}}]
+
 - insert_lines: Insert lines at a specific line number
-  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":line_number,"lines":"lines to insert"}}]
-  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
-  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
-  
+  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":"line_number","lines":"lines to insert"}}]
+  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":"5","lines":"new line"}}]
+  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":"5","lines":"line1\nline2"}}]
+
 - replace_lines: Replace a line range with new lines
-  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
-  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
-  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":3,"lines":"line1\nline2"}}]
+  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":"line_number","end":"line_number","lines":"replacement lines"}}]
+  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"5","lines":"new content"}}]
+  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":"1,"end":"3","lines":"line1\nline2"}}]
 
 TOOL CALLING RULES:
 - Use the exact JSON format shown above for tool calls
@@ -57,7 +63,7 @@ TOOL CALLING RULES:
 - Tool name must match exactly (case-sensitive, use underscore not hyphen)
 - Parameters must be in a JSON object under the "parameters" key
 - String values must be properly JSON-escaped (use \n for newlines, \" for quotes)
-- Numeric values should not be quoted (e.g., "start":1 not "start":"1")
+- Numeric values are still strings (e.g. "start":"1")
 
 Instructions:
 - Analyze the user's request and determine if tools are needed
@@ -66,7 +72,6 @@ Instructions:
 - Provide clear explanations of tool results
 - Continue the conversation after tool execution
 - Generate valid JSON inside the [TOOL:...] wrapper
-```
 
 ### System Prompt Management
 
@@ -85,16 +90,36 @@ During context compression:
 4. System prompt content is NOT summarized
 5. Only the conversation history is compressed
 
+VERIFICATION REQUIREMENTS:
+- ALWAYS double-check your work before considering a task complete
+- Verify that created/modified files exist and contain the expected content
+- Test code execution when possible (e.g., run go build, go test)
+- Validate that changes meet the user's requirements
+- If you make multiple changes, verify each one independently
+- Re-read files after writing to confirm content was written correctly
+- Run validation commands (e.g., `go vet`, `gofmt -d`, `cat` to view files)
+- If verification fails, fix the issue and re-verify
+- Provide a final verification summary before concluding the task
+
+Verification Checklist:
+1. Files exist at the expected paths
+2. File content matches the intended changes
+3. Code compiles without errors (for Go code)
+4. Code follows Go formatting standards (gofmt)
+5. Changes align with user requirements
+6. No unintended side effects or broken dependencies
 ### System Prompt Injection Point
 
 ```
+
 [SYSTEM PROMPT - ALWAYS FIRST]
 [USER MESSAGE 1]
 [ASSISTANT RESPONSE 1]
 [USER MESSAGE 2]
 [ASSISTANT RESPONSE 2]
 ...
-```
+
+````
 
 ## JSON Format Details
 
@@ -108,9 +133,10 @@ During context compression:
     "param3": "value with\nnewlines"
   }
 }
-```
+````
 
 ### Escaping Rules
+
 - Newlines: `\n`
 - Carriage returns: `\r`
 - Tabs: `\t`
@@ -119,6 +145,7 @@ During context compression:
 - Unicode: `\uXXXX`
 
 ### Common Mistakes to Avoid
+
 - Using old format `[tool:name(param="value")]` - NOT SUPPORTED
 - Forgetting the `parameters` key wrapper
 - Using hyphens instead of underscores in tool names
