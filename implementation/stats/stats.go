@@ -7,14 +7,14 @@ import (
 
 // Stats holds runtime statistics for the coding agent
 type Stats struct {
-	mu                sync.RWMutex
-	inputTokens       int64
-	outputTokens      int64
-	startTime         time.Time
-	lastUpdateTime    time.Time
-	totalToolCalls    int64
-	failedToolCalls   int64
-	iterationCount    int64
+	mu              sync.RWMutex
+	inputTokens     int64
+	outputTokens    int64
+	startTime       time.Time
+	lastUpdateTime  time.Time
+	totalToolCalls  int64
+	failedToolCalls int64
+	iterationCount  int64
 }
 
 // NewStats creates a new Stats instance
@@ -159,7 +159,7 @@ func (s *Stats) GetSummary() Summary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	elapsed := time.Since(s.startTime)
-	tokensPerSecond := float64(s.inputTokens+s.outputTokens)
+	tokensPerSecond := float64(s.inputTokens + s.outputTokens)
 	if elapsed.Seconds() > 0 {
 		tokensPerSecond = tokensPerSecond / elapsed.Seconds()
 	}

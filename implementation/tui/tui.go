@@ -12,18 +12,18 @@ import (
 
 // TUI represents the terminal user interface
 type TUI struct {
-	reader        *bufio.Reader
-	output        []string
-	stats         *stats.Stats
-	width         int
-	height        int
-	cursorLine    int
-	history       []string
-	historyIndex  int
-	maxHistory    int
-	gitHash       string
-	gitDirty      string
-	buildTime     string
+	reader       *bufio.Reader
+	output       []string
+	stats        *stats.Stats
+	width        int
+	height       int
+	cursorLine   int
+	history      []string
+	historyIndex int
+	maxHistory   int
+	gitHash      string
+	gitDirty     string
+	buildTime    string
 }
 
 // NewTUI creates a new TUI instance
@@ -75,20 +75,20 @@ func (t *TUI) ClearOutput() {
 // Returns the input string and a boolean indicating if escape was pressed
 func (t *TUI) ReadInput(prompt string) (string, bool, error) {
 	fmt.Print(prompt)
-	
+
 	var input strings.Builder
 	buffer := make([]byte, 1024)
 	canceled := false
-	
+
 	for {
 		n, err := t.reader.Read(buffer)
 		if err != nil {
 			return "", false, err
 		}
-		
+
 		for i := 0; i < n; i++ {
 			b := buffer[i]
-			
+
 			// Check for escape sequence
 			if b == 27 { // ESC
 				// Check for arrow keys or cancel
@@ -122,7 +122,7 @@ func (t *TUI) ReadInput(prompt string) (string, bool, error) {
 				fmt.Print("\r\033[2K" + prompt)
 				return "", true, nil
 			}
-			
+
 			switch b {
 			case '\n', '\r':
 				// Enter key - submit
@@ -180,7 +180,7 @@ func (t *TUI) DisplayWelcome() {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("  Minimal Coding Agent Harness")
 	fmt.Println(strings.Repeat("=", 60))
-	
+
 	// Display version information
 	status := t.gitDirty
 	if status == "clean" {
@@ -190,11 +190,11 @@ func (t *TUI) DisplayWelcome() {
 	} else {
 		fmt.Printf("  Version: %s\n", t.gitHash)
 	}
-	
+
 	if t.buildTime != "" {
 		fmt.Printf("  Built: %s\n", t.buildTime)
 	}
-	
+
 	fmt.Println()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
 	fmt.Println("Type 'stats' to view statistics, 'clear' to clear output.")
@@ -314,7 +314,7 @@ func (t *TUI) DisplayContextInfo(ctx *context.Context) {
 	if maxSize > 0 {
 		percentage = float64(tokenCount) / float64(maxSize) * 100
 	}
-	
+
 	var indicator string
 	if percentage > 90 {
 		indicator = " ⚠⚠"
@@ -323,6 +323,6 @@ func (t *TUI) DisplayContextInfo(ctx *context.Context) {
 	} else {
 		indicator = ""
 	}
-	
+
 	fmt.Printf("\r\033[2K[Tokens: %d / %d (%.1f%%)%s] ", tokenCount, maxSize, percentage, indicator)
 }

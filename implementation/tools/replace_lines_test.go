@@ -370,12 +370,12 @@ func TestReplaceLinesTool_Execute_ZeroStart(t *testing.T) {
 
 func TestParseReplaceLines_JSONFormat(t *testing.T) {
 	input := `[TOOL:{"name":"replace_lines","parameters":{"path":"/tmp/test.txt","start":"1","end":"3","lines":"replacement A\nreplacement B"}}]`
-	
+
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
-	
+
 	if call.Name != "replace_lines" {
 		t.Errorf("Expected 'replace_lines', got '%s'", call.Name)
 	}
@@ -398,32 +398,32 @@ func TestReplaceLines_Tool_JSONFormat(t *testing.T) {
 	// Create test file
 	testFile := "/tmp/replace_json_test.txt"
 	initialContent := "line 1\nline 2\nline 3\nline 4\n"
-	
+
 	if err := os.WriteFile(testFile, []byte(initialContent), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 	defer os.Remove(testFile)
-	
+
 	// Parse JSON format tool call
 	input := `[TOOL:{"name":"replace_lines","parameters":{"path":"/tmp/replace_json_test.txt","start":"2","end":"3","lines":"replaced A\nreplaced B"}}]`
-	
+
 	call, err := ParseToolCall(input)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
-	
+
 	// Execute
 	result := NewReplaceLinesTool().Execute(call.Params)
 	if !result.Success {
 		t.Fatalf("Expected success, got error: %s", result.Error)
 	}
-	
+
 	// Verify
 	content, err := os.ReadFile(testFile)
 	if err != nil {
 		t.Fatalf("Failed to read file: %v", err)
 	}
-	
+
 	expected := "line 1\nreplaced A\nreplaced B\nline 4\n"
 	if string(content) != expected {
 		t.Errorf("Expected:\n%q\nGot:\n%q", expected, string(content))
@@ -432,13 +432,13 @@ func TestReplaceLines_Tool_JSONFormat(t *testing.T) {
 
 func TestFormatReplaceLines_JSONFormat(t *testing.T) {
 	params := map[string]string{
-		"path": "/tmp/test.txt",
+		"path":  "/tmp/test.txt",
 		"start": "1",
-		"end": "5",
+		"end":   "5",
 		"lines": "line1\nline2\nline3",
 	}
 	result := FormatToolCall("replace_lines", params)
-	
+
 	if !strings.Contains(result, "replace_lines") {
 		t.Error("Expected 'replace_lines' in result")
 	}
@@ -449,5 +449,3 @@ func TestFormatReplaceLines_JSONFormat(t *testing.T) {
 		t.Error("Expected result to be wrapped in [TOOL:...]")
 	}
 }
-
-

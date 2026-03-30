@@ -162,7 +162,7 @@ func TestParseToolCall_InvalidJSON(t *testing.T) {
 func TestFormatToolCall_Bash(t *testing.T) {
 	params := map[string]string{"command": "ls -la"}
 	result := FormatToolCall("bash", params)
-	
+
 	// Check that the result contains the tool name and parameters
 	if !strings.Contains(result, "bash") {
 		t.Errorf("Expected result to contain 'bash'")
@@ -202,7 +202,7 @@ func TestFormatToolCall_MultilineContent(t *testing.T) {
 		"content": "line1\nline2\nline3",
 	}
 	result := FormatToolCall("write_file", params)
-	
+
 	// Multiline content should be JSON-escaped
 	if !strings.Contains(result, "\\n") {
 		t.Errorf("Expected escaped newlines in output, got '%s'", result)
@@ -214,7 +214,7 @@ func TestFormatToolCall_SpecialChars(t *testing.T) {
 		"command": `echo "Hello \"World\""`,
 	}
 	result := FormatToolCall("bash", params)
-	
+
 	// Check that quotes are properly escaped
 	if !strings.Contains(result, "\\\"") {
 		t.Errorf("Expected escaped quotes in output")
@@ -355,7 +355,7 @@ func TestGetRelevantParameter_Bash_LongCommand(t *testing.T) {
 	longCmd := "this is a very long command that should be truncated for display purposes"
 	params := map[string]string{"command": longCmd}
 	result := GetRelevantParameter("bash", params)
-	
+
 	if !strings.Contains(result, "command:") {
 		t.Error("Expected result to contain 'command:'")
 	}
@@ -416,7 +416,7 @@ func TestTruncateOutput_Short(t *testing.T) {
 func TestTruncateOutput_Long(t *testing.T) {
 	output := "line1\nline2\nline3\nline4\nline5"
 	result := TruncateOutput(output, 15)
-	
+
 	if !strings.Contains(result, "line1") {
 		t.Error("Expected result to contain first line")
 	}
@@ -431,9 +431,9 @@ func TestTruncateOutput_Multiline(t *testing.T) {
 		lines[i] = "line " + string(rune('0'+i))
 	}
 	output := strings.Join(lines, "\n")
-	
+
 	result := TruncateOutput(output, 50)
-	
+
 	if !strings.Contains(result, "line 0") {
 		t.Error("Expected result to contain first line")
 	}
@@ -446,21 +446,21 @@ type mockTool struct {
 	name string
 }
 
-func (m *mockTool) Name() string                         { return m.name }
-func (m *mockTool) Description() string                  { return "mock tool" }
+func (m *mockTool) Name() string        { return m.name }
+func (m *mockTool) Description() string { return "mock tool" }
 func (m *mockTool) Execute(params map[string]string) ToolResult {
 	return ToolResult{Success: true}
 }
 
 func TestValidateToolCall(t *testing.T) {
 	params := map[string]string{"path": "/test.txt", "start": "1"}
-	
+
 	// Valid case
 	err := ValidateToolCall("read_lines", params, []string{"path", "start"})
 	if err != nil {
 		t.Errorf("Expected no error for valid params, got %v", err)
 	}
-	
+
 	// Invalid case - missing param
 	err = ValidateToolCall("read_lines", params, []string{"path", "start", "end"})
 	if err == nil {
@@ -470,7 +470,7 @@ func TestValidateToolCall(t *testing.T) {
 
 func TestParseNumericParam(t *testing.T) {
 	params := map[string]string{"start": "10", "end": "20"}
-	
+
 	// Valid case
 	num, err := ParseNumericParam(params, "start")
 	if err != nil {
@@ -479,13 +479,13 @@ func TestParseNumericParam(t *testing.T) {
 	if num != 10 {
 		t.Errorf("Expected 10, got %d", num)
 	}
-	
+
 	// Invalid case - missing
 	_, err = ParseNumericParam(params, "missing")
 	if err == nil {
 		t.Error("Expected error for missing param")
 	}
-	
+
 	// Invalid case - not numeric
 	params["invalid"] = "not-a-number"
 	_, err = ParseNumericParam(params, "invalid")

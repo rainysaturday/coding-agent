@@ -334,7 +334,7 @@ func TestContextDisplay(t *testing.T) {
 func TestContextDisplayWarning(t *testing.T) {
 	s := stats.NewStats()
 	tui := NewTUI(s, "a1b2c3d", "clean", "2024-01-15T10:30:00Z")
-	
+
 	// Create context with small max size to trigger warning
 	ctx := context.NewContext("system", 50)
 	// Add enough content to exceed 75%

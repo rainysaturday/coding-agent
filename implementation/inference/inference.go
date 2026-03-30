@@ -22,8 +22,8 @@ type Message struct {
 
 // ToolDefinition represents a tool definition for the API
 type ToolDefinition struct {
-	Type        string          `json:"type"`
-	Function    ToolFunction    `json:"function"`
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
 }
 
 // ToolFunction represents the function definition for a tool
@@ -35,13 +35,13 @@ type ToolFunction struct {
 
 // Request represents a chat completion request
 type Request struct {
-	Model            string      `json:"model"`
-	Messages         []Message   `json:"messages"`
-	Stream           bool        `json:"stream"`
-	MaxTokens        int         `json:"max_tokens"`
-	Temperature      float64     `json:"temperature"`
-	ToolChoice       string      `json:"tool_choice,omitempty"`
-	Tools            []ToolDefinition `json:"tools,omitempty"`
+	Model       string           `json:"model"`
+	Messages    []Message        `json:"messages"`
+	Stream      bool             `json:"stream"`
+	MaxTokens   int              `json:"max_tokens"`
+	Temperature float64          `json:"temperature"`
+	ToolChoice  string           `json:"tool_choice,omitempty"`
+	Tools       []ToolDefinition `json:"tools,omitempty"`
 }
 
 // Response represents a chat completion response
@@ -76,29 +76,29 @@ type StreamChoice struct {
 
 // InferenceClient handles communication with the inference backend
 type InferenceClient struct {
-	endpoint         string
-	apiKey           string
-	model            string
-	maxTokens        int
+	endpoint            string
+	apiKey              string
+	model               string
+	maxTokens           int
 	initialTokenTimeout int
-	streamingEnabled bool
-	connectionTimeout int
-	readTimeout      int
-	httpClient       *http.Client
-	stats            *stats.Stats
+	streamingEnabled    bool
+	connectionTimeout   int
+	readTimeout         int
+	httpClient          *http.Client
+	stats               *stats.Stats
 }
 
 // NewInferenceClient creates a new inference client
 func NewInferenceClient(endpoint, apiKey, model string, maxTokens, initialTokenTimeout, connectionTimeout, readTimeout int, streamingEnabled bool, stats *stats.Stats) *InferenceClient {
 	return &InferenceClient{
-		endpoint:          endpoint,
-		apiKey:            apiKey,
-		model:             model,
-		maxTokens:         maxTokens,
+		endpoint:            endpoint,
+		apiKey:              apiKey,
+		model:               model,
+		maxTokens:           maxTokens,
 		initialTokenTimeout: initialTokenTimeout,
-		streamingEnabled:  streamingEnabled,
-		connectionTimeout: connectionTimeout,
-		readTimeout:       readTimeout,
+		streamingEnabled:    streamingEnabled,
+		connectionTimeout:   connectionTimeout,
+		readTimeout:         readTimeout,
 		httpClient: &http.Client{
 			Timeout: time.Duration(connectionTimeout) * time.Second,
 		},
@@ -108,10 +108,10 @@ func NewInferenceClient(endpoint, apiKey, model string, maxTokens, initialTokenT
 
 // ChatCompletionRequest represents a request for chat completion
 type ChatCompletionRequest struct {
-	Context        *context.Context
-	OnToken        func(token string)
-	OnComplete     func()
-	OnError        func(error)
+	Context    *context.Context
+	OnToken    func(token string)
+	OnComplete func()
+	OnError    func(error)
 }
 
 // ChatCompletion executes a chat completion request
@@ -128,10 +128,10 @@ func (c *InferenceClient) ChatCompletion(req ChatCompletionRequest) error {
 
 	// Create request body
 	request := Request{
-		Model:     c.model,
-		Messages:  messages,
-		Stream:    c.streamingEnabled,
-		MaxTokens: c.maxTokens,
+		Model:       c.model,
+		Messages:    messages,
+		Stream:      c.streamingEnabled,
+		MaxTokens:   c.maxTokens,
 		Temperature: 0.7,
 	}
 

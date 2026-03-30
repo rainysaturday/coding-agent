@@ -59,9 +59,10 @@ func (r *ToolRegistry) List() []string {
 }
 
 // ToolCallRequest represents the JSON structure for a tool call
+// Using map[string]interface{} to accept both string and numeric parameters
 type ToolCallRequest struct {
-	Name       string            `json:"name"`
-	Parameters map[string]string `json:"parameters"`
+	Name       string                 `json:"name"`
+	Parameters map[string]interface{} `json:"parameters"`
 }
 
 // ToolCall represents a parsed tool call
@@ -73,6 +74,7 @@ type ToolCall struct {
 
 // ParseToolCall parses a tool call string into a ToolCall struct
 // Format: [TOOL:{"name":"tool_name","parameters":{"param1":"value1",...}}]
+// Supports both string and numeric parameter values
 func ParseToolCall(input string) (*ToolCall, error) {
 	// Find the opening [TOOL:
 	startIdx := strings.Index(input, "[TOOL:")
@@ -103,9 +105,10 @@ func ParseToolCall(input string) (*ToolCall, error) {
 	}
 
 	// Convert parameters to map[string]string format
+	// Handle both string and numeric values
 	params := make(map[string]string)
 	for k, v := range request.Parameters {
-		params[k] = v
+		params[k] = valueToString(v)
 	}
 
 	return &ToolCall{
@@ -113,6 +116,32 @@ func ParseToolCall(input string) (*ToolCall, error) {
 		Params: params,
 		Raw:    input,
 	}, nil
+}
+
+// valueToString converts a JSON value to string, handling both strings and numbers
+func valueToString(v interface{}) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case float64:
+		// JSON numbers are unmarshaled as float64
+		if val == float64(int(val)) {
+			return strconv.Itoa(int(val))
+		}
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case bool:
+		return strconv.FormatBool(val)
+	case nil:
+		return ""
+	default:
+		// For other types, marshal to JSON string
+		b, _ := json.Marshal(val)
+		return string(b)
+	}
 }
 
 // findMatchingJSONEnd finds the end index of a JSON object starting at the given position
@@ -178,7 +207,17 @@ func FormatToolCall(name string, params map[string]string) string {
 	// Convert to ToolCallRequest format
 	request := ToolCallRequest{
 		Name:       name,
-		Parameters: params,
+		Parameters: make(map[string]interface{}),
+	}
+
+	// Convert string params to interface{} for proper JSON marshaling
+	for k, v := range params {
+		// Try to parse as number for cleaner JSON output
+		if num, err := strconv.Atoi(v); err == nil {
+			request.Parameters[k] = num
+		} else {
+			request.Parameters[k] = v
+		}
 	}
 
 	// Marshal to JSON
@@ -193,6 +232,7 @@ func FormatToolCall(name string, params map[string]string) string {
 
 // ExtractToolCalls extracts all tool calls from a text
 // Supports the JSON-based format: [TOOL:{...}]
+// Supports both string and numeric parameters
 // Skips malformed tool calls and continues searching for valid ones
 func ExtractToolCalls(text string) ([]*ToolCall, error) {
 	calls := make([]*ToolCall, 0)

@@ -412,14 +412,14 @@ func TestExtractToolCalls_Performance_LargeText(t *testing.T) {
 	// Create a very large text (simulating a long LLM response)
 	var textParts []string
 	textParts = append(textParts, "This is a very long response from the LLM.\n")
-	
+
 	// Add 50 tool calls
 	for i := 0; i < 50; i++ {
 		textParts = append(textParts, "\nLet me check file "+string(rune(i/10+48))+string(rune(i%10+48))+"\n")
 		textParts = append(textParts, `[TOOL:{"name":"read_file","parameters":{"path":"./file`+string(rune(i/10+48))+string(rune(i%10+48))+`.txt"}}]`)
 		textParts = append(textParts, "\n")
 	}
-	
+
 	textParts = append(textParts, "\nAll files have been checked.")
 	largeText := strings.Join(textParts, "")
 
