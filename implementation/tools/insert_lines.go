@@ -128,7 +128,13 @@ func (t *InsertLinesTool) Execute(params map[string]string) ToolResult {
 }
 
 // parseLines parses a string of lines separated by \n
+// Handles trailing newlines gracefully
 func parseLines(linesStr string) []string {
+	if linesStr == "" {
+		return []string{}
+	}
+	// Remove trailing newline if present to avoid empty string at end
+	linesStr = strings.TrimSuffix(linesStr, "\n")
 	if linesStr == "" {
 		return []string{}
 	}

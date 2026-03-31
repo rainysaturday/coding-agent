@@ -5,6 +5,7 @@ import (
 	"coding-agent/config"
 	"coding-agent/inference"
 	"coding-agent/stats"
+	"coding-agent/terminal"
 	"coding-agent/tools"
 	"coding-agent/tui"
 	"context"
@@ -710,42 +711,35 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 			ctx.Clear()
 		}
 
+		// Set terminal to raw mode for immediate ESC key detection
+		if err := terminal.SetRawMode(); err != nil {
+			// If we can't set raw mode, continue without ESC cancellation
+			// This is a fallback for non-TTY environments
+		}
+		// Ensure terminal mode is restored when done
+		defer terminal.RestoreMode()
+
 		// Create a cancellable context for this inference request
 		cancelCtx, cancel := context.WithCancel(context.Background())
 		cancelOnce := &sync.Once{}
 		inferenceFinished := make(chan struct{})
+		escCancelled := make(chan struct{})
 
 		// Set up ESC key listener in a separate goroutine
 		// This goroutine watches for ESC key press during inference
 		go func() {
 			buf := make([]byte, 1)
 			for {
-				// Use select to allow the goroutine to exit when inference finishes
-				readResult := make(chan struct {
-					n   int
-					err error
-				}, 1)
-				go func() {
-					n, err := os.Stdin.Read(buf)
-					readResult <- struct {
-						n   int
-						err error
-					}{n, err}
-				}()
-				select {
-				case result := <-readResult:
-					if result.err != nil {
-						close(inferenceFinished)
-						return
-					}
-					if result.n > 0 && buf[0] == 27 { // ESC key (ASCII 27)
-						cancelOnce.Do(cancel)
-						close(inferenceFinished)
-						return
-					}
-				case <-inferenceFinished:
+				n, err := os.Stdin.Read(buf)
+				if err != nil {
+					close(inferenceFinished)
 					return
-				case <-cancelCtx.Done():
+				}
+				if n > 0 && buf[0] == 27 { // ESC key (ASCII 27)
+					cancelOnce.Do(func() {
+						cancel()
+						close(escCancelled)
+					})
 					close(inferenceFinished)
 					return
 				}

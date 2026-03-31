@@ -363,3 +363,34 @@ func TestFormatInsertLines_JSONFormat(t *testing.T) {
 		t.Error("Expected result to be wrapped in [TOOL:...]")
 	}
 }
+
+func TestParseLines_TrailingNewline(t *testing.T) {
+	// Test that trailing newlines are handled correctly
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{"empty", "", []string{}},
+		{"single line", "hello", []string{"hello"}},
+		{"two lines", "hello\nworld", []string{"hello", "world"}},
+		{"trailing newline", "hello\n", []string{"hello"}},
+		{"two lines trailing", "hello\nworld\n", []string{"hello", "world"}},
+		{"multiple trailing", "hello\n\n", []string{"hello", ""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseLines(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("parseLines(%q) = %v, want %v", tt.input, result, tt.expected)
+				return
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("parseLines(%q)[%d] = %q, want %q", tt.input, i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}

@@ -449,3 +449,44 @@ func TestFormatReplaceLines_JSONFormat(t *testing.T) {
 		t.Error("Expected result to be wrapped in [TOOL:...]")
 	}
 }
+
+func TestReplaceLinesTool_Execute_WithTrailingNewline(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+
+	// Create a test file with 5 lines
+	originalContent := "line1\nline2\nline3\nline4\nline5\n"
+	err := os.WriteFile(testFile, []byte(originalContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Replace lines 2-4 with content that has a trailing newline
+	// This simulates what might happen if the LLM generates trailing newlines
+	replacementWithTrailingNewline := "new line A\nnew line B\n"
+
+	tool := NewReplaceLinesTool()
+	result := tool.Execute(map[string]string{
+		"path":  testFile,
+		"start": "2",
+		"end":   "4",
+		"lines": replacementWithTrailingNewline,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+
+	// Read the file and verify
+	contentBytes, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	fileContent := string(contentBytes)
+
+	// Expected: line1 + new line A + new line B + line5
+	expectedContent := "line1\nnew line A\nnew line B\nline5\n"
+	if fileContent != expectedContent {
+		t.Errorf("File content mismatch.\nGot:\n%q\nWant:\n%q", fileContent, expectedContent)
+	}
+}
