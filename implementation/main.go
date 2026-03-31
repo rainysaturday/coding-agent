@@ -728,6 +728,10 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 			ctx.Clear()
 		}
 
+		// Drain stdin before setting raw mode to clear any leftover bytes
+		// This prevents buffer desynchronization between bufio.Reader and raw reads
+		drainStdin()
+
 		// Set terminal to raw mode for immediate ESC key detection
 		if err := terminal.SetRawMode(); err != nil {
 			// If we can't set raw mode, continue without ESC cancellation
@@ -895,6 +899,33 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 	}
 
 	return nil
+}
+
+// drainStdin drains any pending bytes from stdin
+// This is called before setting raw mode to prevent buffer desynchronization
+// between the bufio.Reader used by TUI and the raw reads used by the ESC listener
+func drainStdin() {
+	buf := make([]byte, 1024)
+	for {
+		// Set a short timeout so we don't block indefinitely
+		os.Stdin.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+		n, err := os.Stdin.Read(buf)
+		os.Stdin.SetReadDeadline(time.Time{}) // Clear deadline
+
+		if err != nil {
+			// Timeout or EOF means no more pending input
+			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+				break
+			}
+			if err == io.EOF {
+				break
+			}
+			// Other errors - just continue
+			break
+		}
+		// Discard any bytes read
+		_ = n
+	}
 }
 
 // printHelp prints the help message
