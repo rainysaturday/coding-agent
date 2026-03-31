@@ -3,6 +3,7 @@ package inference
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"coding-agent/context"
+	codingcontext "coding-agent/context"
 	"coding-agent/stats"
 )
 
@@ -108,10 +109,12 @@ func NewInferenceClient(endpoint, apiKey, model string, maxTokens, initialTokenT
 
 // ChatCompletionRequest represents a request for chat completion
 type ChatCompletionRequest struct {
-	Context    *context.Context
-	OnToken    func(token string)
-	OnComplete func()
-	OnError    func(error)
+	Context      *codingcontext.Context
+	CancelCtx    context.Context // Context for cancellation (e.g., from ESC key)
+	OnToken      func(token string)
+	OnComplete   func()
+	OnError      func(error)
+	OnCancel     func()
 }
 
 // ChatCompletion executes a chat completion request
@@ -159,6 +162,18 @@ func (c *InferenceClient) ChatCompletion(req ChatCompletionRequest) error {
 }
 
 func (c *InferenceClient) nonStreamCompletion(req *http.Request, chatReq ChatCompletionRequest) error {
+	// Check for cancellation before making request
+	if chatReq.CancelCtx != nil {
+		select {
+		case <-chatReq.CancelCtx.Done():
+			if chatReq.OnCancel != nil {
+				chatReq.OnCancel()
+			}
+			return nil
+		default:
+		}
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -217,8 +232,23 @@ func (c *InferenceClient) streamCompletion(req *http.Request, chatReq ChatComple
 	scanner := bufio.NewScanner(resp.Body)
 	var fullContent strings.Builder
 	var totalTokens int
+	canceled := false
 
 	for scanner.Scan() {
+		// Check for cancellation
+		if chatReq.CancelCtx != nil {
+			select {
+			case <-chatReq.CancelCtx.Done():
+				canceled = true
+				cleanupRespBody(resp.Body)
+				break
+			default:
+			}
+		}
+		if canceled {
+			break
+		}
+
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
@@ -249,6 +279,13 @@ func (c *InferenceClient) streamCompletion(req *http.Request, chatReq ChatComple
 		}
 	}
 
+	if canceled {
+		if chatReq.OnCancel != nil {
+			chatReq.OnCancel()
+		}
+		return nil // Return nil to indicate graceful cancellation
+	}
+
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("error reading stream: %w", err)
 	}
@@ -264,4 +301,11 @@ func (c *InferenceClient) streamCompletion(req *http.Request, chatReq ChatComple
 	}
 
 	return nil
+}
+
+// cleanupRespBody closes the response body to free resources
+func cleanupRespBody(body io.ReadCloser) {
+	if body != nil {
+		body.Close()
+	}
 }

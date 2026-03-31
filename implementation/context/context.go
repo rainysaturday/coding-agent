@@ -111,6 +111,13 @@ func (c *Context) Clear() {
 	}
 }
 
+// RemoveLastMessage removes the last message from the context
+func (c *Context) RemoveLastMessage() {
+	if len(c.messages) > 1 { // Keep at least the system prompt
+		c.messages = c.messages[:len(c.messages)-1]
+	}
+}
+
 // GetRecentMessages returns the most recent messages
 func (c *Context) GetRecentMessages(count int) []Message {
 	if count >= len(c.messages) {

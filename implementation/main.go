@@ -3,11 +3,11 @@ package main
 import (
 	"bufio"
 	"coding-agent/config"
-	"coding-agent/context"
 	"coding-agent/inference"
 	"coding-agent/stats"
 	"coding-agent/tools"
 	"coding-agent/tui"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,9 +15,13 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// Import context package with alias to avoid naming conflict
+import ctxpkg "coding-agent/context"
 
 // Version information injected at build time via ldflags
 var (
@@ -328,7 +332,7 @@ func runOneShotMode(cfg *config.Config, prompt, promptShort, promptFile string,
 	toolRegistry.Register(tools.NewInsertLinesTool())
 	toolRegistry.Register(tools.NewReplaceLinesTool())
 
-	ctx := context.NewContext(systemPrompt, cfg.ContextSize)
+	ctx := ctxpkg.NewContext(systemPrompt, cfg.ContextSize)
 	startTime := time.Now()
 
 	// 3. Create inference client
@@ -374,7 +378,7 @@ func runOneShotMode(cfg *config.Config, prompt, promptShort, promptFile string,
 }
 
 // runAgent executes the main agent loop
-func runAgent(ctx *context.Context, client *inference.InferenceClient,
+func runAgent(ctx *ctxpkg.Context, client *inference.InferenceClient,
 	registry *tools.ToolRegistry, stats *stats.Stats, maxIterations int,
 	verbose, quiet bool, startTime time.Time) (*AgentResult, error) {
 
@@ -601,7 +605,7 @@ func runInteractiveMode(cfg *config.Config, noStream bool) error {
 	toolRegistry.Register(tools.NewReplaceLinesTool())
 
 	// Create context
-	ctx := context.NewContext(systemPrompt, cfg.ContextSize)
+	ctx := ctxpkg.NewContext(systemPrompt, cfg.ContextSize)
 
 	// Create inference client
 	client := inference.NewInferenceClient(
@@ -675,7 +679,7 @@ func runInteractiveMode(cfg *config.Config, noStream bool) error {
 			// Remove the failed user message from context
 			messages := ctx.GetMessages()
 			if len(messages) > 0 {
-				ctx = context.NewContext(systemPrompt, cfg.ContextSize)
+				ctx = ctxpkg.NewContext(systemPrompt, cfg.ContextSize)
 				// Restore system prompt and any successful conversation
 			}
 		}
@@ -683,7 +687,8 @@ func runInteractiveMode(cfg *config.Config, noStream bool) error {
 }
 
 // processConversation handles a single user request, including tool calls
-func processConversation(ctx *context.Context, client *inference.InferenceClient,
+// processConversation handles a single user request, including tool calls
+func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 	registry *tools.ToolRegistry, stats *stats.Stats, maxIterations int, t *tui.TUI,
 ) error {
 	iterations := 0
@@ -705,11 +710,61 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 			ctx.Clear()
 		}
 
+		// Create a cancellable context for this inference request
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		cancelOnce := &sync.Once{}
+		inferenceFinished := make(chan struct{})
+
+		// Set up ESC key listener in a separate goroutine
+		// This goroutine watches for ESC key press during inference
+		go func() {
+			buf := make([]byte, 1)
+			for {
+				// Use select to allow the goroutine to exit when inference finishes
+				readResult := make(chan struct {
+					n   int
+					err error
+				}, 1)
+				go func() {
+					n, err := os.Stdin.Read(buf)
+					readResult <- struct {
+						n   int
+						err error
+					}{n, err}
+				}()
+				select {
+				case result := <-readResult:
+					if result.err != nil {
+						close(inferenceFinished)
+						return
+					}
+					if result.n > 0 && buf[0] == 27 { // ESC key (ASCII 27)
+						cancelOnce.Do(cancel)
+						close(inferenceFinished)
+						return
+					}
+				case <-inferenceFinished:
+					return
+				case <-cancelCtx.Done():
+					close(inferenceFinished)
+					return
+				}
+			}
+		}()
+
 		// Send to inference client
 		var assistantContent string
+		var canceled bool
 		err := client.ChatCompletion(inference.ChatCompletionRequest{
-			Context: ctx,
+			Context:   ctx,
+			CancelCtx: cancelCtx,
 			OnToken: func(token string) {
+				// Check for cancellation before adding token
+				select {
+				case <-cancelCtx.Done():
+					return
+				default:
+				}
 				assistantContent += token
 				fmt.Print(token)
 			},
@@ -720,7 +775,27 @@ func processConversation(ctx *context.Context, client *inference.InferenceClient
 			OnError: func(err error) {
 				t.DisplayError("Inference error: %v", err)
 			},
+			OnCancel: func() {
+				canceled = true
+				fmt.Println("\nRequest cancelled")
+			},
 		})
+
+		// Signal that inference is finished
+		close(inferenceFinished)
+		cancel() // Clean up the cancel function
+
+		// Check if cancelled
+		if canceled {
+			// Don't add incomplete response to context
+			// Remove the last user message that triggered this request
+			messages := ctx.GetMessages()
+			if len(messages) > 0 && messages[len(messages)-1].Role == "user" {
+				ctx.RemoveLastMessage()
+			}
+			return nil
+		}
+
 		if err != nil {
 			return fmt.Errorf("inference failed: %w", err)
 		}
