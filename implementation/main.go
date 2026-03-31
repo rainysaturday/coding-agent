@@ -740,6 +740,7 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 		// Create a cancellable context for this inference request
 		cancelCtx, cancel := context.WithCancel(context.Background())
 		cancelOnce := &sync.Once{}
+		closeFinishedOnce := &sync.Once{}
 		inferenceFinished := make(chan struct{})
 		escCancelled := make(chan struct{})
 
@@ -750,7 +751,9 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 			for {
 				n, err := os.Stdin.Read(buf)
 				if err != nil {
-					close(inferenceFinished)
+					closeFinishedOnce.Do(func() {
+						close(inferenceFinished)
+					})
 					return
 				}
 				if n > 0 && buf[0] == 27 { // ESC key (ASCII 27)
@@ -758,7 +761,9 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 						cancel()
 						close(escCancelled)
 					})
-					close(inferenceFinished)
+					closeFinishedOnce.Do(func() {
+						close(inferenceFinished)
+					})
 					return
 				}
 			}
@@ -794,7 +799,9 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 		})
 
 		// Signal that inference is finished
-		close(inferenceFinished)
+		closeFinishedOnce.Do(func() {
+			close(inferenceFinished)
+		})
 		cancel() // Clean up the cancel function
 
 		// Check if cancelled
