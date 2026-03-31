@@ -706,7 +706,6 @@ func runInteractiveMode(cfg *config.Config, noStream bool) error {
 }
 
 // processConversation handles a single user request, including tool calls
-// processConversation handles a single user request, including tool calls
 func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 	registry *tools.ToolRegistry, stats *stats.Stats, maxIterations int, t *tui.TUI,
 ) error {
@@ -734,35 +733,44 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 			// If we can't set raw mode, continue without ESC cancellation
 			// This is a fallback for non-TTY environments
 		}
-		// Ensure terminal mode is restored when done
-		defer terminal.RestoreMode()
 
 		// Create a cancellable context for this inference request
 		cancelCtx, cancel := context.WithCancel(context.Background())
 		cancelOnce := &sync.Once{}
-		closeFinishedOnce := &sync.Once{}
-		inferenceFinished := make(chan struct{})
 		escCancelled := make(chan struct{})
+		stopEscListener := make(chan struct{})
+		escListenerDone := make(chan struct{})
 
 		// Set up ESC key listener in a separate goroutine
 		// This goroutine watches for ESC key press during inference
 		go func() {
+			defer close(escListenerDone)
 			buf := make([]byte, 1)
 			for {
+				// Use a non-blocking check to see if we should stop
+				select {
+				case <-stopEscListener:
+					return
+				default:
+				}
+
+				// Set a short timeout for reading so we can check stop signal
+				// We need to read with a timeout to allow checking stopEscListener
+				os.Stdin.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 				n, err := os.Stdin.Read(buf)
+				os.Stdin.SetReadDeadline(time.Time{}) // Clear deadline
+
 				if err != nil {
-					closeFinishedOnce.Do(func() {
-						close(inferenceFinished)
-					})
+					// Timeout or other error - continue loop to check stop signal
+					if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
+						continue
+					}
 					return
 				}
 				if n > 0 && buf[0] == 27 { // ESC key (ASCII 27)
 					cancelOnce.Do(func() {
 						cancel()
 						close(escCancelled)
-					})
-					closeFinishedOnce.Do(func() {
-						close(inferenceFinished)
 					})
 					return
 				}
@@ -798,11 +806,11 @@ func processConversation(ctx *ctxpkg.Context, client *inference.InferenceClient,
 			},
 		})
 
-		// Signal that inference is finished
-		closeFinishedOnce.Do(func() {
-			close(inferenceFinished)
-		})
+		// Signal the ESC listener to stop and wait for it to finish
+		close(stopEscListener)
+		<-escListenerDone
 		cancel() // Clean up the cancel function
+		terminal.RestoreMode() // Restore terminal mode after each inference call
 
 		// Check if cancelled
 		if canceled {
