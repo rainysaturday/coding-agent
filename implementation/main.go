@@ -58,10 +58,19 @@ AVAILABLE TOOLS:
   Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
   Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
 
-- replace_lines: Replace a line range with new lines
+- replace_lines: Replace content in a file (two modes available)
+
+  MODE 1: Line-number mode - Replace lines at specific positions
   Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
   Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
-  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":3,"lines":"line1\nline2"}}]
+  Use when: You know exact line numbers from reading the file first
+
+  MODE 2: Search-and-replace mode - Find and replace text patterns (RECOMMENDED for LLMs)
+  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","search":"text to find","replace":"replacement text"}}]
+  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"./main.go","search":"oldFunction","replace":"newFunction"}}]
+  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"./file.txt","search":"old\nlines","replace":"new\nlines"}}]
+  Replace all: [TOOL:{"name":"replace_lines","parameters":{"path":"./file.txt","search":"TODO","replace":"DONE","count":"all"}}]
+  Use when: You know the text to find but not the exact line numbers
 
 TOOL CALLING RULES:
 - Use the exact JSON format shown above for tool calls
@@ -79,6 +88,15 @@ Instructions:
 - Provide clear explanations of tool results
 - Continue the conversation after tool execution
 - Generate valid JSON inside the [TOOL:...] wrapper
+
+FILE MODIFICATION BEST PRACTICES:
+- ALWAYS read a file first using read_file or read_lines before modifying it
+- PREFER search-and-replace mode over line-number mode when possible (less error-prone)
+- For search-and-replace: Use a unique search pattern to avoid unintended replacements
+- For line-number mode: Double-check line numbers match what you read from the file
+- After any file modification, read the file again to verify the changes
+- If a search-and-replace fails (text not found), re-read the file and adjust your search pattern
+- Be careful with multi-line replacements - ensure proper JSON escaping (\n for newlines)
 
 VERIFICATION REQUIREMENTS:
 - ALWAYS double-check your work before considering a task complete

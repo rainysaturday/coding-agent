@@ -17,8 +17,9 @@ func TestReplaceLinesTool_Name(t *testing.T) {
 func TestReplaceLinesTool_Description(t *testing.T) {
 	tool := NewReplaceLinesTool()
 	desc := tool.Description()
-	if desc != "Replace a line range with new lines" {
-		t.Errorf("Expected description 'Replace a line range with new lines', got '%s'", desc)
+	// Description should mention search-and-replace capability
+	if !strings.Contains(desc, "search") && !strings.Contains(desc, "Replace lines") {
+		t.Errorf("Expected description to mention search-and-replace or line replacement, got '%s'", desc)
 	}
 }
 
