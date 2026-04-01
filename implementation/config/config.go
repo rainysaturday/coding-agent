@@ -46,6 +46,7 @@ func DefaultConfig() *Config {
 		ContextSize:         128000,
 		Streaming:           true,
 		InitialTokenTimeout: 7200, // 2 hours default
+		APIEndpoint:         "http://localhost:8080", // llama.cpp default
 	}
 }
 
