@@ -108,7 +108,7 @@ func (t *TUI) StreamEnd() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Add newline after stream completes
+	// Ensure we're on a new line
 	fmt.Println()
 
 	// Store the complete streamed content in output
@@ -117,6 +117,7 @@ func (t *TUI) StreamEnd() {
 		t.output = append(t.output, content)
 	}
 	t.streamBuffer.Reset()
+	t.streaming = false
 }
 
 // StartStream begins a new streaming session.

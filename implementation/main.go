@@ -317,8 +317,16 @@ func runInteractiveMode(cfg *config.Config) error {
 				result, err = ag.Run(ctx, userInput)
 			}
 
+			// Check for cancellation
+			select {
+			case <-ctx.Done():
+				fmt.Println("\n[Cancelled]")
+				return
+			default:
+			}
+
 			if err != nil {
-				tuiInstance.AddOutput(fmt.Sprintf("\nError: %v", err))
+				fmt.Printf("\nError: %v\n", err)
 				return
 			}
 

@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ type Step struct {
 	Action      string
 	ToolCall    *tools.ToolCall
 	ToolResult  *tools.ToolResult
+	StreamMsg   string // Status message streamed to user
 }
 
 // Result represents the final result of an agent run.
@@ -135,6 +137,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		if len(response.ToolCalls) > 0 {
 			// Execute tool calls
 			for _, tc := range response.ToolCalls {
+				// Stream tool call status to user
+				streamStatus(tc.Name, tc.Parameters, a.streamCallback)
+
 				step := Step{
 					Action:   fmt.Sprintf("Calling tool: %s", tc.Name),
 					ToolCall: tc,
@@ -143,6 +148,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Execute the tool
 				result := a.toolExecutor.Execute(tc)
 				step.ToolResult = result
+
+				// Stream tool result status to user
+				streamResult(tc.Name, result, a.streamCallback)
+				step.StreamMsg = formatToolStatus(tc.Name, result)
 
 				steps = append(steps, step)
 
@@ -262,14 +271,151 @@ func (a *Agent) GetContextSize() int {
 	return total
 }
 
-// formatResult formats a tool result for display.
+// formatResult formats a tool result for display with truncation.
 func formatResult(result *tools.ToolResult) string {
 	if result.Extra != nil {
 		if msg, ok := result.Extra["message"].(string); ok {
 			return msg
 		}
 	}
-	return result.Output
+	
+	// Truncate output if too long (max 10 lines)
+	output := result.Output
+	lines := strings.Split(output, "\n")
+	if len(lines) > 10 {
+		lines = lines[:10]
+		output = strings.Join(lines, "\n") + "\n... [output truncated]"
+	}
+	return output
+}
+
+// streamStatus streams a tool call status message.
+func streamStatus(toolName string, params map[string]interface{}, callback StreamCallback) {
+	if callback == nil {
+		return
+	}
+	
+	var msg string
+	switch toolName {
+	case "bash":
+		cmd := ""
+		if p, ok := params["command"].(string); ok {
+			cmd = p
+			if len(cmd) > 50 {
+				cmd = cmd[:50] + "..."
+			}
+		}
+		msg = fmt.Sprintf("\n[Running] bash: %s\n", cmd)
+	case "read_file":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n[Reading] file: %s\n", path)
+	case "read_lines":
+		path := ""
+		start, end := 0, 0
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		if p, ok := params["start"].(float64); ok {
+			start = int(p)
+		}
+		if p, ok := params["end"].(float64); ok {
+			end = int(p)
+		}
+		msg = fmt.Sprintf("\n[Reading] lines %d-%d from: %s\n", start, end, path)
+	case "write_file":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n[Writing] file: %s\n", path)
+	case "insert_lines":
+		path := ""
+		line := 0
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		if p, ok := params["line"].(float64); ok {
+			line = int(p)
+		}
+		msg = fmt.Sprintf("\n[Inserting] at line %d in: %s\n", line, path)
+	case "replace_lines":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n[Replacing] in file: %s\n", path)
+	default:
+		msg = fmt.Sprintf("\n[Running] tool: %s\n", toolName)
+	}
+	callback(msg)
+}
+
+// streamResult streams a tool result status message.
+func streamResult(toolName string, result *tools.ToolResult, callback StreamCallback) {
+	if callback == nil {
+		return
+	}
+	
+	status := formatToolStatus(toolName, result)
+	callback(status)
+}
+
+// formatToolStatus formats a tool status message for display.
+func formatToolStatus(toolName string, result *tools.ToolResult) string {
+	if result.Success {
+		switch toolName {
+		case "bash":
+			// Show exit code and truncated output
+			output := result.Output
+			lines := strings.Split(output, "\n")
+			if len(lines) > 5 {
+				lines = lines[:5]
+				output = strings.Join(lines, "\n") + "\n... [output truncated]"
+			}
+			return fmt.Sprintf("[Success] bash completed\nOutput:\n%s\n", output)
+		case "read_file":
+			output := result.Output
+			lines := strings.Split(output, "\n")
+			if len(lines) > 10 {
+				lines = lines[:10]
+				output = strings.Join(lines, "\n") + "\n... [content truncated]"
+			}
+			return fmt.Sprintf("[Success] read %d lines\nContent:\n%s\n", len(lines), output)
+		case "read_lines":
+			output := result.Output
+			lines := strings.Split(output, "\n")
+			if len(lines) > 10 {
+				lines = lines[:10]
+				output = strings.Join(lines, "\n") + "\n... [content truncated]"
+			}
+			return fmt.Sprintf("[Success] read %d lines\nContent:\n%s\n", len(lines), output)
+		case "write_file":
+			if msg, ok := result.Extra["message"].(string); ok {
+				return fmt.Sprintf("[Success] %s\n", msg)
+			}
+			return "[Success] file written\n"
+		case "insert_lines":
+			count := 0
+			if c, ok := result.Extra["linesInserted"].(int); ok {
+				count = c
+			}
+			return fmt.Sprintf("[Success] inserted %d line(s)\n", count)
+		case "replace_lines":
+			count := 0
+			if c, ok := result.Extra["replacementsMade"].(int); ok {
+				count = c
+			} else if c, ok := result.Extra["linesReplaced"].(int); ok {
+				count = c
+			}
+			return fmt.Sprintf("[Success] replaced %d line(s)\n", count)
+		default:
+			return "[Success] tool completed\n"
+		}
+	}
+	return fmt.Sprintf("[Failed] %s\nError: %s\n", toolName, result.Error)
 }
 
 // buildSystemPrompt builds the system prompt with tool definitions.
