@@ -1,169 +1,193 @@
+// Package config handles configuration for the coding agent.
 package config
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-// Config holds all configuration for the coding agent
+// Config holds all configuration for the agent.
 type Config struct {
-	// Inference backend configuration
-	InferenceEndpoint string `json:"inference_endpoint"`
-	APIKey            string `json:"api_key"`
-	Model             string `json:"model"`
+	// Mode
+	Prompt       string
+	PromptFile   string
+	UseStdin     bool
+	ShowHelp     bool
+	ShowVersion  bool
 
-	// Context configuration
-	ContextSize int `json:"context_size"`
+	// Inference settings
+	Model        string
+	Temperature  float64
+	MaxTokens    int
+	ContextSize  int
+	Streaming    bool
 
-	// Streaming configuration
-	InitialTokenTimeout int  `json:"initial_token_timeout"`
-	StreamingEnabled    bool `json:"streaming_enabled"`
+	// API settings
+	APIEndpoint  string
+	APIKey       string
 
-	// Connection configuration
-	ConnectionTimeout int `json:"connection_timeout"`
-	ReadTimeout       int `json:"read_timeout"`
+	// Output settings
+	Verbose      bool
+	Quiet        bool
+	OutputFile   string
 
-	// Iteration configuration
-	MaxIterations int `json:"max_iterations"`
-
-	// Config file path
-	ConfigFile string `json:"-"`
+	// Timeout settings (in seconds)
+	InitialTokenTimeout int
 }
 
-// DefaultConfig returns a Config with default values
+// DefaultConfig returns a config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		InferenceEndpoint:   "http://localhost:8080/v1",
-		APIKey:              "not-needed",
-		Model:               "llama-cpp",
+		Model:               "llama3",
+		Temperature:         0.7,
+		MaxTokens:           4096,
 		ContextSize:         128000,
-		InitialTokenTimeout: 7200, // 2 hours
-		StreamingEnabled:    true,
-		ConnectionTimeout:   30,
-		ReadTimeout:         300,
-		MaxIterations:       50,
-		ConfigFile:          defaultConfigPath(),
+		Streaming:           true,
+		InitialTokenTimeout: 7200, // 2 hours default
 	}
 }
 
-func defaultConfigPath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return ".coding-agent-config.json"
-	}
-	return filepath.Join(homeDir, ".coding-agent-config.json")
-}
-
-// Load loads configuration from file, environment variables, and command-line flags
-func Load(configFile string) (*Config, error) {
+// ParseArgs parses command-line arguments and returns a Config.
+func ParseArgs(args []string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Load from config file if exists
-	if configFile != "" {
-		cfg.ConfigFile = configFile
-		if err := cfg.loadFromFile(); err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-	} else if cfg.ConfigFile != "" {
-		if err := cfg.loadFromFile(); err != nil && !os.IsNotExist(err) {
-			return nil, err
+	// Load from environment variables first
+	loadEnv(cfg)
+
+	// Parse command-line arguments
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch arg {
+		case "-h", "--help":
+			cfg.ShowHelp = true
+		case "-v", "--version":
+			cfg.ShowVersion = true
+		case "-p", "--prompt":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--prompt requires an argument")
+			}
+			i++
+			cfg.Prompt = args[i]
+		case "--stdin":
+			cfg.UseStdin = true
+		case "--prompt-file":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--prompt-file requires an argument")
+			}
+			i++
+			cfg.PromptFile = args[i]
+		case "--model":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--model requires an argument")
+			}
+			i++
+			cfg.Model = args[i]
+		case "--temperature":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--temperature requires an argument")
+			}
+			i++
+			temp, err := strconv.ParseFloat(args[i], 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid temperature: %v", err)
+			}
+			cfg.Temperature = temp
+		case "--max-tokens":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--max-tokens requires an argument")
+			}
+			i++
+			maxTokens, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid max-tokens: %v", err)
+			}
+			cfg.MaxTokens = maxTokens
+		case "--context-size":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--context-size requires an argument")
+			}
+			i++
+			ctxSize, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid context-size: %v", err)
+			}
+			cfg.ContextSize = ctxSize
+		case "--no-stream":
+			cfg.Streaming = false
+		case "--verbose":
+			cfg.Verbose = true
+		case "--quiet":
+			cfg.Quiet = true
+		case "--output":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--output requires an argument")
+			}
+			i++
+			cfg.OutputFile = args[i]
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, fmt.Errorf("unknown flag: %s", arg)
+			}
 		}
 	}
 
-	// Override with environment variables
-	cfg.loadFromEnv()
+	// Validate config
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
 
-func (c *Config) loadFromFile() error {
-	data, err := os.ReadFile(c.ConfigFile)
-	if err != nil {
-		return err
+// loadEnv loads configuration from environment variables.
+func loadEnv(cfg *Config) {
+	if val := os.Getenv("CODING_AGENT_MODEL"); val != "" {
+		cfg.Model = val
 	}
-	return json.Unmarshal(data, c)
-}
-
-func (c *Config) loadFromEnv() {
-	if v := os.Getenv("CODING_AGENT_ENDPOINT"); v != "" {
-		c.InferenceEndpoint = v
-	}
-	if v := os.Getenv("CODING_AGENT_API_KEY"); v != "" {
-		c.APIKey = v
-	}
-	if v := os.Getenv("CODING_AGENT_MODEL"); v != "" {
-		c.Model = v
-	}
-	if v := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); v != "" {
-		if size, err := strconv.Atoi(v); err == nil && size > 0 {
-			c.ContextSize = size
+	if val := os.Getenv("CODING_AGENT_TEMPERATURE"); val != "" {
+		if temp, err := strconv.ParseFloat(val, 64); err == nil {
+			cfg.Temperature = temp
 		}
 	}
-	if v := os.Getenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT"); v != "" {
-		if timeout, err := strconv.Atoi(v); err == nil && timeout >= 10 {
-			c.InitialTokenTimeout = timeout
+	if val := os.Getenv("CODING_AGENT_MAX_TOKENS"); val != "" {
+		if maxTokens, err := strconv.Atoi(val); err == nil {
+			cfg.MaxTokens = maxTokens
 		}
 	}
-	if v := os.Getenv("CODING_AGENT_STREAMING"); v != "" {
-		c.StreamingEnabled = strings.ToLower(v) != "false"
-	}
-	if v := os.Getenv("CODING_AGENT_CONNECTION_TIMEOUT"); v != "" {
-		if timeout, err := strconv.Atoi(v); err == nil && timeout > 0 {
-			c.ConnectionTimeout = timeout
+	if val := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); val != "" {
+		if ctxSize, err := strconv.Atoi(val); err == nil {
+			cfg.ContextSize = ctxSize
 		}
 	}
-	if v := os.Getenv("CODING_AGENT_READ_TIMEOUT"); v != "" {
-		if timeout, err := strconv.Atoi(v); err == nil && timeout > 0 {
-			c.ReadTimeout = timeout
+	if val := os.Getenv("CODING_AGENT_API_ENDPOINT"); val != "" {
+		cfg.APIEndpoint = val
+	}
+	if val := os.Getenv("CODING_AGENT_API_KEY"); val != "" {
+		cfg.APIKey = val
+	}
+	if val := os.Getenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil {
+			cfg.InitialTokenTimeout = timeout
 		}
 	}
-	if v := os.Getenv("CODING_AGENT_MAX_ITERATIONS"); v != "" {
-		if max, err := strconv.Atoi(v); err == nil && max > 0 {
-			c.MaxIterations = max
+	// Streaming can be disabled via env var
+	if val := os.Getenv("CODING_AGENT_STREAMING"); val != "" {
+		if val == "false" || val == "0" {
+			cfg.Streaming = false
 		}
 	}
 }
 
-// Save saves the configuration to the config file
-func (c *Config) Save() error {
-	data, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(c.ConfigFile, data, 0644)
-}
-
-// Validate validates the configuration
+// Validate validates the configuration.
 func (c *Config) Validate() error {
 	if c.ContextSize <= 0 {
-		return &ConfigError{"context_size must be positive"}
+		return fmt.Errorf("context size must be positive")
 	}
 	if c.InitialTokenTimeout < 10 {
-		return &ConfigError{"initial_token_timeout must be at least 10 seconds"}
-	}
-	if c.ConnectionTimeout <= 0 {
-		return &ConfigError{"connection_timeout must be positive"}
-	}
-	if c.ReadTimeout <= 0 {
-		return &ConfigError{"read_timeout must be positive"}
-	}
-	if c.MaxIterations <= 0 {
-		return &ConfigError{"max_iterations must be positive"}
-	}
-	if c.InferenceEndpoint == "" {
-		return &ConfigError{"inference_endpoint cannot be empty"}
+		return fmt.Errorf("initial token timeout must be at least 10 seconds")
 	}
 	return nil
-}
-
-// ConfigError represents a configuration error
-type ConfigError struct {
-	Message string
-}
-
-func (e *ConfigError) Error() string {
-	return "config error: " + e.Message
 }

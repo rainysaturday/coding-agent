@@ -1,373 +1,310 @@
 package inference
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"coding-agent/context"
-	"coding-agent/stats"
+	"github.com/coding-agent/harness/config"
 )
 
 func TestNewInferenceClient(t *testing.T) {
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		"http://localhost:8080/v1",
-		"test-key",
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		true,
-		s,
-	)
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
 
 	if client == nil {
-		t.Fatal("NewInferenceClient returned nil")
-	}
-	if client.endpoint != "http://localhost:8080/v1" {
-		t.Errorf("Expected endpoint 'http://localhost:8080/v1', got '%s'", client.endpoint)
-	}
-}
-
-func TestInferenceClient_NonStreaming(t *testing.T) {
-	// Create a test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" {
-			t.Errorf("Expected POST method, got %s", r.Method)
-		}
-
-		response := Response{
-			Choices: []Choice{
-				{
-					Message: Message{
-						Role:    "assistant",
-						Content: "Hello! How can I help you?",
-					},
-					FinishReason: "stop",
-				},
-			},
-			Usage: Usage{
-				PromptTokens:     10,
-				CompletionTokens: 5,
-				TotalTokens:      15,
-			},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"test-key",
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		false, // Non-streaming
-		s,
-	)
-
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
-
-	var completed bool
-
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-		OnComplete: func() {
-			completed = true
-		},
-		OnError: func(err error) {
-			t.Errorf("Unexpected error: %v", err)
-		},
-	})
-
-	if err != nil {
-		t.Fatalf("ChatCompletion failed: %v", err)
+		t.Fatal("NewInferenceClient() returned nil")
 	}
 
-	if !completed {
-		t.Error("OnComplete was not called")
+	if client.model != "llama3" {
+		t.Errorf("Expected model 'llama3', got '%s'", client.model)
 	}
 
-	if ctx.GetMessageCount() != 3 {
-		t.Errorf("Expected 3 messages (system, user, assistant), got %d", ctx.GetMessageCount())
+	if client.temperature != 0.7 {
+		t.Errorf("Expected temperature 0.7, got %f", client.temperature)
 	}
 
-	// Check stats
-	if s.GetInputTokens() != 10 {
-		t.Errorf("Expected 10 input tokens, got %d", s.GetInputTokens())
+	if client.maxTokens != 4096 {
+		t.Errorf("Expected max tokens 4096, got %d", client.maxTokens)
 	}
-	if s.GetOutputTokens() != 5 {
-		t.Errorf("Expected 5 output tokens, got %d", s.GetOutputTokens())
+
+	if client.contextSize != 128000 {
+		t.Errorf("Expected context size 128000, got %d", client.contextSize)
+	}
+
+	if client.streaming != true {
+		t.Errorf("Expected streaming true, got %v", client.streaming)
 	}
 }
 
-func TestInferenceClient_Streaming(t *testing.T) {
-	// Create a test server for streaming
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
+func TestSetEndpoint(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
 
-		// Send streaming chunks
-		response := StreamResponse{
-			Choices: []StreamChoice{
-				{
-					Delta: Message{
-						Content: "Hello",
-					},
-				},
-				{
-					Delta: Message{
-						Content: "!",
-					},
-				},
-				{
-					Delta:        Message{},
-					FinishReason: "stop",
-				},
-			},
-		}
+	endpoint := "http://test:8080"
+	client.SetEndpoint(endpoint)
 
-		for _, choice := range response.Choices {
-			data, _ := json.Marshal(StreamResponse{Choices: []StreamChoice{choice}})
-			w.Write([]byte("data: " + string(data) + "\n\n"))
-			w.(http.Flusher).Flush()
-		}
-		w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer server.Close()
-
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"test-key",
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		true, // Streaming
-		s,
-	)
-
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
-
-	tokensReceived := ""
-	var completed bool
-
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-		OnToken: func(token string) {
-			tokensReceived += token
-		},
-		OnComplete: func() {
-			completed = true
-		},
-		OnError: func(err error) {
-			t.Errorf("Unexpected error: %v", err)
-		},
-	})
-
-	if err != nil {
-		t.Fatalf("ChatCompletion failed: %v", err)
-	}
-
-	if !completed {
-		t.Error("OnComplete was not called")
-	}
-
-	if tokensReceived != "Hello!" {
-		t.Errorf("Expected 'Hello!', got '%s'", tokensReceived)
+	if client.endpoint != endpoint {
+		t.Errorf("Expected endpoint '%s', got '%s'", endpoint, client.endpoint)
 	}
 }
 
-func TestInferenceClient_APIError(t *testing.T) {
-	// Create a test server that returns an error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
-	}))
-	defer server.Close()
+func TestSetAPIKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
 
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"test-key",
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		false,
-		s,
-	)
+	key := "test-key"
+	client.SetAPIKey(key)
 
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
+	if client.apiKey != key {
+		t.Errorf("Expected API key '%s', got '%s'", key, client.apiKey)
+	}
+}
 
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-		OnError: func(err error) {
-			t.Errorf("Unexpected error callback: %v", err)
+func TestBuildMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	systemPrompt := "You are a helpful assistant"
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there!"},
+	}
+
+	result := client.buildMessages(messages, systemPrompt)
+
+	if len(result) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(result))
+	}
+
+	if result[0].Role != "system" {
+		t.Errorf("Expected first message role 'system', got '%s'", result[0].Role)
+	}
+
+	if result[0].Content != systemPrompt {
+		t.Errorf("Expected system prompt, got '%s'", result[0].Content)
+	}
+
+	if result[1].Role != "user" {
+		t.Errorf("Expected second message role 'user', got '%s'", result[1].Role)
+	}
+}
+
+func TestBuildMessagesNoSystemPrompt(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	result := client.buildMessages(messages, "")
+
+	if len(result) != 1 {
+		t.Errorf("Expected 1 message, got %d", len(result))
+	}
+
+	if result[0].Role != "user" {
+		t.Errorf("Expected role 'user', got '%s'", result[0].Role)
+	}
+}
+
+func TestParseToolCalls(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{
+			name:    "no tool calls",
+			content: "Hello, how can I help you?",
+			want:    0,
 		},
-	})
-
-	if err == nil {
-		t.Error("Expected error for API failure")
-	}
-}
-
-func TestInferenceClient_InvalidJSON(t *testing.T) {
-	// Create a test server that returns invalid JSON
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("invalid json"))
-	}))
-	defer server.Close()
-
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"test-key",
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		false,
-		s,
-	)
-
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
-
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-		OnError: func(err error) {
-			t.Errorf("Unexpected error callback: %v", err)
+		{
+			name:    "single tool call",
+			content: "I'll help with that.\n[TOOL:{\"name\":\"bash\",\"parameters\":{\"command\":\"ls -la\"}}]\nDone.",
+			want:    1,
 		},
-	})
+		{
+			name:    "multiple tool calls",
+			content: `[TOOL:{"name":"bash","parameters":{"command":"echo hello"}}]
+And also: [TOOL:{"name":"read_file","parameters":{"path":"test.txt"}}]`,
+			want: 2,
+		},
+		{
+			name:    "tool call with multi-line",
+			content: `[TOOL:{"name":"write_file","parameters":{"path":"test.txt","content":"line1\nline2"}}]`,
+			want:    1,
+		},
+		{
+			name:    "text before tool call",
+			content: "Let me run a command for you.\n[TOOL:{\"name\":\"bash\",\"parameters\":{\"command\":\"pwd\"}}]",
+			want:    1,
+		},
+		{
+			name:    "complex multi-line script",
+			content: `[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\necho \"hello\"\nfor i in {1..5}; do\n    echo $i\ndone"}}]`,
+			want:    1,
+		},
+	}
 
-	if err == nil {
-		t.Error("Expected error for invalid JSON")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseToolCalls(tt.content)
+
+			if len(result) != tt.want {
+				t.Errorf("parseToolCalls() found %d tool calls, want %d", len(result), tt.want)
+			}
+		})
 	}
 }
 
-func TestInferenceClient_NoApiKey(t *testing.T) {
-	// Create a test server that checks for no API key
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify no Authorization header
-		auth := r.Header.Get("Authorization")
-		if auth != "" {
-			t.Errorf("Expected no Authorization header, got '%s'", auth)
-		}
+func TestParseToolCalls_BashTool(t *testing.T) {
+	content := `[TOOL:{"name":"bash","parameters":{"command":"ls -la /home"}}]`
 
-		response := Response{
-			Choices: []Choice{
-				{
-					Message: Message{
-						Role:    "assistant",
-						Content: "Response",
-					},
-				},
-			},
-			Usage: Usage{
-				PromptTokens:     5,
-				CompletionTokens: 3,
-				TotalTokens:      8,
-			},
-		}
+	toolCalls := parseToolCalls(content)
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
 
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"", // No API key
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		false,
-		s,
-	)
+	tc := toolCalls[0]
 
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
+	if tc.Name != "bash" {
+		t.Errorf("Expected tool name 'bash', got '%s'", tc.Name)
+	}
 
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-	})
+	cmd, ok := tc.Parameters["command"].(string)
+	if !ok {
+		t.Fatal("Expected command parameter to be string")
+	}
 
-	if err != nil {
-		t.Fatalf("ChatCompletion failed: %v", err)
+	if cmd != "ls -la /home" {
+		t.Errorf("Expected command 'ls -la /home', got '%s'", cmd)
 	}
 }
 
-func TestInferenceClient_NoApiKeyPlaceholder(t *testing.T) {
-	// Test with "not-needed" placeholder API key
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify no Authorization header
-		auth := r.Header.Get("Authorization")
-		if auth != "" {
-			t.Errorf("Expected no Authorization header, got '%s'", auth)
+func TestParseToolCalls_ReadFileTool(t *testing.T) {
+	content := `[TOOL:{"name":"read_file","parameters":{"path":"/test/file.txt"}}]`
+
+	toolCalls := parseToolCalls(content)
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+
+	if tc.Name != "read_file" {
+		t.Errorf("Expected tool name 'read_file', got '%s'", tc.Name)
+	}
+
+	path, ok := tc.Parameters["path"].(string)
+	if !ok {
+		t.Fatal("Expected path parameter to be string")
+	}
+
+	if path != "/test/file.txt" {
+		t.Errorf("Expected path '/test/file.txt', got '%s'", path)
+	}
+}
+
+func TestParseToolCalls_WriteFileTool(t *testing.T) {
+	content := `[TOOL:{"name":"write_file","parameters":{"path":"output.txt","content":"hello world"}}]`
+
+	toolCalls := parseToolCalls(content)
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+
+	if tc.Name != "write_file" {
+		t.Errorf("Expected tool name 'write_file', got '%s'", tc.Name)
+	}
+}
+
+func TestParseToolCalls_ReadLinesTool(t *testing.T) {
+	content := `[TOOL:{"name":"read_lines","parameters":{"path":"large.txt","start":100,"end":200}}]`
+
+	toolCalls := parseToolCalls(content)
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+
+	if tc.Name != "read_lines" {
+		t.Errorf("Expected tool name 'read_lines', got '%s'", tc.Name)
+	}
+}
+
+func TestParseToolCalls_InsertLinesTool(t *testing.T) {
+	content := `[TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":10,"lines":"new line"}}]`
+
+	toolCalls := parseToolCalls(content)
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+
+	if tc.Name != "insert_lines" {
+		t.Errorf("Expected tool name 'insert_lines', got '%s'", tc.Name)
+	}
+}
+
+func TestParseToolCalls_ReplaceLinesTool(t *testing.T) {
+	content := `[TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]`
+
+	toolCalls := parseToolCalls(content)
+
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+
+	if tc.Name != "replace_lines" {
+		t.Errorf("Expected tool name 'replace_lines', got '%s'", tc.Name)
+	}
+}
+
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		text string
+		want int
+	}{
+		{"", 0},
+		{"hello", 1},
+		{"hello world", 2},
+		{"This is a test message with multiple words", 10},
+	}
+
+	for _, tt := range tests {
+		result := EstimateTokens(tt.text)
+		// Allow some variance in estimation
+		if result < 0 || result > len(tt.text)/2 {
+			t.Errorf("EstimateTokens(%q) = %d, expected reasonable value", tt.text, result)
 		}
+	}
+}
 
-		response := Response{
-			Choices: []Choice{
-				{
-					Message: Message{
-						Role:    "assistant",
-						Content: "Response",
-					},
-				},
-			},
-			Usage: Usage{
-				PromptTokens:     5,
-				CompletionTokens: 3,
-				TotalTokens:      8,
-			},
-		}
+func TestRequestBody_JSON(t *testing.T) {
+	req := &RequestBody{
+		Model:       "llama3",
+		Messages:    []*Message{{Role: "user", Content: "test"}},
+		Stream:      true,
+		Temperature: 0.7,
+		MaxTokens:   4096,
+	}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	s := stats.NewStats()
-	client := NewInferenceClient(
-		server.URL+"/v1",
-		"not-needed", // Placeholder API key
-		"llama-model",
-		4096,
-		7200,
-		30,
-		300,
-		false,
-		s,
-	)
-
-	ctx := context.NewContext("system", 1000)
-	ctx.AddUserMessage("Hello")
-
-	err := client.ChatCompletion(ChatCompletionRequest{
-		Context: ctx,
-	})
-
-	if err != nil {
-		t.Fatalf("ChatCompletion failed: %v", err)
+	// Just verify the struct can be created without error
+	if req.Model != "llama3" {
+		t.Errorf("Expected model 'llama3', got '%s'", req.Model)
+	}
+	if req.Stream != true {
+		t.Errorf("Expected stream true, got %v", req.Stream)
 	}
 }

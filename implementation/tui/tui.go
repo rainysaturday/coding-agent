@@ -1,3 +1,4 @@
+// Package tui implements the terminal user interface.
 package tui
 
 import (
@@ -5,324 +6,201 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
-	"coding-agent/context"
-	"coding-agent/stats"
+	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/agent"
 )
 
-// TUI represents the terminal user interface
+// TUI represents the terminal user interface.
 type TUI struct {
-	reader       *bufio.Reader
+	config       *config.Config
 	output       []string
-	stats        *stats.Stats
-	width        int
-	height       int
-	cursorLine   int
 	history      []string
 	historyIndex int
 	maxHistory   int
-	gitHash      string
-	gitDirty     string
-	buildTime    string
+	cancelled    bool
+	mu           sync.Mutex
 }
 
-// NewTUI creates a new TUI instance
-func NewTUI(stats *stats.Stats, gitHash, gitDirty, buildTime string) *TUI {
+// NewTUI creates a new TUI instance.
+func NewTUI(cfg *config.Config) *TUI {
+	maxHistory := 100
+	if val := os.Getenv("CODING_AGENT_MAX_HISTORY"); val != "" {
+		if n, err := fmt.Sscanf(val, "%d", &maxHistory); err != nil || n == 0 {
+			maxHistory = 100
+		}
+	}
+
 	return &TUI{
-		reader:       bufio.NewReader(os.Stdin),
+		config:       cfg,
 		output:       make([]string, 0),
-		stats:        stats,
-		width:        80,
-		height:       24,
 		history:      make([]string, 0),
 		historyIndex: -1,
-		maxHistory:   100,
-		gitHash:      gitHash,
-		gitDirty:     gitDirty,
-		buildTime:    buildTime,
+		maxHistory:   maxHistory,
 	}
 }
 
-// ClearScreen clears the terminal screen
-func (t *TUI) ClearScreen() {
-	// ANSI escape code to clear screen and move cursor to home
-	fmt.Print("\033[2J\033[H")
-}
+// Prompt displays the prompt and reads user input.
+func (t *TUI) Prompt() (string, error) {
+	t.mu.Lock()
+	t.cancelled = false
+	t.mu.Unlock()
 
-// DisplayOutput displays all output messages
-func (t *TUI) DisplayOutput() {
-	for _, line := range t.output {
-		fmt.Println(line)
-	}
-}
+	// Display context size
+	t.printContextSize()
 
-// AddOutput adds a line to the output
-func (t *TUI) AddOutput(line string) {
-	t.output = append(t.output, line)
-}
+	// Display prompt
+	fmt.Printf("> ")
 
-// AddOutputf adds a formatted line to the output
-func (t *TUI) AddOutputf(format string, args ...interface{}) {
-	t.output = append(t.output, fmt.Sprintf(format, args...))
-}
-
-// ClearOutput clears the output buffer
-func (t *TUI) ClearOutput() {
-	t.output = make([]string, 0)
-}
-
-// ReadInput reads input from the user with history navigation support
-// Returns the input string and a boolean indicating if escape was pressed
-func (t *TUI) ReadInput(prompt string) (string, bool, error) {
-	fmt.Print(prompt)
-
-	var input strings.Builder
-	buffer := make([]byte, 1024)
-	canceled := false
-
-	for {
-		n, err := t.reader.Read(buffer)
-		if err != nil {
-			return "", false, err
+	// Read input line
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		if t.cancelled {
+			return "", fmt.Errorf("cancelled")
 		}
-
-		for i := 0; i < n; i++ {
-			b := buffer[i]
-
-			// Check for escape sequence
-			if b == 27 { // ESC
-				// Check for arrow keys or cancel
-				if i+1 < n && buffer[i+1] == '[' {
-					i++ // skip '['
-					if i+1 < n {
-						switch buffer[i+1] {
-						case 'A': // Up arrow
-							// Clear current line and show previous history
-							fmt.Print("\r\033[2K")
-							historyItem := t.GetPreviousHistory(input.String())
-							input.Reset()
-							input.WriteString(historyItem)
-							fmt.Print(prompt + historyItem)
-							i++ // skip 'A'
-							continue
-						case 'B': // Down arrow
-							// Clear current line and show next history
-							fmt.Print("\r\033[2K")
-							historyItem := t.GetNextHistory(input.String())
-							input.Reset()
-							input.WriteString(historyItem)
-							fmt.Print(prompt + historyItem)
-							i++ // skip 'B'
-							continue
-						}
-					}
-				}
-				// Plain ESC - cancel
-				canceled = true
-				fmt.Print("\r\033[2K" + prompt)
-				return "", true, nil
-			}
-
-			switch b {
-			case '\n', '\r':
-				// Enter key - submit
-				fmt.Println()
-				return strings.TrimSpace(input.String()), canceled, nil
-			case '\b', 127: // Backspace
-				if input.Len() > 0 {
-					input.Reset()
-					// Redraw line
-					fmt.Print("\r\033[2K" + prompt + input.String())
-				}
-			default:
-				input.WriteByte(b)
-				fmt.Printf("%c", b)
-			}
-		}
-	}
-}
-
-// DisplayStats displays current statistics with context size
-func (t *TUI) DisplayStats(ctx *context.Context) {
-	summary := t.stats.GetSummary()
-
-	fmt.Println("\n" + strings.Repeat("=", 50))
-	fmt.Println("Runtime Statistics")
-	fmt.Println(strings.Repeat("=", 50))
-	fmt.Printf("Input Tokens:      %d\n", summary.InputTokens)
-	fmt.Printf("Output Tokens:     %d\n", summary.OutputTokens)
-	if ctx != nil {
-		tokenCount := ctx.EstimateTokenCount()
-		maxSize := ctx.GetMaxSize()
-		percentage := 0.0
-		if maxSize > 0 {
-			percentage = float64(tokenCount) / float64(maxSize) * 100
-		}
-		fmt.Printf("Current Context:   %d / %d (%.1f%%)\n", tokenCount, maxSize, percentage)
-	}
-	fmt.Printf("Tokens/Second:     %.2f\n", summary.TokensPerSecond)
-	fmt.Printf("Tool Calls:        %d\n", summary.TotalToolCalls)
-	fmt.Printf("Failed Calls:      %d\n", summary.FailedToolCalls)
-	fmt.Printf("Iterations:        %d\n", summary.IterationCount)
-	fmt.Printf("Input History:     %d entries\n", t.GetHistoryCount())
-	fmt.Printf("Uptime:            %v\n", summary.Uptime)
-	fmt.Println(strings.Repeat("=", 50))
-}
-
-// DisplayPrompt displays the input prompt
-func (t *TUI) DisplayPrompt() {
-	fmt.Print("\n> ")
-}
-
-// DisplayWelcome displays the welcome message with version info
-func (t *TUI) DisplayWelcome() {
-	t.ClearScreen()
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("  Minimal Coding Agent Harness")
-	fmt.Println(strings.Repeat("=", 60))
-
-	// Display version information
-	status := t.gitDirty
-	if status == "clean" {
-		fmt.Printf("  Version: %s [clean]\n", t.gitHash)
-	} else if status == "dirty" {
-		fmt.Printf("\033[33m  Version: %s [dirty] ⚠\033[0m\n", t.gitHash)
-	} else {
-		fmt.Printf("  Version: %s\n", t.gitHash)
+		return "", err
 	}
 
-	if t.buildTime != "" {
-		fmt.Printf("  Built: %s\n", t.buildTime)
-	}
-
-	fmt.Println()
-	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Type 'stats' to view statistics, 'clear' to clear output.")
-	fmt.Println()
-}
-
-// DisplayError displays an error message
-func (t *TUI) DisplayError(format string, args ...interface{}) {
-	fmt.Printf("\033[31mERROR: %s\033[0m\n", fmt.Sprintf(format, args...))
-}
-
-// DisplayInfo displays an info message
-func (t *TUI) DisplayInfo(format string, args ...interface{}) {
-	fmt.Printf("\033[36mINFO: %s\033[0m\n", fmt.Sprintf(format, args...))
-}
-
-// DisplaySuccess displays a success message
-func (t *TUI) DisplaySuccess(format string, args ...interface{}) {
-	fmt.Printf("\033[32m%s\033[0m\n", fmt.Sprintf(format, args...))
-}
-
-// AddToHistory adds a prompt to the input history
-func (t *TUI) AddToHistory(input string) {
+	input = strings.TrimSpace(input)
 	if input == "" {
-		return
+		return "", nil
 	}
-	// Don't add duplicates at the top of history
-	if len(t.history) > 0 && t.history[0] == input {
-		return
+
+	// Add to history
+	t.addToHistory(input)
+
+	return input, nil
+}
+
+// AddOutput adds output to be displayed.
+func (t *TUI) AddOutput(message string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.output = append(t.output, message)
+	fmt.Println(message)
+}
+
+// AddOutputf formats and adds output.
+func (t *TUI) AddOutputf(format string, args ...interface{}) {
+	t.AddOutput(fmt.Sprintf(format, args...))
+}
+
+// ClearOutput clears the output display.
+func (t *TUI) ClearOutput() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.output = make([]string, 0)
+	clearScreen()
+}
+
+// DisplayStats displays the runtime statistics.
+func (t *TUI) DisplayStats(stats *agent.Stats) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	fmt.Println("==================================================")
+	fmt.Println("Runtime Statistics")
+	fmt.Println("==================================================")
+	fmt.Printf("Input Tokens:      %d\n", stats.InputTokens)
+	fmt.Printf("Output Tokens:     %d\n", stats.OutputTokens)
+	fmt.Printf("Tool Calls:        %d\n", stats.ToolCalls)
+	fmt.Printf("Failed Calls:      %d\n", stats.FailedToolCalls)
+	fmt.Printf("Iterations:        %d\n", stats.Iterations)
+	if !stats.StartTime.IsZero() {
+		fmt.Printf("Uptime:            %s\n", time.Since(stats.StartTime).Round(time.Second))
 	}
-	t.history = append([]string{input}, t.history...)
+	fmt.Println("==================================================")
+}
+
+// AddToHistory adds a prompt to the history.
+func (t *TUI) addToHistory(prompt string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Add to beginning of history (newest first)
+	t.history = append([]string{prompt}, t.history...)
+
+	// Trim if exceeds max
 	if len(t.history) > t.maxHistory {
 		t.history = t.history[:t.maxHistory]
 	}
+
 	t.historyIndex = -1
 }
 
-// GetPreviousHistory returns the previous item in history
-func (t *TUI) GetPreviousHistory(currentInput string) string {
+// NavigateHistory navigates through history.
+func (t *TUI) NavigateHistory(direction int) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if len(t.history) == 0 {
-		return currentInput
+		return ""
 	}
-	// If at start or no current navigation, start from beginning
-	if t.historyIndex == -1 {
+
+	t.historyIndex += direction
+
+	// Clamp index
+	if t.historyIndex < 0 {
 		t.historyIndex = 0
-		return t.history[0]
 	}
-	// Move to previous
-	if t.historyIndex < len(t.history)-1 {
-		t.historyIndex++
-		return t.history[t.historyIndex]
+	if t.historyIndex >= len(t.history) {
+		t.historyIndex = len(t.history)
+		return "" // Empty for "new" input
 	}
-	// Already at oldest
+
 	return t.history[t.historyIndex]
 }
 
-// GetNextHistory returns the next item in history
-func (t *TUI) GetNextHistory(currentInput string) string {
-	if len(t.history) == 0 {
-		return ""
-	}
-	if t.historyIndex == -1 {
-		return ""
-	}
-	// Move to next (more recent)
-	if t.historyIndex > 0 {
-		t.historyIndex--
-		return t.history[t.historyIndex]
-	}
-	// At most recent, clear to empty
-	t.historyIndex = -1
-	return ""
-}
-
-// ClearHistory clears the input history
+// ClearHistory clears the input history.
 func (t *TUI) ClearHistory() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.history = make([]string, 0)
 	t.historyIndex = -1
+	fmt.Println("History cleared.")
 }
 
-// GetHistoryCount returns the number of items in history
-func (t *TUI) GetHistoryCount() int {
-	return len(t.history)
+// CancelOperation cancels the current operation.
+func (t *TUI) CancelOperation() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.cancelled = true
 }
 
-// ProcessCommand processes special commands
-func (t *TUI) ProcessCommand(input string, ctx *context.Context) bool {
-	switch strings.ToLower(input) {
-	case "stats":
-		t.DisplayStats(ctx)
-		return true
-	case "clear":
-		t.ClearOutput()
-		t.ClearScreen()
-		t.DisplayWelcome()
-		return true
-	case "clear-history":
-		t.ClearHistory()
-		t.AddOutput("Input history cleared")
-		return true
-	case "quit":
-		return false
-	case "exit":
-		return false
-	}
-	return true
+// printContextSize prints the current context size indicator.
+func (t *TUI) printContextSize() {
+	// This will be updated by the agent when available
+	// For now, just print a placeholder
 }
 
-// DisplayContextInfo displays the current context size information
-func (t *TUI) DisplayContextInfo(ctx *context.Context) {
-	if ctx == nil {
-		return
-	}
-	tokenCount := ctx.EstimateTokenCount()
-	maxSize := ctx.GetMaxSize()
-	percentage := 0.0
-	if maxSize > 0 {
-		percentage = float64(tokenCount) / float64(maxSize) * 100
-	}
+// printColored prints text with ANSI color.
+func printColored(color, text string) {
+	fmt.Printf("%s%s%s", color, text, ColorReset)
+}
 
-	var indicator string
-	if percentage > 90 {
-		indicator = " ⚠⚠"
-	} else if percentage > 75 {
-		indicator = " ⚠"
-	} else {
-		indicator = ""
-	}
+// ANSI color codes
+const (
+	ColorReset  = "\033[0m"
+	ColorRed    = "\033[31m"
+	ColorGreen  = "\033[32m"
+	ColorYellow = "\033[33m"
+	ColorBlue   = "\033[34m"
+	ColorCyan   = "\033[36m"
+)
 
-	fmt.Printf("\r\033[2K[Tokens: %d / %d (%.1f%%)%s] ", tokenCount, maxSize, percentage, indicator)
+// Clear screen ANSI code
+const (
+	ClearScreen = "\033[2J\033[H"
+)
+
+// clearScreen clears the terminal screen.
+func clearScreen() {
+	fmt.Print(ClearScreen)
 }

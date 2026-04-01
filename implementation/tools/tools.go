@@ -1,365 +1,643 @@
+// Package tools implements the tool execution system for the coding agent.
 package tools
 
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
-// ToolResult represents the result of a tool execution
+// ToolResult represents the result of a tool execution.
 type ToolResult struct {
-	Success bool   `json:"success"`
-	Output  string `json:"output,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Success bool                   `json:"success"`
+	Output  string                 `json:"output,omitempty"`
+	Error   string                 `json:"error,omitempty"`
+	Path    string                 `json:"path,omitempty"`
+	Extra   map[string]interface{} `json:"-"`
 }
 
-// Tool defines the interface for all tools
-type Tool interface {
-	// Name returns the tool name
-	Name() string
-
-	// Description returns a human-readable description
-	Description() string
-
-	// Execute executes the tool with the given parameters
-	Execute(params map[string]string) ToolResult
-}
-
-// ToolRegistry holds all available tools
-type ToolRegistry struct {
-	tools map[string]Tool
-}
-
-// NewToolRegistry creates a new tool registry
-func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{
-		tools: make(map[string]Tool),
-	}
-}
-
-// Register registers a tool
-func (r *ToolRegistry) Register(tool Tool) {
-	r.tools[tool.Name()] = tool
-}
-
-// Get returns a tool by name
-func (r *ToolRegistry) Get(name string) (Tool, bool) {
-	tool, ok := r.tools[name]
-	return tool, ok
-}
-
-// List returns all registered tool names
-func (r *ToolRegistry) List() []string {
-	names := make([]string, 0, len(r.tools))
-	for name := range r.tools {
-		names = append(names, name)
-	}
-	return names
-}
-
-// ToolCallRequest represents the JSON structure for a tool call
-// Using map[string]interface{} to accept both string and numeric parameters
-type ToolCallRequest struct {
+// ToolCall represents a tool call parsed from the LLM response.
+type ToolCall struct {
 	Name       string                 `json:"name"`
 	Parameters map[string]interface{} `json:"parameters"`
+	Raw        string                 `json:"-"`
 }
 
-// ToolCall represents a parsed tool call
-type ToolCall struct {
-	Name   string
-	Params map[string]string
-	Raw    string
+// ToolExecutor handles tool execution.
+type ToolExecutor struct {
+	stats *Stats
 }
 
-// ParseToolCall parses a tool call string into a ToolCall struct
-// Format: [TOOL:{"name":"tool_name","parameters":{"param1":"value1",...}}]
-// Supports both string and numeric parameter values
-func ParseToolCall(input string) (*ToolCall, error) {
-	// Find the opening [TOOL:
-	startIdx := strings.Index(input, "[TOOL:")
-	if startIdx == -1 {
-		return nil, fmt.Errorf("invalid tool call format: %s", input)
-	}
-
-	// Find the matching closing ]
-	// We need to handle nested braces in JSON, accounting for strings
-	jsonStart := startIdx + 6 // len("[TOOL:")
-	endIdx := findMatchingJSONEnd(input, jsonStart)
-
-	if endIdx == -1 {
-		return nil, fmt.Errorf("invalid tool call format: %s", input)
-	}
-
-	// Extract JSON - endIdx points to the closing ]
-	jsonStr := input[jsonStart:endIdx]
-
-	// Parse JSON
-	var request ToolCallRequest
-	if err := json.Unmarshal([]byte(jsonStr), &request); err != nil {
-		return nil, fmt.Errorf("invalid JSON in tool call: '%w' for tool call %s", err, input)
-	}
-
-	if request.Name == "" {
-		return nil, fmt.Errorf("tool name is required")
-	}
-
-	// Convert parameters to map[string]string format
-	// Handle both string and numeric values
-	params := make(map[string]string)
-	for k, v := range request.Parameters {
-		params[k] = valueToString(v)
-	}
-
-	return &ToolCall{
-		Name:   request.Name,
-		Params: params,
-		Raw:    input,
-	}, nil
+// Stats holds tool execution statistics.
+type Stats struct {
+	TotalCalls    int `json:"total_calls"`
+	FailedCalls   int `json:"failed_calls"`
 }
 
-// valueToString converts a JSON value to string, handling both strings and numbers
-func valueToString(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case float64:
-		// JSON numbers are unmarshaled as float64
-		if val == float64(int(val)) {
-			return strconv.Itoa(int(val))
-		}
-		return strconv.FormatFloat(val, 'f', -1, 64)
-	case int:
-		return strconv.Itoa(val)
-	case int64:
-		return strconv.FormatInt(val, 10)
-	case bool:
-		return strconv.FormatBool(val)
-	case nil:
-		return ""
-	default:
-		// For other types, marshal to JSON string
-		b, _ := json.Marshal(val)
-		return string(b)
+// NewToolExecutor creates a new tool executor.
+func NewToolExecutor() *ToolExecutor {
+	return &ToolExecutor{
+		stats: &Stats{},
 	}
 }
 
-// findMatchingJSONEnd finds the end index of a JSON object starting at the given position
-// Properly handles nested objects, arrays, and strings with special characters
-// Returns the index of the closing ']' if found, or -1 if not found
-func findMatchingJSONEnd(s string, start int) int {
-	if start >= len(s) {
-		return -1
-	}
-
-	// The character at start should be '{' for valid JSON
-	if s[start] != '{' {
-		return -1
-	}
-
-	braceCount := 0
-	inString := false
-	escapeNext := false
-
-	for i := start; i < len(s); i++ {
-		c := s[i]
-
-		if escapeNext {
-			escapeNext = false
-			continue
-		}
-
-		if c == '\\' && inString {
-			escapeNext = true
-			continue
-		}
-
-		if c == '"' {
-			inString = !inString
-			continue
-		}
-
-		if inString {
-			continue
-		}
-
-		if c == '{' {
-			braceCount++
-		} else if c == '}' {
-			braceCount--
-			if braceCount == 0 {
-				// Found the matching close brace
-				// Return index of ']' if present
-				if i+1 < len(s) && s[i+1] == ']' {
-					return i + 1
-				}
-				return i
-			}
-		}
-	}
-
-	return -1
+// Stats returns the current statistics.
+func (te *ToolExecutor) Stats() *Stats {
+	return te.stats
 }
 
-// FormatToolCall formats a tool call from name and parameters using JSON format
-// Uses JSON escaping for special characters in values
-func FormatToolCall(name string, params map[string]string) string {
-	// Convert to ToolCallRequest format
-	request := ToolCallRequest{
-		Name:       name,
-		Parameters: make(map[string]interface{}),
+// ParseToolCall parses a tool call from the raw string.
+func ParseToolCall(raw string) (*ToolCall, error) {
+	// Pattern: [TOOL:{"name":"...","parameters":{...}}]
+	pattern := regexp.MustCompile(`\[TOOL:(\{.*\})\]`)
+	matches := pattern.FindStringSubmatch(raw)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("invalid tool call format: expected [TOOL:{...}]")
 	}
 
-	// Convert string params to interface{} for proper JSON marshaling
-	for k, v := range params {
-		// Try to parse as number for cleaner JSON output
-		if num, err := strconv.Atoi(v); err == nil {
-			request.Parameters[k] = num
-		} else {
-			request.Parameters[k] = v
-		}
+	jsonStr := matches[1]
+	var tc ToolCall
+	if err := json.Unmarshal([]byte(jsonStr), &tc); err != nil {
+		return nil, fmt.Errorf("invalid JSON in tool call: %v", err)
 	}
 
-	// Marshal to JSON
-	jsonBytes, err := json.Marshal(request)
-	if err != nil {
-		// Fallback to manual formatting if JSON marshal fails
-		return fmt.Sprintf("[TOOL:{\"name\":\"%s\",\"parameters\":{}}]", name)
+	if tc.Name == "" {
+		return nil, fmt.Errorf("missing tool name")
 	}
 
-	return fmt.Sprintf("[TOOL:%s]", string(jsonBytes))
+	tc.Raw = raw
+	return &tc, nil
 }
 
-// ExtractToolCalls extracts all tool calls from a text
-// Supports the JSON-based format: [TOOL:{...}]
-// Supports both string and numeric parameters
-// Skips malformed tool calls and continues searching for valid ones
-func ExtractToolCalls(text string) ([]*ToolCall, error) {
-	calls := make([]*ToolCall, 0)
+// Execute executes a tool call and returns the result.
+func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
+	te.stats.TotalCalls++
 
-	// Find all [TOOL:... patterns
-	searchStart := 0
-	for {
-		startIdx := strings.Index(text[searchStart:], "[TOOL:")
-		if startIdx == -1 {
-			break
-		}
-		startIdx += searchStart // Adjust to global index
+	var result *ToolResult
 
-		// Find the matching closing ]
-		jsonStart := startIdx + 6 // len("[TOOL:")
-		endIdx := findMatchingJSONEnd(text, jsonStart)
-
-		if endIdx == -1 {
-			// No valid closing found, move past this [TOOL:
-			searchStart = startIdx + 1
-			continue
-		}
-
-		// Extract the tool call
-		toolCallStr := text[startIdx : endIdx+1]
-		call, err := ParseToolCall(toolCallStr)
-		if err == nil {
-			calls = append(calls, call)
-		}
-		// Skip malformed tool calls and continue searching
-
-		// Move past this tool call attempt
-		searchStart = endIdx + 1
-	}
-
-	return calls, nil
-}
-
-// FormatToolResult formats a tool result for context (for LLM)
-func FormatToolResult(toolName string, result ToolResult) string {
-	if result.Success {
-		jsonData, _ := json.MarshalIndent(result, "", "  ")
-		return fmt.Sprintf("Tool '%s' executed successfully:\n%s", toolName, string(jsonData))
-	}
-	return fmt.Sprintf("Tool '%s' failed: %s", toolName, result.Error)
-}
-
-// GetRelevantParameter returns a brief parameter summary for TUI display
-func GetRelevantParameter(toolName string, params map[string]string) string {
-	switch toolName {
+	switch tc.Name {
 	case "bash":
-		if cmd, ok := params["command"]; ok {
-			if len(cmd) > 40 {
-				return "command: \"" + cmd[:37] + "...\""
-			}
-			return "command: \"" + cmd + "\""
-		}
-	case "read_file", "write_file":
-		if path, ok := params["path"]; ok {
-			return "path: \"" + path + "\""
-		}
+		result = te.executeBash(tc.Parameters)
+	case "read_file":
+		result = te.executeReadFile(tc.Parameters)
+	case "write_file":
+		result = te.executeWriteFile(tc.Parameters)
 	case "read_lines":
-		if path, ok := params["path"]; ok {
-			start, _ := params["start"]
-			end, _ := params["end"]
-			return fmt.Sprintf("path: \"%s\", lines: %s-%s", path, start, end)
-		}
+		result = te.executeReadLines(tc.Parameters)
 	case "insert_lines":
-		if path, ok := params["path"]; ok {
-			line, _ := params["line"]
-			return fmt.Sprintf("path: \"%s\", line: %s", path, line)
-		}
+		result = te.executeInsertLines(tc.Parameters)
 	case "replace_lines":
-		if path, ok := params["path"]; ok {
-			start, _ := params["start"]
-			end, _ := params["end"]
-			return fmt.Sprintf("path: \"%s\", lines: %s-%s", path, start, end)
+		result = te.executeReplaceLines(tc.Parameters)
+	default:
+		te.stats.FailedCalls++
+		result = &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown tool: %s", tc.Name),
 		}
 	}
-	return ""
-}
 
-// TruncateOutput truncates output for TUI display with ellipsis indication
-func TruncateOutput(output string, maxLen int) string {
-	if output == "" {
-		return ""
+	if !result.Success {
+		te.stats.FailedCalls++
 	}
 
-	lines := strings.Split(output, "\n")
-	var result []string
-	totalLen := 0
-
-	for _, line := range lines {
-		if totalLen+len(line) > maxLen {
-			remaining := maxLen - totalLen
-			if remaining > 10 {
-				result = append(result, line[:remaining-3]+"...")
-			}
-			result = append(result, fmt.Sprintf("[... truncated %d characters ...]", len(output)-totalLen))
-			break
-		}
-		result = append(result, line)
-		totalLen += len(line) + 1 // +1 for newline
-	}
-
-	return strings.Join(result, "\n")
+	return result
 }
 
-// ValidateToolCall validates a tool call against expected parameters
-func ValidateToolCall(toolName string, params map[string]string, requiredParams []string) error {
-	for _, param := range requiredParams {
-		if _, ok := params[param]; !ok {
-			return fmt.Errorf("missing required parameter: %s", param)
-		}
-	}
-	return nil
-}
-
-// ParseNumericParam parses a parameter as a number with validation
-func ParseNumericParam(params map[string]string, key string) (int, error) {
-	val, ok := params[key]
+// executeBash executes a bash command.
+func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
+	command, ok := params["command"].(string)
 	if !ok {
-		return 0, fmt.Errorf("missing parameter: %s", key)
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: command",
+		}
 	}
-	num, err := strconv.Atoi(val)
+
+	cmd := exec.Command("bash", "-c", command)
+	output, err := cmd.CombinedOutput()
+
+	result := &ToolResult{
+		Success: err == nil,
+	}
+
 	if err != nil {
-		return 0, fmt.Errorf("invalid numeric value for %s: %s", key, val)
+		result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", err, string(output))
+	} else {
+		result.Output = string(output)
 	}
-	return num, nil
+
+	return result
+}
+
+// executeReadFile reads a file.
+func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(content),
+		Path:    path,
+	}
+}
+
+// executeWriteFile writes to a file.
+func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+	content, ok := params["content"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: content",
+		}
+	}
+
+	// Create parent directories if needed
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create directory: %v", err),
+			}
+		}
+	}
+
+	err := os.WriteFile(path, []byte(content), 0644)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Path:    path,
+		Extra: map[string]interface{}{
+			"message": "File written successfully",
+		},
+	}
+}
+
+// executeReadLines reads specific lines from a file.
+func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	start, ok := params["start"].(float64)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: start",
+		}
+	}
+
+	end, ok := params["end"].(float64)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: end",
+		}
+	}
+
+	startLine := int(start)
+	endLine := int(end)
+
+	if startLine > endLine {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("start line (%d) must be <= end line (%d)", startLine, endLine),
+		}
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	lines := strings.Split(string(content), "\n")
+	// Handle trailing newline
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	// Adjust to 0-indexed
+	startIdx := startLine - 1
+	endIdx := endLine
+
+	// Handle edge cases
+	if startIdx >= len(lines) {
+		return &ToolResult{
+			Success: true,
+			Output:  "",
+			Extra: map[string]interface{}{
+				"start":  startLine,
+				"end":    endLine,
+				"message": "start line beyond file length",
+			},
+		}
+	}
+
+	if endIdx > len(lines) {
+		endIdx = len(lines)
+	}
+
+	selectedLines := lines[startIdx:endIdx]
+
+	// Format output with line numbers
+	var output strings.Builder
+	for i, line := range selectedLines {
+		lineNum := startIdx + i + 1
+		output.WriteString(fmt.Sprintf("%d: %s\n", lineNum, line))
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  strings.TrimSuffix(output.String(), "\n"),
+		Extra: map[string]interface{}{
+			"start": startLine,
+			"end":   endLine,
+		},
+	}
+}
+
+// executeInsertLines inserts lines at a specific position.
+func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	lineNum, ok := params["line"].(float64)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: line",
+		}
+	}
+
+	insertLines, ok := params["lines"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: lines",
+		}
+	}
+
+	insertLine := int(lineNum)
+	newLines := strings.Split(insertLines, "\n")
+
+	// Read existing content or create empty
+	var existingLines []string
+	content, err := os.ReadFile(path)
+	if err == nil {
+		existingLines = strings.Split(string(content), "\n")
+		// Handle trailing newline
+		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
+			existingLines = existingLines[:len(existingLines)-1]
+		}
+	}
+
+	// Adjust to 0-indexed
+	insertIdx := insertLine - 1
+
+	// Handle edge cases
+	if insertIdx < 0 {
+		insertIdx = 0
+	}
+	if insertIdx > len(existingLines) {
+		insertIdx = len(existingLines)
+	}
+
+	// Insert lines
+	resultLines := make([]string, 0, len(existingLines)+len(newLines))
+	resultLines = append(resultLines, existingLines[:insertIdx]...)
+	resultLines = append(resultLines, newLines...)
+	resultLines = append(resultLines, existingLines[insertIdx:]...)
+
+	// Write back
+	output := strings.Join(resultLines, "\n")
+	if len(resultLines) > 0 {
+		output += "\n"
+	}
+
+	// Create parent directories if needed
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create directory: %v", err),
+			}
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(output), 0644); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Path:    path,
+		Extra: map[string]interface{}{
+			"line":         insertLine,
+			"linesInserted": len(newLines),
+		},
+	}
+}
+
+// executeReplaceLines replaces lines in a file.
+func (te *ToolExecutor) executeReplaceLines(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	// Check if using line-number mode or search-and-replace mode
+	_, hasStart := params["start"]
+	_, hasEnd := params["end"]
+	_, hasSearch := params["search"]
+
+	if hasStart && hasEnd {
+		// Line-number mode
+		return te.replaceLinesByNumber(path, params)
+	} else if hasSearch {
+		// Search-and-replace mode
+		return te.replaceLinesBySearch(path, params)
+	} else {
+		return &ToolResult{
+			Success: false,
+			Error:   "must provide either start/end (line-number mode) or search (search-and-replace mode)",
+		}
+	}
+}
+
+// replaceLinesByNumber replaces lines by line numbers.
+func (te *ToolExecutor) replaceLinesByNumber(path string, params map[string]interface{}) *ToolResult {
+	start, ok := params["start"].(float64)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: start",
+		}
+	}
+
+	end, ok := params["end"].(float64)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: end",
+		}
+	}
+
+	replacementLines, ok := params["lines"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: lines",
+		}
+	}
+
+	startLine := int(start)
+	endLine := int(end)
+	newLines := strings.Split(replacementLines, "\n")
+
+	if startLine > endLine {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("start line (%d) must be <= end line (%d)", startLine, endLine),
+		}
+	}
+
+	// Read existing content
+	var existingLines []string
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return &ToolResult{
+				Success: false,
+				Error:   formatFileError(err, path),
+			}
+		}
+		// File doesn't exist, start fresh
+		existingLines = []string{}
+	} else {
+		existingLines = strings.Split(string(content), "\n")
+		// Handle trailing newline
+		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
+			existingLines = existingLines[:len(existingLines)-1]
+		}
+	}
+
+	// Adjust to 0-indexed
+	startIdx := startLine - 1
+	endIdx := endLine
+
+	// Handle edge cases
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if startIdx > len(existingLines) {
+		// Append at end
+		existingLines = append(existingLines, newLines...)
+	} else {
+		if endIdx > len(existingLines) {
+			endIdx = len(existingLines)
+		}
+		// Replace the range
+		resultLines := make([]string, 0, len(existingLines)-endIdx+startIdx+len(newLines))
+		resultLines = append(resultLines, existingLines[:startIdx]...)
+		resultLines = append(resultLines, newLines...)
+		resultLines = append(resultLines, existingLines[endIdx:]...)
+		existingLines = resultLines
+	}
+
+	// Write back
+	output := strings.Join(existingLines, "\n")
+	if len(existingLines) > 0 {
+		output += "\n"
+	}
+
+	// Create parent directories if needed
+	dir := filepath.Dir(path)
+	if dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create directory: %v", err),
+			}
+		}
+	}
+
+	if err := os.WriteFile(path, []byte(output), 0644); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Path:    path,
+		Extra: map[string]interface{}{
+			"start":        startLine,
+			"end":          endLine,
+			"linesReplaced": endLine - startLine + 1,
+			"linesInserted": len(newLines),
+		},
+	}
+}
+
+// replaceLinesBySearch replaces content by searching for text.
+func (te *ToolExecutor) replaceLinesBySearch(path string, params map[string]interface{}) *ToolResult {
+	searchText, ok := params["search"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: search",
+		}
+	}
+
+	replaceText, ok := params["replace"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: replace",
+		}
+	}
+
+	countParam, hasCount := params["count"]
+	count := 1 // Default to 1 replacement
+	if hasCount {
+		switch v := countParam.(type) {
+		case float64:
+			count = int(v)
+		case int:
+			count = v
+		case string:
+			if v == "all" || v == "-1" {
+				count = -1 // Replace all
+			} else if c, err := strconv.Atoi(v); err == nil {
+				count = c
+			}
+		}
+	}
+
+	// Read existing content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("file not found: %s", path),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	originalContent := string(content)
+
+	// Count total occurrences
+	totalOccurrences := strings.Count(originalContent, searchText)
+
+	if totalOccurrences == 0 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("search text not found: %s", searchText),
+		}
+	}
+
+	// Perform replacement
+	var newContent string
+	var replacementsMade int
+	if count < 0 || count > totalOccurrences {
+		// Replace all
+		newContent = strings.ReplaceAll(originalContent, searchText, replaceText)
+		replacementsMade = totalOccurrences
+	} else {
+		// Replace only count occurrences
+		newContent = originalContent
+		for i := 0; i < count; i++ {
+			idx := strings.Index(newContent, searchText)
+			if idx == -1 {
+				break
+			}
+			newContent = newContent[:idx] + replaceText + newContent[idx+len(searchText):]
+		}
+		replacementsMade = count
+	}
+
+	// Write back
+	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Path:    path,
+		Extra: map[string]interface{}{
+			"search":           searchText,
+			"replacementsMade": replacementsMade,
+			"totalOccurrences": totalOccurrences,
+		},
+	}
+}
+
+// formatFileError formats a file error into a user-friendly message.
+func formatFileError(err error, path string) string {
+	if os.IsNotExist(err) {
+		return fmt.Sprintf("file not found: %s", path)
+	}
+	if os.IsPermission(err) {
+		return fmt.Sprintf("permission denied: %s", path)
+	}
+	return fmt.Sprintf("file error: %v", err)
 }

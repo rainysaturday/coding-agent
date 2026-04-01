@@ -2,148 +2,213 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 )
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
+	if cfg.Model != "llama3" {
+		t.Errorf("Expected default model 'llama3', got '%s'", cfg.Model)
+	}
+	if cfg.Temperature != 0.7 {
+		t.Errorf("Expected default temperature 0.7, got %f", cfg.Temperature)
+	}
+	if cfg.MaxTokens != 4096 {
+		t.Errorf("Expected default max tokens 4096, got %d", cfg.MaxTokens)
+	}
 	if cfg.ContextSize != 128000 {
 		t.Errorf("Expected default context size 128000, got %d", cfg.ContextSize)
 	}
+	if cfg.Streaming != true {
+		t.Errorf("Expected default streaming true, got %v", cfg.Streaming)
+	}
 	if cfg.InitialTokenTimeout != 7200 {
-		t.Errorf("Expected default initial token timeout 7200, got %d", cfg.InitialTokenTimeout)
-	}
-	if !cfg.StreamingEnabled {
-		t.Error("Expected streaming to be enabled by default")
-	}
-	if cfg.MaxIterations != 50 {
-		t.Errorf("Expected default max iterations 50, got %d", cfg.MaxIterations)
+		t.Errorf("Expected default timeout 7200, got %d", cfg.InitialTokenTimeout)
 	}
 }
 
-func TestLoadFromEnv(t *testing.T) {
+func TestParseArgs(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+		check   func(*Config) bool
+	}{
+		{
+			name:    "empty args",
+			args:    []string{},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Model == "llama3" },
+		},
+		{
+			name:    "help flag",
+			args:    []string{"--help"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.ShowHelp },
+		},
+		{
+			name:    "version flag",
+			args:    []string{"--version"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.ShowVersion },
+		},
+		{
+			name:    "prompt flag",
+			args:    []string{"--prompt", "test prompt"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Prompt == "test prompt" },
+		},
+		{
+			name:    "prompt short flag",
+			args:    []string{"-p", "short prompt"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Prompt == "short prompt" },
+		},
+		{
+			name:    "stdin flag",
+			args:    []string{"--stdin"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.UseStdin },
+		},
+		{
+			name:    "model flag",
+			args:    []string{"--model", "custom-model"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Model == "custom-model" },
+		},
+		{
+			name:    "temperature flag",
+			args:    []string{"--temperature", "0.9"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Temperature == 0.9 },
+		},
+		{
+			name:    "max-tokens flag",
+			args:    []string{"--max-tokens", "8192"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.MaxTokens == 8192 },
+		},
+		{
+			name:    "context-size flag",
+			args:    []string{"--context-size", "65536"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.ContextSize == 65536 },
+		},
+		{
+			name:    "no-stream flag",
+			args:    []string{"--no-stream"},
+			wantErr: false,
+			check:   func(c *Config) bool { return !c.Streaming },
+		},
+		{
+			name:    "verbose flag",
+			args:    []string{"--verbose"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Verbose },
+		},
+		{
+			name:    "quiet flag",
+			args:    []string{"--quiet"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.Quiet },
+		},
+		{
+			name:    "output flag",
+			args:    []string{"--output", "result.txt"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.OutputFile == "result.txt" },
+		},
+		{
+			name:    "unknown flag",
+			args:    []string{"--unknown"},
+			wantErr: true,
+			check:   nil,
+		},
+		{
+			name:    "prompt without value",
+			args:    []string{"--prompt"},
+			wantErr: true,
+			check:   nil,
+		},
+		{
+			name:    "invalid temperature",
+			args:    []string{"--temperature", "invalid"},
+			wantErr: true,
+			check:   nil,
+		},
+		{
+			name:    "invalid max-tokens",
+			args:    []string{"--max-tokens", "not-a-number"},
+			wantErr: true,
+			check:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseArgs(tt.args)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseArgs() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err == nil && tt.check != nil && !tt.check(cfg) {
+				t.Errorf("ParseArgs() config validation failed")
+			}
+		})
+	}
+}
+
+func TestLoadEnv(t *testing.T) {
 	// Set environment variables
-	os.Setenv("CODING_AGENT_CONTEXT_SIZE", "65536")
+	os.Setenv("CODING_AGENT_MODEL", "env-model")
+	os.Setenv("CODING_AGENT_TEMPERATURE", "0.8")
+	os.Setenv("CODING_AGENT_MAX_TOKENS", "2048")
+	os.Setenv("CODING_AGENT_CONTEXT_SIZE", "32768")
+	os.Setenv("CODING_AGENT_API_ENDPOINT", "http://env-endpoint")
+	os.Setenv("CODING_AGENT_API_KEY", "env-key")
 	os.Setenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT", "3600")
 	os.Setenv("CODING_AGENT_STREAMING", "false")
-	os.Setenv("CODING_AGENT_MAX_ITERATIONS", "25")
-	os.Setenv("CODING_AGENT_ENDPOINT", "http://test:1234/v1")
 
-	// Clear config file path to avoid loading existing config
 	cfg := DefaultConfig()
-	cfg.ConfigFile = "/nonexistent/config.json"
-	cfg.loadFromEnv()
+	loadEnv(cfg)
 
-	if cfg.ContextSize != 65536 {
-		t.Errorf("Expected context size 65536, got %d", cfg.ContextSize)
+	if cfg.Model != "env-model" {
+		t.Errorf("Expected model 'env-model', got '%s'", cfg.Model)
+	}
+	if cfg.Temperature != 0.8 {
+		t.Errorf("Expected temperature 0.8, got %f", cfg.Temperature)
+	}
+	if cfg.MaxTokens != 2048 {
+		t.Errorf("Expected max tokens 2048, got %d", cfg.MaxTokens)
+	}
+	if cfg.ContextSize != 32768 {
+		t.Errorf("Expected context size 32768, got %d", cfg.ContextSize)
+	}
+	if cfg.APIEndpoint != "http://env-endpoint" {
+		t.Errorf("Expected API endpoint 'http://env-endpoint', got '%s'", cfg.APIEndpoint)
+	}
+	if cfg.APIKey != "env-key" {
+		t.Errorf("Expected API key 'env-key', got '%s'", cfg.APIKey)
 	}
 	if cfg.InitialTokenTimeout != 3600 {
-		t.Errorf("Expected initial token timeout 3600, got %d", cfg.InitialTokenTimeout)
+		t.Errorf("Expected timeout 3600, got %d", cfg.InitialTokenTimeout)
 	}
-	if cfg.StreamingEnabled {
-		t.Error("Expected streaming to be disabled")
-	}
-	if cfg.MaxIterations != 25 {
-		t.Errorf("Expected max iterations 25, got %d", cfg.MaxIterations)
-	}
-	if cfg.InferenceEndpoint != "http://test:1234/v1" {
-		t.Errorf("Expected endpoint http://test:1234/v1, got %s", cfg.InferenceEndpoint)
+	if cfg.Streaming != false {
+		t.Errorf("Expected streaming false, got %v", cfg.Streaming)
 	}
 
-	// Cleanup
+	// Clean up
+	os.Unsetenv("CODING_AGENT_MODEL")
+	os.Unsetenv("CODING_AGENT_TEMPERATURE")
+	os.Unsetenv("CODING_AGENT_MAX_TOKENS")
 	os.Unsetenv("CODING_AGENT_CONTEXT_SIZE")
+	os.Unsetenv("CODING_AGENT_API_ENDPOINT")
+	os.Unsetenv("CODING_AGENT_API_KEY")
 	os.Unsetenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT")
 	os.Unsetenv("CODING_AGENT_STREAMING")
-	os.Unsetenv("CODING_AGENT_MAX_ITERATIONS")
-	os.Unsetenv("CODING_AGENT_ENDPOINT")
-}
-
-func TestLoadFromEnvInvalidValues(t *testing.T) {
-	// Set invalid environment variables
-	os.Setenv("CODING_AGENT_CONTEXT_SIZE", "-100")
-	os.Setenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT", "5") // Below minimum of 10
-
-	cfg := DefaultConfig()
-	cfg.ConfigFile = "/nonexistent/config.json"
-	cfg.loadFromEnv()
-
-	// Invalid values should be ignored, defaults should remain
-	if cfg.ContextSize != 128000 {
-		t.Errorf("Expected default context size 128000, got %d (invalid value should be ignored)", cfg.ContextSize)
-	}
-	if cfg.InitialTokenTimeout != 7200 {
-		t.Errorf("Expected default initial token timeout 7200, got %d (invalid value should be ignored)", cfg.InitialTokenTimeout)
-	}
-
-	// Cleanup
-	os.Unsetenv("CODING_AGENT_CONTEXT_SIZE")
-	os.Unsetenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT")
-}
-
-func TestLoadFromFile(t *testing.T) {
-	// Create a temporary config file
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config.json")
-
-	configData := `{
-		"context_size": 32000,
-		"initial_token_timeout": 1800,
-		"streaming_enabled": false,
-		"max_iterations": 10,
-		"inference_endpoint": "http://custom:9999/v1"
-	}`
-
-	err := os.WriteFile(configFile, []byte(configData), 0644)
-	if err != nil {
-		t.Fatalf("Failed to write test config file: %v", err)
-	}
-
-	cfg, err := Load(configFile)
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if cfg.ContextSize != 32000 {
-		t.Errorf("Expected context size 32000, got %d", cfg.ContextSize)
-	}
-	if cfg.InitialTokenTimeout != 1800 {
-		t.Errorf("Expected initial token timeout 1800, got %d", cfg.InitialTokenTimeout)
-	}
-	if cfg.StreamingEnabled {
-		t.Error("Expected streaming to be disabled")
-	}
-	if cfg.MaxIterations != 10 {
-		t.Errorf("Expected max iterations 10, got %d", cfg.MaxIterations)
-	}
-	if cfg.InferenceEndpoint != "http://custom:9999/v1" {
-		t.Errorf("Expected endpoint http://custom:9999/v1, got %s", cfg.InferenceEndpoint)
-	}
-}
-
-func TestSave(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFile := filepath.Join(tmpDir, "test-config-save.json")
-
-	cfg := DefaultConfig()
-	cfg.ConfigFile = configFile
-	cfg.ContextSize = 65536
-
-	err := cfg.Save()
-	if err != nil {
-		t.Fatalf("Failed to save config: %v", err)
-	}
-
-	// Load the saved config
-	loadedCfg, err := Load(configFile)
-	if err != nil {
-		t.Fatalf("Failed to load saved config: %v", err)
-	}
-
-	if loadedCfg.ContextSize != 65536 {
-		t.Errorf("Expected saved context size 65536, got %d", loadedCfg.ContextSize)
-	}
 }
 
 func TestValidate(t *testing.T) {
@@ -153,31 +218,26 @@ func TestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "valid config",
-			cfg:     DefaultConfig(),
+			name: "valid config",
+			cfg: &Config{
+				ContextSize:         128000,
+				InitialTokenTimeout: 7200,
+			},
 			wantErr: false,
 		},
 		{
 			name: "invalid context size",
 			cfg: &Config{
-				ContextSize: -100,
+				ContextSize:         -100,
+				InitialTokenTimeout: 7200,
 			},
 			wantErr: true,
 		},
 		{
-			name: "invalid initial token timeout",
+			name: "invalid timeout",
 			cfg: &Config{
 				ContextSize:         128000,
 				InitialTokenTimeout: 5,
-			},
-			wantErr: true,
-		},
-		{
-			name: "empty endpoint",
-			cfg: &Config{
-				ContextSize:         128000,
-				InitialTokenTimeout: 7200,
-				InferenceEndpoint:   "",
 			},
 			wantErr: true,
 		},
@@ -190,12 +250,5 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestConfigError(t *testing.T) {
-	err := &ConfigError{Message: "test error"}
-	if err.Error() != "config error: test error" {
-		t.Errorf("Expected 'config error: test error', got '%s'", err.Error())
 	}
 }

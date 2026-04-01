@@ -1,495 +1,699 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestParseToolCall_Bash(t *testing.T) {
-	input := `[TOOL:{"name":"bash","parameters":{"command":"ls -la /home"}}]`
-	call, err := ParseToolCall(input)
+func TestParseToolCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    *ToolCall
+		wantErr bool
+	}{
+		{
+			name:  "valid bash command",
+			input: `[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]`,
+			want: &ToolCall{
+				Name: "bash",
+				Parameters: map[string]interface{}{
+					"command": "ls -la",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "valid read_file",
+			input: `[TOOL:{"name":"read_file","parameters":{"path":"/test/file.txt"}}]`,
+			want: &ToolCall{
+				Name: "read_file",
+				Parameters: map[string]interface{}{
+					"path": "/test/file.txt",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "valid write_file",
+			input: `[TOOL:{"name":"write_file","parameters":{"path":"/test/file.txt","content":"hello"}}]`,
+			want: &ToolCall{
+				Name: "write_file",
+				Parameters: map[string]interface{}{
+					"path":    "/test/file.txt",
+					"content": "hello",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "valid read_lines",
+			input: `[TOOL:{"name":"read_lines","parameters":{"path":"file.txt","start":1,"end":10}}]`,
+			want: &ToolCall{
+				Name: "read_lines",
+				Parameters: map[string]interface{}{
+					"path": "file.txt",
+					"start": 1.0,
+					"end": 10.0,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "valid insert_lines",
+			input: `[TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"new line"}}]`,
+			want: &ToolCall{
+				Name: "insert_lines",
+				Parameters: map[string]interface{}{
+					"path": "file.txt",
+					"line": 5.0,
+					"lines": "new line",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "valid replace_lines",
+			input: `[TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]`,
+			want: &ToolCall{
+				Name: "replace_lines",
+				Parameters: map[string]interface{}{
+					"path": "file.txt",
+					"start": 1.0,
+					"end": 5.0,
+					"lines": "replacement",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "invalid format no brackets",
+			input:   `{"name":"bash","parameters":{"command":"ls"}}`,
+			wantErr: true,
+		},
+		{
+			name:    "invalid json",
+			input:   `[TOOL:{invalid json}]`,
+			wantErr: true,
+		},
+		{
+			name:    "missing name",
+			input:   `[TOOL:{"parameters":{}}]`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseToolCall(tt.input)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseToolCall() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err == nil && tt.want != nil {
+				if result.Name != tt.want.Name {
+					t.Errorf("ParseToolCall() name = %v, want %v", result.Name, tt.want.Name)
+				}
+				for k, v := range tt.want.Parameters {
+					if result.Parameters[k] != v {
+						t.Errorf("ParseToolCall() parameter %v = %v, want %v", k, result.Parameters[k], v)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExecuteBash(t *testing.T) {
+	te := NewToolExecutor()
+
+	tests := []struct {
+		name       string
+		command    string
+		wantSuccess bool
+		checkOutput func(string) bool
+	}{
+		{
+			name:        "simple echo",
+			command:     "echo hello",
+			wantSuccess: true,
+			checkOutput: func(out string) bool { return strings.Contains(out, "hello") },
+		},
+		{
+			name:        "pwd command",
+			command:     "pwd",
+			wantSuccess: true,
+			checkOutput: func(out string) bool { return len(out) > 0 },
+		},
+		{
+			name:        "command with quotes",
+			command:     `echo "hello world"`,
+			wantSuccess: true,
+			checkOutput: func(out string) bool { return strings.Contains(out, "hello world") },
+		},
+		{
+			name:        "failed command",
+			command:     "nonexistent_command_xyz",
+			wantSuccess: false,
+			checkOutput: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := map[string]interface{}{
+				"command": tt.command,
+			}
+			result := te.executeBash(params)
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("executeBash() success = %v, want %v", result.Success, tt.wantSuccess)
+			}
+
+			if tt.wantSuccess && tt.checkOutput != nil && !tt.checkOutput(result.Output) {
+				t.Errorf("executeBash() output check failed: %s", result.Output)
+			}
+		})
+	}
+}
+
+func TestExecuteReadFile(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create a test file
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	testContent := "line 1\nline 2\nline 3\n"
+	err := os.WriteFile(testFile, []byte(testContent), 0644)
 	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
+		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	if call.Name != "bash" {
-		t.Errorf("Expected tool name 'bash', got '%s'", call.Name)
+	tests := []struct {
+		name    string
+		path    string
+		want    *ToolResult
+		wantErr bool
+	}{
+		{
+			name: "read existing file",
+			path: testFile,
+			want: &ToolResult{
+				Success: true,
+				Output:  testContent,
+			},
+		},
+		{
+			name: "read non-existent file",
+			path: "/nonexistent/file.txt",
+			want: &ToolResult{
+				Success: false,
+			},
+		},
+		{
+			name: "missing path parameter",
+			path: "",
+			want: &ToolResult{
+				Success: false,
+			},
+		},
 	}
-	if call.Params["command"] != "ls -la /home" {
-		t.Errorf("Expected command 'ls -la /home', got '%s'", call.Params["command"])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := map[string]interface{}{"path": tt.path}
+			result := te.executeReadFile(params)
+
+			if result.Success != tt.want.Success {
+				t.Errorf("executeReadFile() success = %v, want %v", result.Success, tt.want.Success)
+			}
+
+			if tt.want.Success && result.Output != tt.want.Output {
+				t.Errorf("executeReadFile() output mismatch")
+			}
+		})
 	}
 }
 
-func TestParseToolCall_ReadFile(t *testing.T) {
-	input := `[TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]`
-	call, err := ParseToolCall(input)
+func TestExecuteWriteFile(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		path    string
+		content string
+		want    *ToolResult
+	}{
+		{
+			name:    "write new file",
+			path:    filepath.Join(tmpDir, "new.txt"),
+			content: "hello world",
+			want: &ToolResult{
+				Success: true,
+			},
+		},
+		{
+			name:    "write multi-line file",
+			path:    filepath.Join(tmpDir, "multiline.txt"),
+			content: "line 1\nline 2\nline 3",
+			want: &ToolResult{
+				Success: true,
+			},
+		},
+		{
+			name:    "overwrite existing file",
+			path:    filepath.Join(tmpDir, "overwrite.txt"),
+			content: "original",
+			want: &ToolResult{
+				Success: true,
+			},
+		},
+		{
+			name:    "missing path",
+			path:    "",
+			content: "test",
+			want: &ToolResult{
+				Success: false,
+			},
+		},
+		{
+			name:    "missing content",
+			path:    filepath.Join(tmpDir, "nocontent.txt"),
+			content: "",
+			want: &ToolResult{
+				Success: true, // Empty content is valid
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := map[string]interface{}{
+				"path":    tt.path,
+				"content": tt.content,
+			}
+			result := te.executeWriteFile(params)
+
+			if result.Success != tt.want.Success {
+				t.Errorf("executeWriteFile() success = %v, want %v", result.Success, tt.want.Success)
+			}
+
+			if tt.want.Success && result.Success {
+				// Verify file was written
+				content, err := os.ReadFile(tt.path)
+				if err != nil {
+					t.Errorf("Failed to read written file: %v", err)
+					return
+				}
+				if string(content) != tt.content {
+					t.Errorf("Written content mismatch: got %q, want %q", string(content), tt.content)
+				}
+			}
+		})
+	}
+}
+
+func TestExecuteReadLines(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "lines.txt")
+	content := "line 1\nline 2\nline 3\nline 4\nline 5\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
 	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
+		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	if call.Name != "read_file" {
-		t.Errorf("Expected tool name 'read_file', got '%s'", call.Name)
+	tests := []struct {
+		name       string
+		params     map[string]interface{}
+		wantSuccess bool
+		checkOutput func(string) bool
+	}{
+		{
+			name: "read first 3 lines",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 1.0,
+				"end":   3.0,
+			},
+			wantSuccess: true,
+			checkOutput: func(out string) bool {
+				return strings.Contains(out, "1: line 1") &&
+					strings.Contains(out, "2: line 2") &&
+					strings.Contains(out, "3: line 3")
+			},
+		},
+		{
+			name: "read middle lines",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 2.0,
+				"end":   4.0,
+			},
+			wantSuccess: true,
+			checkOutput: func(out string) bool {
+				return strings.Contains(out, "2: line 2") &&
+					strings.Contains(out, "3: line 3") &&
+					strings.Contains(out, "4: line 4")
+			},
+		},
+		{
+			name: "start beyond file",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 100.0,
+				"end":   110.0,
+			},
+			wantSuccess: true,
+			checkOutput: nil,
+		},
+		{
+			name: "end beyond file",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 4.0,
+				"end":   100.0,
+			},
+			wantSuccess: true,
+			checkOutput: func(out string) bool {
+				return strings.Contains(out, "4: line 4") &&
+					strings.Contains(out, "5: line 5")
+			},
+		},
+		{
+			name: "start > end",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 5.0,
+				"end":   2.0,
+			},
+			wantSuccess: false,
+		},
+		{
+			name: "missing start",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"end":   3.0,
+			},
+			wantSuccess: false,
+		},
+		{
+			name: "missing end",
+			params: map[string]interface{}{
+				"path":  testFile,
+				"start": 1.0,
+			},
+			wantSuccess: false,
+		},
 	}
-	if call.Params["path"] != "/path/to/file.txt" {
-		t.Errorf("Expected path '/path/to/file.txt', got '%s'", call.Params["path"])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := te.executeReadLines(tt.params)
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("executeReadLines() success = %v, want %v", result.Success, tt.wantSuccess)
+			}
+
+			if tt.wantSuccess && tt.checkOutput != nil && !tt.checkOutput(result.Output) {
+				t.Errorf("executeReadLines() output check failed: %s", result.Output)
+			}
+		})
 	}
 }
 
-func TestParseToolCall_WriteFile(t *testing.T) {
-	input := `[TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello World"}}]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
+func TestExecuteInsertLines(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name       string
+		setupFile  string
+		setupContent string
+		params     map[string]interface{}
+		wantSuccess bool
+		checkResult func(string) bool
+	}{
+		{
+			name: "insert at beginning",
+			setupFile: filepath.Join(tmpDir, "insert1.txt"),
+			setupContent: "original line 1\noriginal line 2\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "insert1.txt"),
+				"line": 1.0,
+				"lines": "new header",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.HasPrefix(string(content), "new header")
+			},
+		},
+		{
+			name: "insert in middle",
+			setupFile: filepath.Join(tmpDir, "insert2.txt"),
+			setupContent: "line 1\nline 2\nline 3\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "insert2.txt"),
+				"line": 2.0,
+				"lines": "inserted line",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "line 1") &&
+					strings.Contains(string(content), "inserted line") &&
+					strings.Contains(string(content), "line 2")
+			},
+		},
+		{
+			name: "insert multi-line",
+			setupFile: filepath.Join(tmpDir, "insert3.txt"),
+			setupContent: "before\nafter\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "insert3.txt"),
+				"line": 2.0,
+				"lines": "new1\nnew2\nnew3",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "new1") &&
+					strings.Contains(string(content), "new2") &&
+					strings.Contains(string(content), "new3")
+			},
+		},
+		{
+			name: "insert at end",
+			setupFile: filepath.Join(tmpDir, "insert4.txt"),
+			setupContent: "existing\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "insert4.txt"),
+				"line": 9999.0,
+				"lines": "appended",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.HasSuffix(strings.TrimSpace(string(content)), "appended")
+			},
+		},
+		{
+			name: "create new file",
+			setupFile: "",
+			setupContent: "",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "newfile.txt"),
+				"line": 1.0,
+				"lines": "first line",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "first line")
+			},
+		},
 	}
 
-	if call.Name != "write_file" {
-		t.Errorf("Expected tool name 'write_file', got '%s'", call.Name)
-	}
-	if call.Params["path"] != "/path/to/file.txt" {
-		t.Errorf("Expected path '/path/to/file.txt', got '%s'", call.Params["path"])
-	}
-	if call.Params["content"] != "Hello World" {
-		t.Errorf("Expected content 'Hello World', got '%s'", call.Params["content"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup file if needed
+			if tt.setupFile != "" {
+				err := os.WriteFile(tt.setupFile, []byte(tt.setupContent), 0644)
+				if err != nil {
+					t.Fatalf("Failed to setup test file: %v", err)
+				}
+			}
+
+			result := te.executeInsertLines(tt.params)
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("executeInsertLines() success = %v, want %v", result.Success, tt.wantSuccess)
+			}
+
+			if tt.wantSuccess && tt.checkResult != nil {
+				path := tt.params["path"].(string)
+				if !tt.checkResult(path) {
+					content, _ := os.ReadFile(path)
+					t.Errorf("executeInsertLines() result check failed: %s", string(content))
+				}
+			}
+		})
 	}
 }
 
-func TestParseToolCall_ReadLines(t *testing.T) {
-	input := `[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"10"}}]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
+func TestExecuteReplaceLines(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name         string
+		mode         string // "line-number" or "search"
+		setupContent string
+		params       map[string]interface{}
+		wantSuccess  bool
+		checkResult  func(string) bool
+	}{
+		{
+			name:         "replace by line number",
+			mode:         "line-number",
+			setupContent: "line 1\nline 2\nline 3\nline 4\nline 5\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace1.txt"),
+				"start": 2.0,
+				"end":   3.0,
+				"lines": "replacement 1\nreplacement 2",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "line 1") &&
+					strings.Contains(string(content), "replacement 1") &&
+					strings.Contains(string(content), "replacement 2") &&
+					strings.Contains(string(content), "line 4")
+			},
+		},
+		{
+			name:         "replace entire file",
+			mode:         "line-number",
+			setupContent: "old content\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace2.txt"),
+				"start": 1.0,
+				"end":   999.0,
+				"lines": "new complete content",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "new complete content")
+			},
+		},
+		{
+			name:         "search and replace",
+			mode:         "search",
+			setupContent: "func oldName() {\n    return \"old\"\n}\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace3.txt"),
+				"search": "oldName",
+				"replace": "newName",
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "func newName()") &&
+					!strings.Contains(string(content), "oldName")
+			},
+		},
+		{
+			name:         "search replace multiple",
+			mode:         "search",
+			setupContent: "TODO: fix this\nTODO: fix that\nTODO: fix another\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace4.txt"),
+				"search": "TODO",
+				"replace": "IMPLEMENTED",
+				"count": 2.0,
+			},
+			wantSuccess: true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				count := strings.Count(string(content), "IMPLEMENTED")
+				return count == 2
+			},
+		},
+		{
+			name:         "search not found",
+			mode:         "search",
+			setupContent: "some content\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace5.txt"),
+				"search": "notfound",
+				"replace": "replacement",
+			},
+			wantSuccess: false,
+		},
+		{
+			name:         "missing parameters",
+			mode:         "line-number",
+			setupContent: "content\n",
+			params: map[string]interface{}{
+				"path": filepath.Join(tmpDir, "replace6.txt"),
+			},
+			wantSuccess: false,
+		},
 	}
 
-	if call.Name != "read_lines" {
-		t.Errorf("Expected tool name 'read_lines', got '%s'", call.Name)
-	}
-	if call.Params["path"] != "/path/to/file.txt" {
-		t.Errorf("Expected path '/path/to/file.txt', got '%s'", call.Params["path"])
-	}
-	if call.Params["start"] != "1" {
-		t.Errorf("Expected start '1', got '%s'", call.Params["start"])
-	}
-	if call.Params["end"] != "10" {
-		t.Errorf("Expected end '10', got '%s'", call.Params["end"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup file
+			if err := os.WriteFile(tt.params["path"].(string), []byte(tt.setupContent), 0644); err != nil {
+				t.Fatalf("Failed to setup test file: %v", err)
+			}
+
+			result := te.executeReplaceLines(tt.params)
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("executeReplaceLines() success = %v, want %v", result.Success, tt.wantSuccess)
+			}
+
+			if tt.wantSuccess && tt.checkResult != nil {
+				path := tt.params["path"].(string)
+				if !tt.checkResult(path) {
+					content, _ := os.ReadFile(path)
+					t.Errorf("executeReplaceLines() result check failed: %s", string(content))
+				}
+			}
+		})
 	}
 }
 
-func TestParseToolCall_InsertLines(t *testing.T) {
-	input := `[TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":"5","lines":"new line 1\nnew line 2"}}]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
-	}
+func TestToolExecutorStats(t *testing.T) {
+	te := NewToolExecutor()
 
-	if call.Name != "insert_lines" {
-		t.Errorf("Expected tool name 'insert_lines', got '%s'", call.Name)
-	}
-	if call.Params["line"] != "5" {
-		t.Errorf("Expected line '5', got '%s'", call.Params["line"])
-	}
-	expectedContent := "new line 1\nnew line 2"
-	if call.Params["lines"] != expectedContent {
-		t.Errorf("Expected lines to contain newline, got '%s'", call.Params["lines"])
-	}
-}
+	// Make some tool calls
+	// Bash commands should succeed in most environments
+	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "echo test"}})
+	
+	// Unknown tool should always fail
+	te.Execute(&ToolCall{Name: "unknown_tool", Parameters: map[string]interface{}{}})
 
-func TestParseToolCall_ReplaceLines(t *testing.T) {
-	input := `[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":"1","end":"5","lines":"replacement"}}]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
-	}
+	stats := te.Stats()
 
-	if call.Name != "replace_lines" {
-		t.Errorf("Expected tool name 'replace_lines', got '%s'", call.Name)
+	if stats.TotalCalls != 2 {
+		t.Errorf("Expected 2 total calls, got %d", stats.TotalCalls)
 	}
-	if call.Params["start"] != "1" {
-		t.Errorf("Expected start '1', got '%s'", call.Params["start"])
-	}
-	if call.Params["end"] != "5" {
-		t.Errorf("Expected end '5', got '%s'", call.Params["end"])
-	}
-}
-
-func TestParseToolCall_InvalidFormat(t *testing.T) {
-	tests := []string{
-		"not a tool call",
-		"[TOOL:]",
-		"[TOOL:]",
-		"TOOL:{\"name\":\"bash\"}",
-		"old format [tool:bash(command=\"test\")]",
-	}
-
-	for _, input := range tests {
-		_, err := ParseToolCall(input)
-		if err == nil {
-			t.Errorf("Expected error for input '%s', got nil", input)
-		}
-	}
-}
-
-func TestParseToolCall_EmptyParams(t *testing.T) {
-	input := `[TOOL:{"name":"bash","parameters":{}}]`
-	call, err := ParseToolCall(input)
-	if err != nil {
-		t.Fatalf("Failed to parse tool call: %v", err)
-	}
-
-	if call.Name != "bash" {
-		t.Errorf("Expected tool name 'bash', got '%s'", call.Name)
-	}
-	if len(call.Params) != 0 {
-		t.Errorf("Expected empty params, got %v", call.Params)
-	}
-}
-
-func TestParseToolCall_MissingName(t *testing.T) {
-	input := `[TOOL:{"parameters":{"command":"test"}}]`
-	_, err := ParseToolCall(input)
-	if err == nil {
-		t.Error("Expected error for missing name")
-	}
-}
-
-func TestParseToolCall_InvalidJSON(t *testing.T) {
-	input := `[TOOL:{not valid json}]`
-	_, err := ParseToolCall(input)
-	if err == nil {
-		t.Error("Expected error for invalid JSON")
-	}
-}
-
-func TestFormatToolCall_Bash(t *testing.T) {
-	params := map[string]string{"command": "ls -la"}
-	result := FormatToolCall("bash", params)
-
-	// Check that the result contains the tool name and parameters
-	if !strings.Contains(result, "bash") {
-		t.Errorf("Expected result to contain 'bash'")
-	}
-	if !strings.Contains(result, "command") {
-		t.Errorf("Expected result to contain 'command'")
-	}
-	if !strings.Contains(result, "ls -la") {
-		t.Errorf("Expected result to contain 'ls -la'")
-	}
-	if !strings.HasPrefix(result, "[TOOL:") || !strings.HasSuffix(result, "]") {
-		t.Errorf("Expected result to be wrapped in [TOOL:...]: %s", result)
-	}
-}
-
-func TestFormatToolCall_WriteFile(t *testing.T) {
-	params := map[string]string{
-		"path":    "/tmp/test.txt",
-		"content": "Hello World",
-	}
-	result := FormatToolCall("write_file", params)
-
-	// Check that the result contains the tool name and parameters
-	if !strings.Contains(result, "write_file") {
-		t.Errorf("Expected result to contain 'write_file'")
-	}
-	if !strings.Contains(result, "path") {
-		t.Errorf("Expected result to contain 'path'")
-	}
-	if !strings.Contains(result, "content") {
-		t.Errorf("Expected result to contain 'content'")
-	}
-}
-
-func TestFormatToolCall_MultilineContent(t *testing.T) {
-	params := map[string]string{
-		"content": "line1\nline2\nline3",
-	}
-	result := FormatToolCall("write_file", params)
-
-	// Multiline content should be JSON-escaped
-	if !strings.Contains(result, "\\n") {
-		t.Errorf("Expected escaped newlines in output, got '%s'", result)
-	}
-}
-
-func TestFormatToolCall_SpecialChars(t *testing.T) {
-	params := map[string]string{
-		"command": `echo "Hello \"World\""`,
-	}
-	result := FormatToolCall("bash", params)
-
-	// Check that quotes are properly escaped
-	if !strings.Contains(result, "\\\"") {
-		t.Errorf("Expected escaped quotes in output")
-	}
-}
-
-func TestExtractToolCalls(t *testing.T) {
-	text := `
-Here is my response:
-[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
-And then I'll read the file:
-[TOOL:{"name":"read_file","parameters":{"path":"/tmp/test.txt"}}]
-`
-	calls, err := ExtractToolCalls(text)
-	if err != nil {
-		t.Fatalf("Failed to extract tool calls: %v", err)
-	}
-
-	if len(calls) != 2 {
-		t.Errorf("Expected 2 tool calls, got %d", len(calls))
-	}
-
-	if calls[0].Name != "bash" {
-		t.Errorf("Expected first call to be 'bash', got '%s'", calls[0].Name)
-	}
-	if calls[1].Name != "read_file" {
-		t.Errorf("Expected second call to be 'read_file', got '%s'", calls[1].Name)
-	}
-}
-
-func TestExtractToolCalls_None(t *testing.T) {
-	text := "This is just regular text with no tool calls."
-	calls, err := ExtractToolCalls(text)
-	if err != nil {
-		t.Fatalf("Failed to extract tool calls: %v", err)
-	}
-
-	if len(calls) != 0 {
-		t.Errorf("Expected 0 tool calls, got %d", len(calls))
-	}
-}
-
-func TestExtractToolCalls_Multiline(t *testing.T) {
-	text := `
-I'll write a script:
-[TOOL:{"name":"write_file","parameters":{"path":"/tmp/test.sh","content":"#!/bin/bash\necho hello"}}]
-Done.
-`
-	calls, err := ExtractToolCalls(text)
-	if err != nil {
-		t.Fatalf("Failed to extract tool calls: %v", err)
-	}
-
-	if len(calls) != 1 {
-		t.Errorf("Expected 1 tool call, got %d", len(calls))
-	}
-	if calls[0].Name != "write_file" {
-		t.Errorf("Expected tool name 'write_file', got '%s'", calls[0].Name)
-	}
-}
-
-func TestFormatToolResult_Success(t *testing.T) {
-	result := ToolResult{
-		Success: true,
-		Output:  "test output",
-	}
-	formatted := FormatToolResult("bash", result)
-
-	if !strings.Contains(formatted, "bash") {
-		t.Error("Expected formatted result to contain tool name")
-	}
-	if !strings.Contains(formatted, "successfully") {
-		t.Error("Expected formatted result to contain 'successfully'")
-	}
-	if !strings.Contains(formatted, "test output") {
-		t.Error("Expected formatted result to contain output")
-	}
-}
-
-func TestFormatToolResult_Failure(t *testing.T) {
-	result := ToolResult{
-		Success: false,
-		Error:   "permission denied",
-	}
-	formatted := FormatToolResult("read_file", result)
-
-	if !strings.Contains(formatted, "read_file") {
-		t.Error("Expected formatted result to contain tool name")
-	}
-	if !strings.Contains(formatted, "failed") {
-		t.Error("Expected formatted result to contain 'failed'")
-	}
-	if !strings.Contains(formatted, "permission denied") {
-		t.Error("Expected formatted result to contain error message")
-	}
-}
-
-func TestToolRegistry(t *testing.T) {
-	registry := NewToolRegistry()
-
-	// Register a mock tool
-	registry.Register(&mockTool{name: "test"})
-
-	// Get the tool
-	tool, ok := registry.Get("test")
-	if !ok {
-		t.Fatal("Expected to find 'test' tool")
-	}
-	if tool.Name() != "test" {
-		t.Errorf("Expected tool name 'test', got '%s'", tool.Name())
-	}
-
-	// List tools
-	tools := registry.List()
-	if len(tools) != 1 {
-		t.Errorf("Expected 1 tool, got %d", len(tools))
-	}
-}
-
-func TestToolRegistry_GetNonExistent(t *testing.T) {
-	registry := NewToolRegistry()
-	_, ok := registry.Get("nonexistent")
-	if ok {
-		t.Error("Expected to not find 'nonexistent' tool")
-	}
-}
-
-func TestGetRelevantParameter_Bash(t *testing.T) {
-	params := map[string]string{"command": "ls -la /home/user/documents"}
-	result := GetRelevantParameter("bash", params)
-	expected := "command: \"ls -la /home/user/documents\""
-	if result != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, result)
-	}
-}
-
-func TestGetRelevantParameter_Bash_LongCommand(t *testing.T) {
-	longCmd := "this is a very long command that should be truncated for display purposes"
-	params := map[string]string{"command": longCmd}
-	result := GetRelevantParameter("bash", params)
-
-	if !strings.Contains(result, "command:") {
-		t.Error("Expected result to contain 'command:'")
-	}
-	if !strings.Contains(result, "...\"") {
-		t.Error("Expected result to indicate truncation with '...'")
-	}
-}
-
-func TestGetRelevantParameter_ReadFile(t *testing.T) {
-	params := map[string]string{"path": "/path/to/file.txt"}
-	result := GetRelevantParameter("read_file", params)
-	expected := "path: \"/path/to/file.txt\""
-	if result != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, result)
-	}
-}
-
-func TestGetRelevantParameter_ReadLines(t *testing.T) {
-	params := map[string]string{"path": "/path/to/file.txt", "start": "1", "end": "10"}
-	result := GetRelevantParameter("read_lines", params)
-	expected := "path: \"/path/to/file.txt\", lines: 1-10"
-	if result != expected {
-		t.Errorf("Expected '%s', got '%s'", expected, result)
-	}
-}
-
-func TestGetRelevantParameter_UnknownTool(t *testing.T) {
-	params := map[string]string{"unknown": "value"}
-	result := GetRelevantParameter("unknown_tool", params)
-	if result != "" {
-		t.Errorf("Expected empty result for unknown tool, got '%s'", result)
-	}
-}
-
-func TestGetRelevantParameter_MissingParam(t *testing.T) {
-	params := map[string]string{}
-	result := GetRelevantParameter("bash", params)
-	if result != "" {
-		t.Errorf("Expected empty result for missing param, got '%s'", result)
-	}
-}
-
-func TestTruncateOutput_Empty(t *testing.T) {
-	result := TruncateOutput("", 100)
-	if result != "" {
-		t.Errorf("Expected empty string, got '%s'", result)
-	}
-}
-
-func TestTruncateOutput_Short(t *testing.T) {
-	output := "short output"
-	result := TruncateOutput(output, 100)
-	if result != output {
-		t.Errorf("Expected '%s', got '%s'", output, result)
-	}
-}
-
-func TestTruncateOutput_Long(t *testing.T) {
-	output := "line1\nline2\nline3\nline4\nline5"
-	result := TruncateOutput(output, 15)
-
-	if !strings.Contains(result, "line1") {
-		t.Error("Expected result to contain first line")
-	}
-	if !strings.Contains(result, "truncated") {
-		t.Error("Expected result to indicate truncation")
-	}
-}
-
-func TestTruncateOutput_Multiline(t *testing.T) {
-	lines := make([]string, 100)
-	for i := 0; i < 100; i++ {
-		lines[i] = "line " + string(rune('0'+i))
-	}
-	output := strings.Join(lines, "\n")
-
-	result := TruncateOutput(output, 50)
-
-	if !strings.Contains(result, "line 0") {
-		t.Error("Expected result to contain first line")
-	}
-	if !strings.Contains(result, "truncated") {
-		t.Error("Expected result to indicate truncation")
-	}
-}
-
-type mockTool struct {
-	name string
-}
-
-func (m *mockTool) Name() string        { return m.name }
-func (m *mockTool) Description() string { return "mock tool" }
-func (m *mockTool) Execute(params map[string]string) ToolResult {
-	return ToolResult{Success: true}
-}
-
-func TestValidateToolCall(t *testing.T) {
-	params := map[string]string{"path": "/test.txt", "start": "1"}
-
-	// Valid case
-	err := ValidateToolCall("read_lines", params, []string{"path", "start"})
-	if err != nil {
-		t.Errorf("Expected no error for valid params, got %v", err)
-	}
-
-	// Invalid case - missing param
-	err = ValidateToolCall("read_lines", params, []string{"path", "start", "end"})
-	if err == nil {
-		t.Error("Expected error for missing 'end' parameter")
-	}
-}
-
-func TestParseNumericParam(t *testing.T) {
-	params := map[string]string{"start": "10", "end": "20"}
-
-	// Valid case
-	num, err := ParseNumericParam(params, "start")
-	if err != nil {
-		t.Errorf("Expected no error, got %v", err)
-	}
-	if num != 10 {
-		t.Errorf("Expected 10, got %d", num)
-	}
-
-	// Invalid case - missing
-	_, err = ParseNumericParam(params, "missing")
-	if err == nil {
-		t.Error("Expected error for missing param")
-	}
-
-	// Invalid case - not numeric
-	params["invalid"] = "not-a-number"
-	_, err = ParseNumericParam(params, "invalid")
-	if err == nil {
-		t.Error("Expected error for non-numeric value")
+	// At least the unknown tool should have failed
+	if stats.FailedCalls < 1 {
+		t.Errorf("Expected at least 1 failed call, got %d", stats.FailedCalls)
 	}
 }
