@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"sync"
 	"time"
 
 	"github.com/coding-agent/harness/agent"
@@ -261,8 +262,14 @@ func runInteractiveMode(cfg *config.Config) error {
 		}
 	}()
 
+	// Wait group to track running agent operations
+	var wg sync.WaitGroup
+
 	// Main event loop
 	for {
+		// Wait for any previous operation to complete
+		wg.Wait()
+
 		input, err := tuiInstance.Prompt()
 		if err != nil {
 			if err.Error() == "cancelled" {
@@ -301,8 +308,13 @@ func runInteractiveMode(cfg *config.Config) error {
 		fmt.Println()
 		fmt.Print("Thinking...")
 
+		// Add to wait group
+		wg.Add(1)
+
 		// Run agent with the prompt
 		go func(userInput string) {
+			defer wg.Done()
+
 			var result *agent.Result
 			var err error
 
@@ -330,6 +342,11 @@ func runInteractiveMode(cfg *config.Config) error {
 				return
 			}
 
+			// End streaming session - ensures proper newline
+			if cfg.Streaming {
+				tuiInstance.StreamEnd()
+			}
+
 			// Display final output if not already streamed
 			if !cfg.Streaming && result.FinalOutput != "" {
 				tuiInstance.AddOutputf("\n[Assistant] %s", result.FinalOutput)
@@ -342,7 +359,6 @@ func runInteractiveMode(cfg *config.Config) error {
 			}
 		}(input)
 
-		// Wait for completion or cancellation
-		// In interactive mode, the TUI handles the async response
+		// Loop continues, but wg.Wait() at top will block until done
 	}
 }
