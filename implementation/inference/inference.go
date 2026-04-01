@@ -163,12 +163,16 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
+		Timings struct {
+			PredictedN int `json:"predicted_n"`
+		} `json:"timings"`
 	}
 
 	if err := json.NewDecoder(body).Decode(&respBody); err != nil {
@@ -184,16 +188,23 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	// Parse tool calls from content
 	toolCalls := parseToolCalls(content)
 
+	// Get token usage from either usage or timings
+	tokenUsage := respBody.Usage.TotalTokens
+	if tokenUsage == 0 {
+		tokenUsage = respBody.Timings.PredictedN
+	}
+
 	return &Response{
 		Content:    content,
 		ToolCalls:  toolCalls,
-		TokenUsage: respBody.Usage.TotalTokens,
+		TokenUsage: tokenUsage,
 	}, nil
 }
 
 // handleStreamResponse handles a streaming response.
 func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, error) {
 	var fullContent strings.Builder
+	var reasoningContent strings.Builder
 	var totalTokens int
 
 	scanner := bufio.NewScanner(body)
@@ -216,7 +227,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content           string `json:"content"`
+					ReasoningContent  string `json:"reasoning_content"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -225,6 +237,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 				CompletionTokens int `json:"completion_tokens"`
 				TotalTokens      int `json:"total_tokens"`
 			} `json:"usage"`
+			Timings struct {
+				PredictedN int `json:"predicted_n"`
+			} `json:"timings"`
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -232,8 +247,19 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 		}
 
 		if len(chunk.Choices) > 0 {
-			fullContent.WriteString(chunk.Choices[0].Delta.Content)
-			totalTokens = chunk.Usage.TotalTokens
+			// Accumulate content (may be in content or reasoning_content)
+			if chunk.Choices[0].Delta.Content != "" {
+				fullContent.WriteString(chunk.Choices[0].Delta.Content)
+			}
+			if chunk.Choices[0].Delta.ReasoningContent != "" {
+				reasoningContent.WriteString(chunk.Choices[0].Delta.ReasoningContent)
+			}
+			// Get token usage
+			if chunk.Usage.TotalTokens > 0 {
+				totalTokens = chunk.Usage.TotalTokens
+			} else if chunk.Timings.PredictedN > 0 {
+				totalTokens = chunk.Timings.PredictedN
+			}
 		}
 	}
 
@@ -241,7 +267,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 		return nil, fmt.Errorf("stream error: %w", err)
 	}
 
-	content := fullContent.String()
+	// Combine content and reasoning content
+	content := reasoningContent.String() + fullContent.String()
 	toolCalls := parseToolCalls(content)
 
 	return &Response{
