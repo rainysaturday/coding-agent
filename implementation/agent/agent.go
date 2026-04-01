@@ -12,6 +12,10 @@ import (
 	"github.com/coding-agent/harness/tools"
 )
 
+// StreamCallback is a function type for handling streaming chunks.
+// Using inference.StreamingCallback for type compatibility.
+type StreamCallback = inference.StreamingCallback
+
 // Agent represents the coding agent.
 type Agent struct {
 	config        *config.Config
@@ -21,6 +25,7 @@ type Agent struct {
 	systemPrompt  string
 	stats         *Stats
 	maxIterations int
+	streamCallback StreamCallback
 	mu            sync.Mutex
 }
 
@@ -67,6 +72,13 @@ func NewAgent(cfg *config.Config) *Agent {
 	return agent
 }
 
+// SetStreamCallback sets the callback function for streaming chunks.
+func (a *Agent) SetStreamCallback(callback StreamCallback) {
+	a.mu.Lock()
+	a.streamCallback = callback
+	a.mu.Unlock()
+}
+
 // SetAPIEndpoint sets the API endpoint.
 func (a *Agent) SetAPIEndpoint(endpoint string) {
 	a.inference.SetEndpoint(endpoint)
@@ -107,7 +119,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		a.stats.Iterations = iteration
 		a.mu.Unlock()
 
-		// Get response from LLM
+		// Get response from LLM (now supports streaming)
 		response, err := a.getInferenceResponse(ctx)
 		if err != nil {
 			return nil, err
@@ -161,14 +173,35 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 	}
 }
 
+// RunStream runs the agent with streaming support.
+func (a *Agent) RunStream(ctx context.Context, prompt string, onChunk StreamCallback) (*Result, error) {
+	// Set the stream callback temporarily
+	a.mu.Lock()
+	savedCallback := a.streamCallback
+	a.streamCallback = onChunk
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.streamCallback = savedCallback
+		a.mu.Unlock()
+	}()
+
+	return a.Run(ctx, prompt)
+}
+
 // getInferenceResponse gets a response from the inference backend.
 func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, error) {
 	a.mu.Lock()
 	messages := make([]*inference.Message, len(a.context))
 	copy(messages, a.context)
 	systemPrompt := a.systemPrompt
+	streamCallback := a.streamCallback
 	a.mu.Unlock()
 
+	// Use streaming version if callback is set
+	if streamCallback != nil {
+		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
+	}
 	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
 }
 

@@ -297,17 +297,34 @@ func runInteractiveMode(cfg *config.Config) error {
 		cancel()
 		ctx, cancel = context.WithCancel(context.Background())
 
+		// Show waiting indicator
+		fmt.Println()
+		fmt.Print("Thinking...")
+
 		// Run agent with the prompt
 		go func(userInput string) {
-			result, err := ag.Run(ctx, userInput)
+			var result *agent.Result
+			var err error
+
+			if cfg.Streaming {
+				// Use streaming mode - tokens appear as they arrive
+				result, err = ag.RunStream(ctx, userInput, func(chunk string) {
+					// Stream each chunk immediately through TUI
+					tuiInstance.StreamChunk(chunk)
+				})
+			} else {
+				// Non-streaming mode
+				result, err = ag.Run(ctx, userInput)
+			}
+
 			if err != nil {
-				tuiInstance.AddOutput(fmt.Sprintf("Error: %v", err))
+				tuiInstance.AddOutput(fmt.Sprintf("\nError: %v", err))
 				return
 			}
 
-			// Display final output
-			if result.FinalOutput != "" {
-				tuiInstance.AddOutputf("[Assistant] %s", result.FinalOutput)
+			// Display final output if not already streamed
+			if !cfg.Streaming && result.FinalOutput != "" {
+				tuiInstance.AddOutputf("\n[Assistant] %s", result.FinalOutput)
 			}
 
 			// Display summary if verbose

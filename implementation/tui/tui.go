@@ -22,6 +22,8 @@ type TUI struct {
 	maxHistory   int
 	cancelled    bool
 	mu           sync.Mutex
+	streaming    bool
+	streamBuffer strings.Builder
 }
 
 // NewTUI creates a new TUI instance.
@@ -87,6 +89,50 @@ func (t *TUI) AddOutput(message string) {
 // AddOutputf formats and adds output.
 func (t *TUI) AddOutputf(format string, args ...interface{}) {
 	t.AddOutput(fmt.Sprintf(format, args...))
+}
+
+// StreamChunk outputs a chunk of streaming text immediately.
+func (t *TUI) StreamChunk(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Buffer the chunk
+	t.streamBuffer.WriteString(text)
+
+	// Print immediately without newline for smooth streaming
+	fmt.Print(text)
+}
+
+// StreamEnd finalizes a streaming session.
+func (t *TUI) StreamEnd() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Add newline after stream completes
+	fmt.Println()
+
+	// Store the complete streamed content in output
+	content := t.streamBuffer.String()
+	if content != "" {
+		t.output = append(t.output, content)
+	}
+	t.streamBuffer.Reset()
+}
+
+// StartStream begins a new streaming session.
+func (t *TUI) StartStream() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.streaming = true
+	t.streamBuffer.Reset()
+}
+
+// IsStreaming returns whether we're currently streaming.
+func (t *TUI) IsStreaming() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.streaming
 }
 
 // ClearOutput clears the output display.

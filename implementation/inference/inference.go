@@ -16,6 +16,9 @@ import (
 	"github.com/coding-agent/harness/tools"
 )
 
+// StreamingCallback is a function called for each streaming chunk.
+type StreamingCallback func(chunk string)
+
 // InferenceClient handles communication with the LLM backend.
 type InferenceClient struct {
 	endpoint       string
@@ -92,6 +95,16 @@ func (ic *InferenceClient) SetAPIKey(key string) {
 
 // InferenceRequest sends a request to the inference backend.
 func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
+	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, nil)
+}
+
+// InferenceRequestStream sends a request with a streaming callback.
+func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallback) (*Response, error) {
+	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, callback)
+}
+
+// InferenceRequestWithCallback sends a request with a streaming callback.
+func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallback) (*Response, error) {
 	// Build the request
 	reqBody := &RequestBody{
 		Model:       ic.model,
@@ -132,7 +145,7 @@ func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Mes
 
 	// Handle streaming or non-streaming response
 	if ic.streaming {
-		return ic.handleStreamResponse(resp.Body)
+		return ic.handleStreamResponse(resp.Body, callback)
 	}
 	return ic.handleResponse(resp.Body)
 }
@@ -202,7 +215,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 }
 
 // handleStreamResponse handles a streaming response.
-func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, error) {
+func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback StreamingCallback) (*Response, error) {
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
@@ -227,8 +240,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content           string `json:"content"`
-					ReasoningContent  string `json:"reasoning_content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -247,13 +260,24 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader) (*Response, erro
 		}
 
 		if len(chunk.Choices) > 0 {
-			// Accumulate content (may be in content or reasoning_content)
+			// Get content from delta
+			chunkText := ""
 			if chunk.Choices[0].Delta.Content != "" {
-				fullContent.WriteString(chunk.Choices[0].Delta.Content)
+				chunkText = chunk.Choices[0].Delta.Content
+				fullContent.WriteString(chunkText)
 			}
 			if chunk.Choices[0].Delta.ReasoningContent != "" {
 				reasoningContent.WriteString(chunk.Choices[0].Delta.ReasoningContent)
+				if chunkText == "" {
+					chunkText = chunk.Choices[0].Delta.ReasoningContent
+				}
 			}
+
+			// Call callback if provided - stream immediately
+			if callback != nil && chunkText != "" {
+				callback(chunkText)
+			}
+
 			// Get token usage
 			if chunk.Usage.TotalTokens > 0 {
 				totalTokens = chunk.Usage.TotalTokens
@@ -350,13 +374,13 @@ func parseToolCalls(content string) []*tools.ToolCall {
 
 // RequestBody represents the request body for the inference API.
 type RequestBody struct {
-	Model       string    `json:"model"`
-	Messages    []*Message `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature float64   `json:"temperature"`
-	MaxTokens   int       `json:"max_tokens"`
+	Model       string           `json:"model"`
+	Messages    []*Message       `json:"messages"`
+	Stream      bool             `json:"stream"`
+	Temperature float64          `json:"temperature"`
+	MaxTokens   int              `json:"max_tokens"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
-	ToolChoice  string    `json:"tool_choice,omitempty"`
+	ToolChoice  string           `json:"tool_choice,omitempty"`
 }
 
 // EstimateTokens estimates the number of tokens in text.
