@@ -271,21 +271,6 @@ func runInteractiveMode(cfg *config.Config) error {
 		}
 	}()
 
-	// Handle escape key for cancellation during operations
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		for {
-			char, err := reader.ReadByte()
-			if err != nil {
-				continue
-			}
-			if char == 27 { // ESC
-				cancel()
-				tuiInstance.CancelOperation()
-			}
-		}
-	}()
-
 	// Wait group to track running agent operations
 	var wg sync.WaitGroup
 
@@ -297,8 +282,13 @@ func runInteractiveMode(cfg *config.Config) error {
 		input, err := tuiInstance.Prompt()
 		if err != nil {
 			if err.Error() == "cancelled" {
-				tuiInstance.AddOutput("Request cancelled.")
+				// Handle cancellation
 				continue
+			}
+			if err.Error() == "EOF" {
+				// End of input (Ctrl+D), exit gracefully
+				fmt.Println("\nGoodbye!")
+				return nil
 			}
 			return err
 		}

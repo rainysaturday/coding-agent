@@ -49,7 +49,7 @@ func NewTUI(cfg *config.Config) *TUI {
 }
 
 // Prompt displays the prompt and reads user input with history navigation.
-// Escape key can be pressed during agent operation to cancel.
+// Ctrl+C can be pressed during agent operation to cancel.
 func (t *TUI) Prompt() (string, error) {
 	t.mu.Lock()
 	t.cancelled = false
@@ -79,14 +79,6 @@ func (t *TUI) Prompt() (string, error) {
 	t.addToHistory(input)
 
 	return input, nil
-}
-
-// HandleEscape checks if escape was pressed and cancels if needed.
-// This can be called periodically during long operations.
-func (t *TUI) HandleEscape() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.cancelled
 }
 
 // readLineWithHistory reads a line with arrow key history navigation.
