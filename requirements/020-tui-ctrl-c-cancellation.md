@@ -1,11 +1,11 @@
-# Requirement 020: TUI Escape Key Cancellation
+# Requirement 020: TUI Ctrl+C Cancellation
 
 ## Description
-The TUI must support cancellation of ongoing operations (such as inference requests or tool execution) using the Escape key. This allows users to interrupt long-running or unwanted operations gracefully.
+The TUI must support cancellation of ongoing operations (such as inference requests or tool execution) using Ctrl+C. This allows users to interrupt long-running or unwanted operations gracefully.
 
 ## Acceptance Criteria
-- [ ] Escape key cancels ongoing inference requests
-- [ ] Escape key cancels ongoing tool execution when possible
+- [ ] Ctrl+C cancels ongoing inference requests
+- [ ] Ctrl+C cancels ongoing tool execution when possible
 - [ ] Cancellation is graceful (no crashes or data corruption)
 - [ ] User is notified when operation is cancelled
 - [ ] Partial results are handled appropriately
@@ -13,7 +13,7 @@ The TUI must support cancellation of ongoing operations (such as inference reque
 - [ ] Cancellation does not affect previous conversation history
 - [ ] Visual feedback during cancellation (e.g., "Cancelled")
 - [ ] Cancellation can be triggered at any time during operation
-- [ ] Multiple Escape presses do not cause errors
+- [ ] Multiple Ctrl+C presses do not cause errors
 
 ## Implementation Details
 
@@ -31,10 +31,10 @@ The TUI must support cancellation of ongoing operations (such as inference reque
 - Do not add partial tool result to context
 - Allow user to retry or try different approach
 
-### Escape Key Handling
+### Ctrl+C Handling
 
 ```
-User presses Escape during operation:
+User presses Ctrl+C during operation:
 1. Set cancellation flag
 2. Check flag in operation loop
 3. Clean up resources (close connections, etc.)
@@ -53,7 +53,7 @@ User presses Escape during operation:
 
 ```
 [Assistant] I'll help you with that...
-^C or ESC
+^C
 Request cancelled.
 > 
 ```
@@ -62,11 +62,11 @@ Request cancelled.
 
 | Scenario | Behavior |
 |----------|----------|
-| Press Escape at prompt | No-op, stay at prompt |
-| Press Escape during typing | No-op, continue typing |
-| Press Escape during inference | Cancel request, return to prompt |
-| Press Escape during tool call | Cancel tool, return to prompt |
-| Press Escape multiple times | Single cancellation, ignore extras |
+| Press Ctrl+C at prompt | No-op, stay at prompt |
+| Press Ctrl+C during typing | Cancel input, return to prompt |
+| Press Ctrl+C during inference | Cancel request, return to prompt |
+| Press Ctrl+C during tool call | Cancel tool, return to prompt |
+| Press Ctrl+C multiple times | Single cancellation, ignore extras |
 | Network already closed | Display "Request cancelled", no error |
 
 ### Context State Preservation
@@ -79,15 +79,15 @@ After cancellation:
 
 ### Timeout Integration
 
-- Escape key works alongside timeout mechanisms
-- If timeout occurs first, Escape has no effect
-- If Escape pressed first, timeout is ignored
+- Ctrl+C works alongside timeout mechanisms
+- If timeout occurs first, Ctrl+C has no effect
+- If Ctrl+C pressed first, timeout is ignored
 
 ## User Experience
 
 1. User submits long-running request
 2. User changes mind or realizes mistake
-3. User presses Escape
+3. User presses Ctrl+C
 4. System displays "Cancelled" message
 5. User sees prompt again immediately
 6. User can try different approach
@@ -101,10 +101,10 @@ After cancellation:
 
 ## Testing Requirements
 
-- Test Escape during inference (streaming and non-streaming)
-- Test Escape during tool execution
-- Test Escape at prompt (no-op)
-- Test multiple Escape presses
+- Test Ctrl+C during inference (streaming and non-streaming)
+- Test Ctrl+C during tool execution
+- Test Ctrl+C at prompt (no-op)
+- Test multiple Ctrl+C presses
 - Test context state after cancellation
 - Test statistics after cancellation
 - Test with slow network (cancellation should still work)
