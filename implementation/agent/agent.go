@@ -183,7 +183,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Add tool result to context
 				var resultMessage string
 				if result.Success {
-					resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, formatResult(result))
+					// Use full output for LLM context (not truncated)
+					resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, result.Output)
 				} else {
 					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, result.Error)
 				}
