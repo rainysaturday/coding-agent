@@ -1,0 +1,23 @@
+# Coding Agent Configuration File
+# Format: KEY=VALUE (one per line)
+# Lines starting with # are comments
+
+# Inference settings
+model=llama3
+temperature=0.7
+max_tokens=4096
+context_size=128000
+streaming=true
+
+# API settings
+api_endpoint=http://localhost:8080
+api_key=
+
+# Timeout settings (in seconds)
+initial_token_timeout=7200
+connection_timeout=30
+read_timeout=300
+
+# Output settings
+verbose=false
+quiet=false

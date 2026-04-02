@@ -103,10 +103,13 @@ func displayHelp() {
 	fmt.Println("  -p, --prompt string      Prompt for one-shot mode (non-interactive)")
 	fmt.Println("      --stdin              Read prompt from stdin")
 	fmt.Println("      --prompt-file path   Read prompt from file")
+	fmt.Println("      --config path        Load configuration from file")
 	fmt.Println("      --model string       Model to use (default: \"llama3\")")
 	fmt.Println("      --temperature float  Inference temperature (default: 0.7)")
 	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 4096)")
 	fmt.Println("      --context-size int   Context window size (default: 128000)")
+	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 30)")
+	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 300)")
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
 	fmt.Println("      --output file        Write results to file")
@@ -117,6 +120,7 @@ func displayHelp() {
 	fmt.Println("Examples:")
 	fmt.Println("  coding-agent -p \"Create a REST API in Go\"")
 	fmt.Println("  coding-agent --prompt-file task.txt")
+	fmt.Println("  coding-agent --config config.txt")
 	fmt.Println("  echo \"Fix bug\" | coding-agent --stdin")
 	fmt.Println("  coding-agent")
 }
@@ -244,6 +248,11 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Initialize agent
 	ag := agent.NewAgent(cfg)
 
+	// Set context size callback
+	ag.SetContextSizeCallback(func(size, max int) {
+		tuiInstance.SetContextSize(size, max)
+	})
+
 	// Set up cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -259,6 +268,21 @@ func runInteractiveMode(cfg *config.Config) error {
 			// Re-create context for next operation
 			ctx, cancel = context.WithCancel(context.Background())
 			tuiInstance.CancelOperation()
+		}
+	}()
+
+	// Handle escape key for cancellation during operations
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			char, err := reader.ReadByte()
+			if err != nil {
+				continue
+			}
+			if char == 27 { // ESC
+				cancel()
+				tuiInstance.CancelOperation()
+			}
 		}
 	}()
 

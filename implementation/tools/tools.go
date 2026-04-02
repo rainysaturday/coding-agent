@@ -14,11 +14,12 @@ import (
 
 // ToolResult represents the result of a tool execution.
 type ToolResult struct {
-	Success bool                   `json:"success"`
-	Output  string                 `json:"output,omitempty"`
-	Error   string                 `json:"error,omitempty"`
-	Path    string                 `json:"path,omitempty"`
-	Extra   map[string]interface{} `json:"-"`
+	Success  bool                   `json:"success"`
+	Output   string                 `json:"output,omitempty"`
+	Error    string                 `json:"error,omitempty"`
+	Path     string                 `json:"path,omitempty"`
+	ExitCode int                    `json:"exit_code,omitempty"`
+	Extra    map[string]interface{} `json:"-"`
 }
 
 // ToolCall represents a tool call parsed from the LLM response.
@@ -121,13 +122,23 @@ func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
 	cmd := exec.Command("bash", "-c", command)
 	output, err := cmd.CombinedOutput()
 
+	// Extract exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	}
+
 	result := &ToolResult{
-		Success: err == nil,
+		ExitCode: exitCode,
 	}
 
 	if err != nil {
+		result.Success = false
 		result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", err, string(output))
 	} else {
+		result.Success = true
 		result.Output = string(output)
 	}
 

@@ -15,15 +15,17 @@ import (
 
 // TUI represents the terminal user interface.
 type TUI struct {
-	config       *config.Config
-	output       []string
-	history      []string
-	historyIndex int
-	maxHistory   int
-	cancelled    bool
-	mu           sync.Mutex
-	streaming    bool
-	streamBuffer strings.Builder
+	config         *config.Config
+	output         []string
+	history        []string
+	historyIndex   int
+	maxHistory     int
+	cancelled      bool
+	mu             sync.Mutex
+	streaming      bool
+	streamBuffer   strings.Builder
+	contextSize    int
+	maxContextSize int
 }
 
 // NewTUI creates a new TUI instance.
@@ -36,15 +38,18 @@ func NewTUI(cfg *config.Config) *TUI {
 	}
 
 	return &TUI{
-		config:       cfg,
-		output:       make([]string, 0),
-		history:      make([]string, 0),
-		historyIndex: -1,
-		maxHistory:   maxHistory,
+		config:         cfg,
+		output:         make([]string, 0),
+		history:        make([]string, 0),
+		historyIndex:   -1,
+		maxHistory:     maxHistory,
+		contextSize:    0,
+		maxContextSize: cfg.ContextSize,
 	}
 }
 
-// Prompt displays the prompt and reads user input.
+// Prompt displays the prompt and reads user input with history navigation.
+// Escape key can be pressed during agent operation to cancel.
 func (t *TUI) Prompt() (string, error) {
 	t.mu.Lock()
 	t.cancelled = false
@@ -56,9 +61,8 @@ func (t *TUI) Prompt() (string, error) {
 	// Display prompt
 	fmt.Printf("> ")
 
-	// Read input line
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
+	// Read input with history navigation support
+	input, err := t.readLineWithHistory()
 	if err != nil {
 		if t.cancelled {
 			return "", fmt.Errorf("cancelled")
@@ -75,6 +79,118 @@ func (t *TUI) Prompt() (string, error) {
 	t.addToHistory(input)
 
 	return input, nil
+}
+
+// HandleEscape checks if escape was pressed and cancels if needed.
+// This can be called periodically during long operations.
+func (t *TUI) HandleEscape() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.cancelled
+}
+
+// readLineWithHistory reads a line with arrow key history navigation.
+func (t *TUI) readLineWithHistory() (string, error) {
+	var line []byte
+	reader := bufio.NewReader(os.Stdin)
+	
+	for {
+		char, err := reader.ReadByte()
+		if err != nil {
+			return string(line), err
+		}
+
+		// Handle escape sequences (arrow keys)
+		if char == 27 { // ESC
+			// Read the rest of the escape sequence
+			next1, err := reader.ReadByte()
+			if err != nil {
+				continue
+			}
+			if next1 == 91 { // '['
+				next2, err := reader.ReadByte()
+				if err != nil {
+					continue
+				}
+				switch next2 {
+				case 65: // Up arrow
+					t.handleHistoryUpBytes(&line)
+				case 66: // Down arrow
+					t.handleHistoryDownBytes(&line)
+				}
+				continue
+			}
+			// Not an arrow key, just continue
+			continue
+		}
+
+		// Handle control characters
+		switch char {
+		case 127, 8: // Backspace
+			if len(line) > 0 {
+				line = line[:len(line)-1]
+				fmt.Print("\b \b")
+			}
+		case 13, 10: // Enter
+			fmt.Println()
+			return string(line), nil
+		case 3: // Ctrl+C
+			t.mu.Lock()
+			t.cancelled = true
+			t.mu.Unlock()
+			fmt.Println("\n[Cancelled]")
+			return "", fmt.Errorf("cancelled")
+		default:
+			if char >= 32 && char < 127 { // Printable ASCII
+				line = append(line, char)
+				fmt.Printf("%c", char)
+			}
+		}
+	}
+}
+
+// handleHistoryUpBytes navigates to the previous history entry using byte slice.
+func (t *TUI) handleHistoryUpBytes(line *[]byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(t.history) == 0 {
+		return
+	}
+
+	if t.historyIndex == -1 {
+		t.historyIndex = 0
+	} else if t.historyIndex < len(t.history)-1 {
+		t.historyIndex++
+	}
+
+	// Clear line and display history entry
+	fmt.Print("\r\033[K> ")
+	if t.historyIndex < len(t.history) {
+		*line = []byte(t.history[t.historyIndex])
+		fmt.Print(t.history[t.historyIndex])
+	}
+}
+
+// handleHistoryDownBytes navigates to the next history entry using byte slice.
+func (t *TUI) handleHistoryDownBytes(line *[]byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if len(t.history) == 0 {
+		return
+	}
+
+	if t.historyIndex > 0 {
+		t.historyIndex--
+		fmt.Print("\r\033[K> ")
+		*line = []byte(t.history[t.historyIndex])
+		fmt.Print(t.history[t.historyIndex])
+	} else {
+		fmt.Print("\r\033[K> ")
+		*line = []byte{}
+		t.historyIndex = -1
+	}
 }
 
 // AddOutput adds output to be displayed.
@@ -148,13 +264,21 @@ func (t *TUI) ClearOutput() {
 // DisplayStats displays the runtime statistics.
 func (t *TUI) DisplayStats(stats *agent.Stats) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	size := t.contextSize
+	max := t.maxContextSize
+	t.mu.Unlock()
 
 	fmt.Println("==================================================")
 	fmt.Println("Runtime Statistics")
 	fmt.Println("==================================================")
 	fmt.Printf("Input Tokens:      %d\n", stats.InputTokens)
 	fmt.Printf("Output Tokens:     %d\n", stats.OutputTokens)
+	fmt.Printf("Tokens/Second:     %.1f\n", stats.TokensPerSecond)
+	fmt.Printf("Context Size:      %d / %d", size, max)
+	if max > 0 {
+		fmt.Printf(" (%.1f%%)", float64(size)/float64(max)*100)
+	}
+	fmt.Println()
 	fmt.Printf("Tool Calls:        %d\n", stats.ToolCalls)
 	fmt.Printf("Failed Calls:      %d\n", stats.FailedToolCalls)
 	fmt.Printf("Iterations:        %d\n", stats.Iterations)
@@ -221,10 +345,45 @@ func (t *TUI) CancelOperation() {
 	t.cancelled = true
 }
 
+// SetContextSize updates the current context size.
+func (t *TUI) SetContextSize(size, max int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.contextSize = size
+	t.maxContextSize = max
+}
+
 // printContextSize prints the current context size indicator.
 func (t *TUI) printContextSize() {
-	// This will be updated by the agent when available
-	// For now, just print a placeholder
+	t.mu.Lock()
+	size := t.contextSize
+	max := t.maxContextSize
+	t.mu.Unlock()
+
+	if max > 0 {
+		percentage := float64(size) / float64(max) * 100
+		var indicator string
+		var color string
+
+		switch {
+		case percentage < 50:
+			indicator = "✓"
+			color = ColorGreen
+		case percentage < 75:
+			indicator = "⚠"
+			color = ColorYellow
+		case percentage < 90:
+			indicator = "⚠⚠"
+			color = ColorYellow
+		default:
+			indicator = "⚠⚠⚠"
+			color = ColorRed
+		}
+
+		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, ColorReset)
+	} else {
+		fmt.Printf("[Context: %d tokens] ", size)
+	}
 }
 
 // printColored prints text with ANSI color.

@@ -16,6 +16,7 @@ type Config struct {
 	UseStdin     bool
 	ShowHelp     bool
 	ShowVersion  bool
+	ConfigFile   string
 
 	// Inference settings
 	Model        string
@@ -35,6 +36,8 @@ type Config struct {
 
 	// Timeout settings (in seconds)
 	InitialTokenTimeout int
+	ConnectionTimeout   int
+	ReadTimeout         int
 }
 
 // DefaultConfig returns a config with default values.
@@ -46,6 +49,8 @@ func DefaultConfig() *Config {
 		ContextSize:         128000,
 		Streaming:           true,
 		InitialTokenTimeout: 7200, // 2 hours default
+		ConnectionTimeout:   30,   // 30 seconds for connection
+		ReadTimeout:         300,  // 5 minutes for reading response
 		APIEndpoint:         "http://localhost:8080", // llama.cpp default
 	}
 }
@@ -54,10 +59,25 @@ func DefaultConfig() *Config {
 func ParseArgs(args []string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Load from environment variables first
+	// First pass: check for config file flag
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--config" && i+1 < len(args) {
+			cfg.ConfigFile = args[i+1]
+			break
+		}
+	}
+
+	// Load config file if specified
+	if cfg.ConfigFile != "" {
+		if err := loadConfigFile(cfg.ConfigFile, cfg); err != nil {
+			return nil, fmt.Errorf("failed to load config file: %w", err)
+		}
+	}
+
+	// Load from environment variables (overrides config file)
 	loadEnv(cfg)
 
-	// Parse command-line arguments
+	// Parse command-line arguments (overrides env and config file)
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 
@@ -80,6 +100,12 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.PromptFile = args[i]
+		case "--config":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--config requires an argument")
+			}
+			i++
+			cfg.ConfigFile = args[i]
 		case "--model":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--model requires an argument")
@@ -118,6 +144,26 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.ContextSize = ctxSize
 		case "--no-stream":
 			cfg.Streaming = false
+		case "--connection-timeout":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--connection-timeout requires an argument")
+			}
+			i++
+			connTimeout, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid connection-timeout: %v", err)
+			}
+			cfg.ConnectionTimeout = connTimeout
+		case "--read-timeout":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--read-timeout requires an argument")
+			}
+			i++
+			readTimeout, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid read-timeout: %v", err)
+			}
+			cfg.ReadTimeout = readTimeout
 		case "--verbose":
 			cfg.Verbose = true
 		case "--quiet":
@@ -141,6 +187,75 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// loadConfigFile loads configuration from a config file.
+// Supports simple KEY=VALUE format (one per line, # for comments).
+func loadConfigFile(path string, cfg *Config) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes if present
+		value = strings.Trim(value, "\"'")
+
+		switch key {
+		case "model":
+			cfg.Model = value
+		case "temperature":
+			if v, err := strconv.ParseFloat(value, 64); err == nil {
+				cfg.Temperature = v
+			}
+		case "max_tokens":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.MaxTokens = v
+			}
+		case "context_size":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.ContextSize = v
+			}
+		case "streaming":
+			cfg.Streaming = value != "false" && value != "0"
+		case "api_endpoint":
+			cfg.APIEndpoint = value
+		case "api_key":
+			cfg.APIKey = value
+		case "initial_token_timeout":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.InitialTokenTimeout = v
+			}
+		case "connection_timeout":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.ConnectionTimeout = v
+			}
+		case "read_timeout":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.ReadTimeout = v
+			}
+		case "verbose":
+			cfg.Verbose = value == "true" || value == "1"
+		case "quiet":
+			cfg.Quiet = value == "true" || value == "1"
+		}
+	}
+
+	return nil
 }
 
 // loadEnv loads configuration from environment variables.
@@ -174,6 +289,16 @@ func loadEnv(cfg *Config) {
 			cfg.InitialTokenTimeout = timeout
 		}
 	}
+	if val := os.Getenv("CODING_AGENT_CONNECTION_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil {
+			cfg.ConnectionTimeout = timeout
+		}
+	}
+	if val := os.Getenv("CODING_AGENT_READ_TIMEOUT"); val != "" {
+		if timeout, err := strconv.Atoi(val); err == nil {
+			cfg.ReadTimeout = timeout
+		}
+	}
 	// Streaming can be disabled via env var
 	if val := os.Getenv("CODING_AGENT_STREAMING"); val != "" {
 		if val == "false" || val == "0" {
@@ -189,6 +314,13 @@ func (c *Config) Validate() error {
 	}
 	if c.InitialTokenTimeout < 10 {
 		return fmt.Errorf("initial token timeout must be at least 10 seconds")
+	}
+	// ConnectionTimeout and ReadTimeout have defaults, only validate if explicitly set (non-zero)
+	if c.ConnectionTimeout != 0 && c.ConnectionTimeout < 5 {
+		return fmt.Errorf("connection timeout must be at least 5 seconds")
+	}
+	if c.ReadTimeout != 0 && c.ReadTimeout < 10 {
+		return fmt.Errorf("read timeout must be at least 10 seconds")
 	}
 	return nil
 }

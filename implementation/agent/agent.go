@@ -17,17 +17,23 @@ import (
 // Using inference.StreamingCallback for type compatibility.
 type StreamCallback = inference.StreamingCallback
 
+// ContextSizeCallback is a function called when context size changes.
+type ContextSizeCallback func(size, max int)
+
 // Agent represents the coding agent.
 type Agent struct {
-	config        *config.Config
-	inference     *inference.InferenceClient
-	toolExecutor  *tools.ToolExecutor
-	context       []*inference.Message
-	systemPrompt  string
-	stats         *Stats
-	maxIterations int
-	streamCallback StreamCallback
-	mu            sync.Mutex
+	config             *config.Config
+	inference          *inference.InferenceClient
+	toolExecutor       *tools.ToolExecutor
+	context            []*inference.Message
+	systemPrompt       string
+	stats              *Stats
+	maxIterations      int
+	streamCallback     StreamCallback
+	contextSizeCallback ContextSizeCallback
+	maxContextSize     int
+	compressionCount   int
+	mu                 sync.Mutex
 }
 
 // Stats represents agent statistics.
@@ -38,6 +44,7 @@ type Stats struct {
 	FailedToolCalls  int       `json:"failed_tool_calls"`
 	Iterations       int       `json:"iterations"`
 	StartTime        time.Time `json:"start_time"`
+	TokensPerSecond  float64   `json:"tokens_per_second"`
 }
 
 // Step represents an execution step.
@@ -65,7 +72,8 @@ func NewAgent(cfg *config.Config) *Agent {
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
-		maxIterations: 50,
+		maxIterations:  50,
+		maxContextSize: cfg.ContextSize,
 	}
 
 	// Build system prompt
@@ -78,6 +86,13 @@ func NewAgent(cfg *config.Config) *Agent {
 func (a *Agent) SetStreamCallback(callback StreamCallback) {
 	a.mu.Lock()
 	a.streamCallback = callback
+	a.mu.Unlock()
+}
+
+// SetContextSizeCallback sets the callback function for context size updates.
+func (a *Agent) SetContextSizeCallback(callback ContextSizeCallback) {
+	a.mu.Lock()
+	a.contextSizeCallback = callback
 	a.mu.Unlock()
 }
 
@@ -120,6 +135,16 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		a.mu.Lock()
 		a.stats.Iterations = iteration
 		a.mu.Unlock()
+
+		// Check if context compression is needed
+		if a.shouldCompress() {
+			if err := a.compressContext(ctx); err != nil {
+				// Log compression failure but continue
+				if a.streamCallback != nil {
+					a.streamCallback(fmt.Sprintf("\n[Warning] Context compression failed: %v\n", err))
+				}
+			}
+		}
 
 		// Get response from LLM (now supports streaming)
 		response, err := a.getInferenceResponse(ctx)
@@ -205,13 +230,27 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	copy(messages, a.context)
 	systemPrompt := a.systemPrompt
 	streamCallback := a.streamCallback
+	contextSizeCallback := a.contextSizeCallback
+	maxContextSize := a.maxContextSize
 	a.mu.Unlock()
 
 	// Use streaming version if callback is set
 	if streamCallback != nil {
 		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
 	}
-	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
+	
+	resp, err := a.inference.InferenceRequest(ctx, messages, systemPrompt)
+	
+	// Report context size
+	if contextSizeCallback != nil {
+		total := 0
+		for _, msg := range a.context {
+			total += inference.EstimateTokens(msg.Content)
+		}
+		contextSizeCallback(total, maxContextSize)
+	}
+	
+	return resp, err
 }
 
 // GetStats returns the current statistics.
@@ -222,6 +261,14 @@ func (a *Agent) GetStats() *Stats {
 	// Get tool executor stats
 	toolStats := a.toolExecutor.Stats()
 
+	// Calculate tokens per second
+	tokensPerSecond := 0.0
+	elapsed := time.Since(a.stats.StartTime).Seconds()
+	if elapsed > 0 {
+		totalTokens := a.stats.InputTokens + a.stats.OutputTokens
+		tokensPerSecond = float64(totalTokens) / elapsed
+	}
+
 	return &Stats{
 		InputTokens:     a.stats.InputTokens,
 		OutputTokens:    a.stats.OutputTokens,
@@ -229,6 +276,7 @@ func (a *Agent) GetStats() *Stats {
 		FailedToolCalls: toolStats.FailedCalls,
 		Iterations:      a.stats.Iterations,
 		StartTime:       a.stats.StartTime,
+		TokensPerSecond: tokensPerSecond,
 	}
 }
 
@@ -271,6 +319,70 @@ func (a *Agent) GetContextSize() int {
 	return total
 }
 
+// shouldCompress checks if context compression is needed.
+func (a *Agent) shouldCompress() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	
+	total := 0
+	for _, msg := range a.context {
+		total += inference.EstimateTokens(msg.Content)
+	}
+	
+	// Compress when context exceeds 80% of max
+	return total > int(float64(a.maxContextSize)*0.8)
+}
+
+// compressContext compresses the conversation history while preserving system prompt.
+func (a *Agent) compressContext(ctx context.Context) error {
+	a.mu.Lock()
+	if len(a.context) <= 2 {
+		a.mu.Unlock()
+		return nil // Nothing to compress
+	}
+	
+	// Keep system prompt and last few messages
+	preserveCount := 3
+	if len(a.context) <= preserveCount {
+		a.mu.Unlock()
+		return nil
+	}
+	
+	messages := make([]*inference.Message, len(a.context))
+	copy(messages, a.context)
+	systemPrompt := a.systemPrompt
+	a.mu.Unlock()
+
+	// Create summary request - summarize all but system prompt and last messages
+	summaryMessages := messages[1 : len(messages)-preserveCount] // Skip system prompt, keep last messages
+	
+	// Build summary prompt
+	summaryReq := fmt.Sprintf("Summarize the following conversation history concisely, preserving key information, decisions, and results:\n\n")
+	for _, msg := range summaryMessages {
+		summaryReq += fmt.Sprintf("%s: %s\n\n", msg.Role, msg.Content)
+	}
+	summaryReq += "\nProvide a concise summary that captures all essential information."
+
+	// Get summary from LLM
+	summaryMsg := &inference.Message{Role: "user", Content: summaryReq}
+	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{summaryMsg}, "You are a conversation summarizer.")
+	if err != nil {
+		return fmt.Errorf("failed to compress context: %w", err)
+	}
+
+	// Rebuild context: system prompt + summary + preserved messages
+	a.mu.Lock()
+	newContext := make([]*inference.Message, 0, preserveCount+1)
+	newContext = append(newContext, &inference.Message{Role: "system", Content: systemPrompt})
+	newContext = append(newContext, &inference.Message{Role: "assistant", Content: "Conversation summary: " + response.Content})
+	newContext = append(newContext, messages[len(messages)-preserveCount:]...)
+	a.context = newContext
+	a.compressionCount++
+	a.mu.Unlock()
+
+	return nil
+}
+
 // formatResult formats a tool result for display with truncation.
 func formatResult(result *tools.ToolResult) string {
 	if result.Extra != nil {
@@ -289,7 +401,17 @@ func formatResult(result *tools.ToolResult) string {
 	return output
 }
 
-// streamStatus streams a tool call status message.
+// ANSI color codes for tool feedback
+const (
+	ColorReset  = "\033[0m"
+	ColorGreen  = "\033[32m"
+	ColorYellow = "\033[33m"
+	ColorRed    = "\033[31m"
+	ColorCyan   = "\033[36m"
+	ColorBlue   = "\033[34m"
+)
+
+// streamStatus streams a tool call status message with color.
 func streamStatus(toolName string, params map[string]interface{}, callback StreamCallback) {
 	if callback == nil {
 		return
@@ -305,13 +427,13 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 				cmd = cmd[:50] + "..."
 			}
 		}
-		msg = fmt.Sprintf("\n[Running] bash: %s\n", cmd)
+		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", ColorCyan, cmd, ColorReset)
 	case "read_file":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n[Reading] file: %s\n", path)
+		msg = fmt.Sprintf("\n%s[Reading] file: %s%s\n", ColorCyan, path, ColorReset)
 	case "read_lines":
 		path := ""
 		start, end := 0, 0
@@ -324,13 +446,13 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		if p, ok := params["end"].(float64); ok {
 			end = int(p)
 		}
-		msg = fmt.Sprintf("\n[Reading] lines %d-%d from: %s\n", start, end, path)
+		msg = fmt.Sprintf("\n%s[Reading] lines %d-%d from: %s%s\n", ColorCyan, start, end, path, ColorReset)
 	case "write_file":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n[Writing] file: %s\n", path)
+		msg = fmt.Sprintf("\n%s[Writing] file: %s%s\n", ColorCyan, path, ColorReset)
 	case "insert_lines":
 		path := ""
 		line := 0
@@ -340,20 +462,20 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		if p, ok := params["line"].(float64); ok {
 			line = int(p)
 		}
-		msg = fmt.Sprintf("\n[Inserting] at line %d in: %s\n", line, path)
+		msg = fmt.Sprintf("\n%s[Inserting] at line %d in: %s%s\n", ColorCyan, line, path, ColorReset)
 	case "replace_lines":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n[Replacing] in file: %s\n", path)
+		msg = fmt.Sprintf("\n%s[Replacing] in file: %s%s\n", ColorCyan, path, ColorReset)
 	default:
-		msg = fmt.Sprintf("\n[Running] tool: %s\n", toolName)
+		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
 	callback(msg)
 }
 
-// streamResult streams a tool result status message.
+// streamResult streams a tool result status message with color.
 func streamResult(toolName string, result *tools.ToolResult, callback StreamCallback) {
 	if callback == nil {
 		return
@@ -363,7 +485,7 @@ func streamResult(toolName string, result *tools.ToolResult, callback StreamCall
 	callback(status)
 }
 
-// formatToolStatus formats a tool status message for display.
+// formatToolStatus formats a tool status message for display with colors.
 func formatToolStatus(toolName string, result *tools.ToolResult) string {
 	if result.Success {
 		switch toolName {
@@ -375,7 +497,11 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				lines = lines[:5]
 				output = strings.Join(lines, "\n") + "\n... [output truncated]"
 			}
-			return fmt.Sprintf("[Success] bash completed\nOutput:\n%s\n", output)
+			exitCode := ""
+			if result.ExitCode != 0 {
+				exitCode = fmt.Sprintf(" (exit code: %d)", result.ExitCode)
+			}
+			return fmt.Sprintf("%s[Success] bash completed%s\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
 		case "read_file":
 			output := result.Output
 			lines := strings.Split(output, "\n")
@@ -383,7 +509,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				lines = lines[:10]
 				output = strings.Join(lines, "\n") + "\n... [content truncated]"
 			}
-			return fmt.Sprintf("[Success] read %d lines\nContent:\n%s\n", len(lines), output)
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, len(lines), output, ColorReset)
 		case "read_lines":
 			output := result.Output
 			lines := strings.Split(output, "\n")
@@ -391,18 +517,18 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				lines = lines[:10]
 				output = strings.Join(lines, "\n") + "\n... [content truncated]"
 			}
-			return fmt.Sprintf("[Success] read %d lines\nContent:\n%s\n", len(lines), output)
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, len(lines), output, ColorReset)
 		case "write_file":
 			if msg, ok := result.Extra["message"].(string); ok {
-				return fmt.Sprintf("[Success] %s\n", msg)
+				return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, msg, ColorReset)
 			}
-			return "[Success] file written\n"
+			return fmt.Sprintf("%s[Success] file written%s\n", ColorGreen, ColorReset)
 		case "insert_lines":
 			count := 0
 			if c, ok := result.Extra["linesInserted"].(int); ok {
 				count = c
 			}
-			return fmt.Sprintf("[Success] inserted %d line(s)\n", count)
+			return fmt.Sprintf("%s[Success] inserted %d line(s)%s\n", ColorGreen, count, ColorReset)
 		case "replace_lines":
 			count := 0
 			if c, ok := result.Extra["replacementsMade"].(int); ok {
@@ -410,12 +536,12 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			} else if c, ok := result.Extra["linesReplaced"].(int); ok {
 				count = c
 			}
-			return fmt.Sprintf("[Success] replaced %d line(s)\n", count)
+			return fmt.Sprintf("%s[Success] replaced %d line(s)%s\n", ColorGreen, count, ColorReset)
 		default:
-			return "[Success] tool completed\n"
+			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
 	}
-	return fmt.Sprintf("[Failed] %s\nError: %s\n", toolName, result.Error)
+	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", ColorRed, toolName, result.Error, ColorReset)
 }
 
 // buildSystemPrompt builds the system prompt with tool definitions.

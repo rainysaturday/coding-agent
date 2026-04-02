@@ -30,6 +30,8 @@ type InferenceClient struct {
 	streaming      bool
 	timeout        time.Duration
 	client         *http.Client
+	maxRetries     int
+	retryDelay     time.Duration
 }
 
 // Message represents a chat message.
@@ -68,6 +70,11 @@ type Response struct {
 
 // NewInferenceClient creates a new inference client.
 func NewInferenceClient(cfg *config.Config) *InferenceClient {
+	totalTimeout := time.Duration(cfg.InitialTokenTimeout) * time.Second
+	if cfg.ReadTimeout > 0 {
+		totalTimeout = time.Duration(cfg.ReadTimeout) * time.Second
+	}
+	
 	return &InferenceClient{
 		endpoint:    cfg.APIEndpoint,
 		apiKey:      cfg.APIKey,
@@ -76,10 +83,12 @@ func NewInferenceClient(cfg *config.Config) *InferenceClient {
 		maxTokens:   cfg.MaxTokens,
 		contextSize: cfg.ContextSize,
 		streaming:   cfg.Streaming,
-		timeout:     time.Duration(cfg.InitialTokenTimeout) * time.Second,
+		timeout:     totalTimeout,
 		client: &http.Client{
-			Timeout: time.Duration(cfg.InitialTokenTimeout) * time.Second,
+			Timeout: totalTimeout,
 		},
+		maxRetries: 3,
+		retryDelay: 1 * time.Second,
 	}
 }
 
@@ -120,34 +129,58 @@ func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, mes
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", ic.endpoint+"/v1/chat/completions", bytes.NewReader(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	// Retry logic
+	var lastErr error
+	for attempt := 0; attempt <= ic.maxRetries; attempt++ {
+		if attempt > 0 {
+			// Wait before retry
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(ic.retryDelay):
+			}
+		}
+
+		// Create HTTP request
+		req, err := http.NewRequestWithContext(ctx, "POST", ic.endpoint+"/v1/chat/completions", bytes.NewReader(jsonData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if ic.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+ic.apiKey)
+		}
+
+		// Make request
+		resp, err := ic.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to make request (attempt %d): %w", attempt+1, err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			// Only retry on server errors (5xx), not client errors (4xx)
+			if resp.StatusCode >= 500 {
+				lastErr = fmt.Errorf("API error (attempt %d): %d - %s", attempt+1, resp.StatusCode, string(body))
+				continue
+			}
+			return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(body))
+		}
+
+		// Success - handle response
+		defer resp.Body.Close()
+
+		// Handle streaming or non-streaming response
+		if ic.streaming {
+			return ic.handleStreamResponse(resp.Body, callback)
+		}
+		return ic.handleResponse(resp.Body)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	if ic.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+ic.apiKey)
-	}
-
-	// Make request
-	resp, err := ic.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(body))
-	}
-
-	// Handle streaming or non-streaming response
-	if ic.streaming {
-		return ic.handleStreamResponse(resp.Body, callback)
-	}
-	return ic.handleResponse(resp.Body)
+	return nil, lastErr
 }
 
 // buildMessages builds the message list with system prompt.
