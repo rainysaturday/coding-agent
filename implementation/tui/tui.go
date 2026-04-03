@@ -345,6 +345,12 @@ func (t *TUI) SetContextSize(size, max int) {
 	t.maxContextSize = max
 }
 
+// ShowContextSize displays the current context size to the user.
+func (t *TUI) ShowContextSize() {
+	t.printContextSize()
+	fmt.Println()
+}
+
 // printContextSize prints the current context size indicator.
 func (t *TUI) printContextSize() {
 	t.mu.Lock()

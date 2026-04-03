@@ -119,6 +119,14 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		Role:    "user",
 		Content: prompt,
 	})
+	// Update context size after adding initial message
+	if a.contextSizeCallback != nil {
+		total := 0
+		for _, msg := range a.context {
+			total += inference.EstimateTokens(msg.Content)
+		}
+		a.contextSizeCallback(total, a.maxContextSize)
+	}
 	a.mu.Unlock()
 
 	// Track steps
@@ -178,8 +186,6 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				streamResult(tc.Name, result, a.streamCallback)
 				step.StreamMsg = formatToolStatus(tc.Name, result)
 
-				steps = append(steps, step)
-
 				// Add tool result to context
 				var resultMessage string
 				if result.Success {
@@ -195,6 +201,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					Content: resultMessage,
 				})
 				a.mu.Unlock()
+				// Update context size after adding tool result (outside lock)
+				if a.contextSizeCallback != nil {
+					a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
+				}
 			}
 			continue // Loop for next iteration
 		}
@@ -237,21 +247,30 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 
 	// Use streaming version if callback is set
 	if streamCallback != nil {
-		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
+		resp, err := a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
+		// Report context size after streaming response
+		a.reportContextSize(contextSizeCallback, maxContextSize)
+		return resp, err
 	}
 	
 	resp, err := a.inference.InferenceRequest(ctx, messages, systemPrompt)
+	// Report context size after non-streaming response
+	a.reportContextSize(contextSizeCallback, maxContextSize)
 	
-	// Report context size
-	if contextSizeCallback != nil {
+	return resp, err
+}
+
+// reportContextSize calculates and reports the current context size.
+func (a *Agent) reportContextSize(callback ContextSizeCallback, maxContextSize int) {
+	if callback != nil {
+		a.mu.Lock()
 		total := 0
 		for _, msg := range a.context {
 			total += inference.EstimateTokens(msg.Content)
 		}
-		contextSizeCallback(total, maxContextSize)
+		a.mu.Unlock()
+		callback(total, maxContextSize)
 	}
-	
-	return resp, err
 }
 
 // GetStats returns the current statistics.
