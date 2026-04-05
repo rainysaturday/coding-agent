@@ -38,6 +38,9 @@ type Config struct {
 	InitialTokenTimeout int
 	ConnectionTimeout   int
 	ReadTimeout         int
+
+	// Agent settings
+	MaxIterations     int
 }
 
 // DefaultConfig returns a config with default values.
@@ -52,6 +55,7 @@ func DefaultConfig() *Config {
 		ConnectionTimeout:   7200, // 2 hours default
 		ReadTimeout:         7200, // 2 hours default
 		APIEndpoint:         "http://localhost:8080", // llama.cpp default
+		MaxIterations:       1000, // Default max iterations for loop protection
 	}
 }
 
@@ -132,6 +136,16 @@ func ParseArgs(args []string) (*Config, error) {
 				return nil, fmt.Errorf("invalid max-tokens: %v", err)
 			}
 			cfg.MaxTokens = maxTokens
+		case "--max-iterations":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--max-iterations requires an argument")
+			}
+			i++
+			maxIterations, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid max-iterations: %v", err)
+			}
+			cfg.MaxIterations = maxIterations
 		case "--context-size":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--context-size requires an argument")
@@ -226,6 +240,10 @@ func loadConfigFile(path string, cfg *Config) error {
 			if v, err := strconv.Atoi(value); err == nil {
 				cfg.MaxTokens = v
 			}
+		case "max_iterations":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.MaxIterations = v
+			}
 		case "context_size":
 			if v, err := strconv.Atoi(value); err == nil {
 				cfg.ContextSize = v
@@ -273,6 +291,11 @@ func loadEnv(cfg *Config) {
 			cfg.MaxTokens = maxTokens
 		}
 	}
+	if val := os.Getenv("CODING_AGENT_MAX_ITERATIONS"); val != "" {
+		if maxIterations, err := strconv.Atoi(val); err == nil {
+			cfg.MaxIterations = maxIterations
+		}
+	}
 	if val := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); val != "" {
 		if ctxSize, err := strconv.Atoi(val); err == nil {
 			cfg.ContextSize = ctxSize
@@ -311,6 +334,9 @@ func loadEnv(cfg *Config) {
 func (c *Config) Validate() error {
 	if c.ContextSize <= 0 {
 		return fmt.Errorf("context size must be positive")
+	}
+	if c.MaxIterations <= 0 {
+		return fmt.Errorf("max iterations must be positive")
 	}
 	if c.InitialTokenTimeout < 10 {
 		return fmt.Errorf("initial token timeout must be at least 10 seconds")

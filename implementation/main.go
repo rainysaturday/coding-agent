@@ -108,6 +108,7 @@ func displayHelp() {
 	fmt.Println("      --temperature float  Inference temperature (default: 0.7)")
 	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 4096)")
 	fmt.Println("      --context-size int   Context window size (default: 128000)")
+	fmt.Println("      --max-iterations int Maximum iterations for loop protection (default: 1000)")
 	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 30)")
 	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 300)")
 	fmt.Println("      --verbose            Enable verbose output")

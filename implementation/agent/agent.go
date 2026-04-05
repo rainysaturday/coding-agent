@@ -72,7 +72,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
-		maxIterations:  50,
+		maxIterations:  cfg.MaxIterations,
 		maxContextSize: cfg.ContextSize,
 	}
 
