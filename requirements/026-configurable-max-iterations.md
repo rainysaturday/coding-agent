@@ -1,190 +1,208 @@
 # Requirement 026: Configurable Max Iterations
 
 ## Description
-The coding agent harness must support a configurable maximum iteration limit to prevent infinite loops when the agent makes tool calls. This limit controls how many times the agent can iterate (make tool calls) before stopping and returning control to the user or reporting completion.
+The coding agent harness must support a configurable maximum iteration limit to prevent infinite loops when the agent is stuck in a cycle of tool calls. This provides a safety mechanism that allows the user to intervene when the agent is not making progress.
 
 ## Acceptance Criteria
-- [ ] Maximum iteration limit is configurable via environment variable
-- [ ] Maximum iteration limit is configurable via command-line flag
-- [ ] Maximum iteration limit is configurable via config file
-- [ ] Default maximum iteration limit is 1000 iterations
-- [ ] Iteration limit can be set as integer value
-- [ ] Validation ensures iteration limit is positive (minimum 1)
-- [ ] Agent tracks current iteration count during execution
-- [ ] Agent stops when iteration limit is reached
-- [ ] Clear error message is displayed when limit is exceeded
-- [ ] Iteration count is displayed in runtime statistics
-- [ ] Iteration count is reset on new conversation session
-- [ ] Maximum iterations can be disabled (set to 0 or -1 for unlimited)
+- [ ] Maximum iterations is configurable via command-line flag (`--max-iterations`)
+- [ ] Maximum iterations is configurable via environment variable (`CODING_AGENT_MAX_ITERATIONS`)
+- [ ] Maximum iterations is configurable via config file (`max_iterations`)
+- [ ] Default maximum iterations is 1000
+- [ ] Maximum iterations can be set as positive integer value
+- [ ] Validation ensures max iterations is positive
+- [ ] Agent stops and reports error when max iterations exceeded
+- [ ] Iteration count is tracked and displayed in statistics
+- [ ] User is notified when approaching max iterations (optional warning)
+- [ ] Max iterations is included in help documentation
 
-## Command-Line Interface
+## Configuration
 
-### Usage
+### Command-Line Flag
 ```bash
-# Set max iterations via flag
+# Set max iterations via command line
 coding-agent --max-iterations 500
 
-# Interactive mode with custom limit
-coding-agent --max-iterations 2000
-
-# One-shot mode with limit
-coding-agent -p "Create a complex application" --max-iterations 1000
+# Short form (if applicable)
+coding-agent -i 500
 ```
 
-### Help Output
+### Environment Variable
 ```bash
-$ coding-agent --help
-...
-      --max-iterations int   Maximum tool call iterations (default: 1000, 0=unlimited)
-...
-```
-
-## Environment Variables
-
-```bash
-# Set via environment variable
 export CODING_AGENT_MAX_ITERATIONS=500
 coding-agent
-
-# Disable iteration limit (unlimited)
-export CODING_AGENT_MAX_ITERATIONS=0
-coding-agent
 ```
 
-## Configuration File
-
-```ini
-# In config file
-max_iterations = 500
-
-# Or disable limit
-max_iterations = 0
+### Config File
+```
+max_iterations=500
 ```
 
-## Implementation Details
+## Default Value
+- **Default:** 1000 iterations
+- **Minimum:** 1 iteration
+- **Recommended:** 100-1000 depending on task complexity
 
-### Agent Behavior
+## Behavior
 
-**Normal Operation:**
-1. Agent receives user request
-2. Agent begins processing (iteration 0)
-3. Agent makes tool call (iteration 1)
-4. Agent receives tool result
-5. Agent continues or completes
-6. Repeat until task complete or limit reached
+### Iteration Counting
+- Each tool call execution counts as one iteration
+- Multiple tool calls in a single LLM response count separately
+- Context compression operations do not count as iterations
+- User prompts in interactive mode reset the iteration counter
 
-**When Limit is Reached:**
-```bash
-[Warning] Maximum iterations (1000) exceeded. Task may be incomplete.
-[Assistant] I have reached the maximum iteration limit. The task may require more steps than allowed. Please review the current state and continue if needed.
+### Max Iterations Exceeded
+When the maximum iterations is exceeded:
+```
+Error: maximum iterations (1000) exceeded
 ```
 
-### Iteration Tracking
-
-```go
-type Agent struct {
-    maxIterations int
-    iteration     int
-    // ... other fields
-}
-
-func (a *Agent) Run(prompt string) (*Result, error) {
-    a.iteration = 0
-    
-    for {
-        a.iteration++
-        
-        if a.maxIterations > 0 && a.iteration > a.maxIterations {
-            return nil, fmt.Errorf("maximum iterations (%d) exceeded", a.maxIterations)
-        }
-        
-        // ... process request
-    }
-}
-```
+The agent will:
+1. Stop executing further tool calls
+2. Return an error to the user
+3. Include iteration count in error message
+4. Preserve conversation context for analysis
 
 ### Statistics Display
-
-```bash
+```
 ==================================================
 Runtime Statistics
 ==================================================
-Input Tokens:       1,500
-Output Tokens:        950
-Tokens/Second:       12.5
-Tool Calls:             5
-Failed Calls:           0
-Iterations:            50 / 1000
+Input Tokens:      1,500
+Output Tokens:       950
+Tokens/Second:      12.5
+Tool Calls:           5
+Failed Calls:         0
+Iterations:           3
+Max Iterations:    1000
 Uptime:            10m 30s
 ==================================================
 ```
 
-## Edge Cases
+## Use Cases
 
-| Scenario | Behavior |
-|----------|----------|
-| Max iterations = 0 | Unlimited iterations allowed |
-| Max iterations = 1 | Single tool call then stop |
-| Max iterations negative | Treated as unlimited |
-| Very large value | Allowed but may cause long runs |
-| Default (1000) | Standard protection against infinite loops |
+### Simple Tasks
+For straightforward tasks that require few tool calls:
+```bash
+coding-agent --max-iterations 50 -p "Create a simple Hello World program"
+```
 
-## Safety Considerations
+### Complex Tasks
+For complex tasks requiring many iterations:
+```bash
+coding-agent --max-iterations 2000 -p "Build a complete REST API with authentication"
+```
 
-### Why Max Iterations?
+### Debugging/Testing
+For testing and debugging with lower limits:
+```bash
+coding-agent --max-iterations 10 -p "Test task"
+```
 
-1. **Prevent Infinite Loops**: LLMs can get stuck in loops making the same tool calls
-2. **Resource Management**: Prevent excessive API calls and compute usage
-3. **User Control**: Users can adjust based on task complexity
-4. **Debugging**: Helps identify when tasks require too many steps
-
-### Recommended Values
-
-| Use Case | Recommended Limit |
-|----------|-------------------|
-| Simple tasks | 50-100 |
-| Moderate complexity | 200-500 |
-| Complex applications | 500-1000 |
-| Research/exploration | 0 (unlimited) |
+### Production Safety
+For production use with reasonable limits:
+```bash
+export CODING_AGENT_MAX_ITERATIONS=1000
+coding-agent
+```
 
 ## Error Handling
 
-### Iteration Limit Exceeded
+### Invalid Configuration
+```bash
+# Negative value
+coding-agent --max-iterations -100
+Error: max iterations must be positive
+
+# Zero value
+coding-agent --max-iterations 0
+Error: max iterations must be positive
+
+# Non-numeric value
+coding-agent --max-iterations abc
+Error: invalid max-iterations: invalid syntax
+```
+
+### Iteration Limit Reached
+```
+Error: maximum iterations (1000) exceeded
+```
+
+## Implementation Details
+
+### Agent Loop
 ```go
-if a.maxIterations > 0 && a.iteration > a.maxIterations {
-    return nil, fmt.Errorf("maximum iterations (%d) exceeded. Task may be incomplete.", a.maxIterations)
+iteration := 0
+for {
+    iteration++
+    if iteration > a.maxIterations {
+        return nil, fmt.Errorf("maximum iterations (%d) exceeded", a.maxIterations)
+    }
+    
+    // ... agent logic ...
 }
 ```
 
-### User Response
-When limit is reached, the agent should:
-1. Display clear warning message
-2. Show current state of work
-3. Suggest user can continue with new prompt
-4. Return partial results if available
+### Configuration Chain
+1. Config file loads first (lowest priority)
+2. Environment variables override config file
+3. Command-line flags override environment variables (highest priority)
+
+### Iteration Tracking
+- Iterations are tracked per agent run/session
+- Reset on new user prompt in interactive mode
+- Included in statistics for monitoring
+- Used for debugging and optimization
+
+## Related Requirements
+- **016-tool-result-context-integration.md**: Tool calling and iteration
+- **020-tui-ctrl-c-cancellation.md**: Alternative cancellation method
+- **003-runtime-statistics.md**: Statistics display
+- **025-non-interactive-one-shot-mode.md**: One-shot mode execution
 
 ## Testing Requirements
 
 ### Unit Tests
 - [ ] Default max iterations is 1000
-- [ ] Config file max iterations is read correctly
-- [ ] Environment variable max iterations is read correctly
-- [ ] Command-line flag max iterations overrides other sources
-- [ ] Zero value disables iteration limit
-- [ ] Negative value disables iteration limit
-- [ ] Iteration count increments correctly
-- [ ] Agent stops when limit is reached
-- [ ] Error message is displayed when limit exceeded
-- [ ] Statistics show iteration count
+- [ ] Command-line flag sets max iterations correctly
+- [ ] Environment variable sets max iterations correctly
+- [ ] Config file sets max iterations correctly
+- [ ] Command-line overrides environment variable
+- [ ] Environment variable overrides config file
+- [ ] Invalid values are rejected with proper error
+- [ ] Agent stops when max iterations exceeded
+- [ ] Iteration count is accurate
 
 ### Integration Tests
-- [ ] Agent completes simple task within limit
-- [ ] Agent stops at configured limit
-- [ ] Agent can be configured for unlimited iterations
-- [ ] Multiple sessions reset iteration count
-- [ ] Statistics accurately reflect iteration count
+- [ ] Agent completes task within iteration limit
+- [ ] Agent stops at iteration limit with error
+- [ ] Statistics show correct iteration count
+- [ ] Error message includes iteration limit
+- [ ] Context is preserved after iteration limit
 
-## Related Requirements
-- **003-runtime-statistics.md**: Statistics display including iterations
-- **016-tool-result-context-integration.md**: Tool call iteration process
-- **025-non-interactive-one-shot-mode.md**: One-shot mode execution
+## Security Considerations
+- Prevents resource exhaustion from infinite loops
+- Protects against API cost runaway
+- Allows user control over execution length
+- Should be combined with timeout mechanisms
+
+## Recommendations
+
+### Default Settings
+- **Interactive Mode:** 1000 iterations
+- **One-Shot Mode:** 1000 iterations
+- **CI/CD:** 500 iterations (faster failure)
+- **Testing:** 50-100 iterations
+
+### Monitoring
+- Watch iteration count in statistics
+- Set lower limits for testing
+- Increase limits for complex tasks
+- Use Ctrl+C for immediate cancellation
+
+### Best Practices
+1. Start with default (1000) for most tasks
+2. Lower limits for simple/quick tasks
+3. Higher limits for complex multi-step tasks
+4. Monitor iteration count during long runs
+5. Use Ctrl+C if agent seems stuck
+6. Review tool call patterns if hitting limits frequently
