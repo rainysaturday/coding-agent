@@ -26,6 +26,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.InitialTokenTimeout != 7200 {
 		t.Errorf("Expected default timeout 7200, got %d", cfg.InitialTokenTimeout)
 	}
+	if cfg.MaxIterations != 1000 {
+		t.Errorf("Expected default max iterations 1000, got %d", cfg.MaxIterations)
+	}
 }
 
 func TestParseArgs(t *testing.T) {
@@ -96,6 +99,12 @@ func TestParseArgs(t *testing.T) {
 			check:   func(c *Config) bool { return c.ContextSize == 65536 },
 		},
 		{
+			name:    "max-iterations flag",
+			args:    []string{"--max-iterations", "500"},
+			wantErr: false,
+			check:   func(c *Config) bool { return c.MaxIterations == 500 },
+		},
+		{
 			name:    "no-stream flag",
 			args:    []string{"--no-stream"},
 			wantErr: false,
@@ -143,6 +152,12 @@ func TestParseArgs(t *testing.T) {
 			wantErr: true,
 			check:   nil,
 		},
+		{
+			name:    "invalid max-iterations",
+			args:    []string{"--max-iterations", "not-a-number"},
+			wantErr: true,
+			check:   nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -166,6 +181,7 @@ func TestLoadEnv(t *testing.T) {
 	os.Setenv("CODING_AGENT_MODEL", "env-model")
 	os.Setenv("CODING_AGENT_TEMPERATURE", "0.8")
 	os.Setenv("CODING_AGENT_MAX_TOKENS", "2048")
+	os.Setenv("CODING_AGENT_MAX_ITERATIONS", "500")
 	os.Setenv("CODING_AGENT_CONTEXT_SIZE", "32768")
 	os.Setenv("CODING_AGENT_API_ENDPOINT", "http://env-endpoint")
 	os.Setenv("CODING_AGENT_API_KEY", "env-key")
@@ -183,6 +199,9 @@ func TestLoadEnv(t *testing.T) {
 	}
 	if cfg.MaxTokens != 2048 {
 		t.Errorf("Expected max tokens 2048, got %d", cfg.MaxTokens)
+	}
+	if cfg.MaxIterations != 500 {
+		t.Errorf("Expected max iterations 500, got %d", cfg.MaxIterations)
 	}
 	if cfg.ContextSize != 32768 {
 		t.Errorf("Expected context size 32768, got %d", cfg.ContextSize)
@@ -204,6 +223,7 @@ func TestLoadEnv(t *testing.T) {
 	os.Unsetenv("CODING_AGENT_MODEL")
 	os.Unsetenv("CODING_AGENT_TEMPERATURE")
 	os.Unsetenv("CODING_AGENT_MAX_TOKENS")
+	os.Unsetenv("CODING_AGENT_MAX_ITERATIONS")
 	os.Unsetenv("CODING_AGENT_CONTEXT_SIZE")
 	os.Unsetenv("CODING_AGENT_API_ENDPOINT")
 	os.Unsetenv("CODING_AGENT_API_KEY")
@@ -222,6 +242,7 @@ func TestValidate(t *testing.T) {
 			cfg: &Config{
 				ContextSize:         128000,
 				InitialTokenTimeout: 7200,
+				MaxIterations:       1000,
 			},
 			wantErr: false,
 		},
@@ -230,6 +251,7 @@ func TestValidate(t *testing.T) {
 			cfg: &Config{
 				ContextSize:         -100,
 				InitialTokenTimeout: 7200,
+				MaxIterations:       1000,
 			},
 			wantErr: true,
 		},
@@ -238,6 +260,16 @@ func TestValidate(t *testing.T) {
 			cfg: &Config{
 				ContextSize:         128000,
 				InitialTokenTimeout: 5,
+				MaxIterations:       1000,
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid max iterations",
+			cfg: &Config{
+				ContextSize:         128000,
+				InitialTokenTimeout: 7200,
+				MaxIterations:       0,
 			},
 			wantErr: true,
 		},
