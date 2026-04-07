@@ -323,7 +323,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
-	var apiToolCalls []*APIToolCall
+	
+	// Use a map to accumulate partial tool calls by ID
+	toolCallMap := make(map[string]*APIToolCall)
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -379,10 +381,33 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				}
 			}
 
-			// Collect tool calls from streaming delta
+			// Accumulate tool calls from streaming delta
+			// Tool calls come in partial chunks that need to be merged
 			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
-				for i := range chunk.Choices[0].Delta.ToolCalls {
-					apiToolCalls = append(apiToolCalls, &chunk.Choices[0].Delta.ToolCalls[i])
+				for _, deltaTC := range chunk.Choices[0].Delta.ToolCalls {
+					if deltaTC.ID == "" {
+						// New tool call without ID - create one with index
+						deltaTC.ID = fmt.Sprintf("call_%d", len(toolCallMap))
+					}
+					
+					if existing, ok := toolCallMap[deltaTC.ID]; ok {
+						// Merge with existing tool call
+						if deltaTC.Function.Name != "" {
+							existing.Function.Name = deltaTC.Function.Name
+						}
+						if deltaTC.Function.Arguments != "" {
+							existing.Function.Arguments += deltaTC.Function.Arguments
+						}
+					} else {
+						// New tool call
+						// Make a copy to avoid reference issues
+						newTC := &APIToolCall{
+							ID:       deltaTC.ID,
+							Type:     deltaTC.Type,
+							Function: deltaTC.Function,
+						}
+						toolCallMap[deltaTC.ID] = newTC
+					}
 				}
 			}
 
@@ -407,9 +432,12 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	// Combine content and reasoning content
 	content := reasoningContent.String() + fullContent.String()
 
-	// Convert API tool calls to internal format
+	// Convert accumulated API tool calls to internal format
+	var apiToolCalls []*APIToolCall
 	var toolCalls []*tools.ToolCall
-	for _, apiTC := range apiToolCalls {
+	for _, apiTC := range toolCallMap {
+		apiToolCalls = append(apiToolCalls, apiTC)
+		
 		var params map[string]interface{}
 		if apiTC.Function.Arguments != "" {
 			if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {

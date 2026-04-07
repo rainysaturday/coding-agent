@@ -440,11 +440,8 @@ const (
 )
 
 // streamStatus streams a tool call status message with color.
+// If callback is nil, prints to stdout instead.
 func streamStatus(toolName string, params map[string]interface{}, callback StreamCallback) {
-	if callback == nil {
-		return
-	}
-	
 	var msg string
 	switch toolName {
 	case "bash":
@@ -513,17 +510,23 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
-	callback(msg)
+	
+	if callback != nil {
+		callback(msg)
+	} else {
+		fmt.Print(msg)
+	}
 }
 
 // streamResult streams a tool result status message with color.
+// If callback is nil, prints to stdout instead.
 func streamResult(toolName string, result *tools.ToolResult, callback StreamCallback) {
-	if callback == nil {
-		return
-	}
-	
 	status := formatToolStatus(toolName, result)
-	callback(status)
+	if callback != nil {
+		callback(status)
+	} else {
+		fmt.Print(status)
+	}
 }
 
 // formatToolStatus formats a tool status message for display with colors.
