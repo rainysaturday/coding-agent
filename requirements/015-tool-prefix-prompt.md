@@ -85,23 +85,24 @@ AVAILABLE TOOLS:
    Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
 6. replace_lines
-   Description: Replace content in a file (supports two modes)
-   
-   Line-number mode:
+   Description: Replace a range of lines in a file by line numbers
+   Parameters:
      - path (string, required): The path to the file
      - start (integer, required): Starting line number (1-indexed)
      - end (integer, required): Ending line number (1-indexed)
      - lines (string, required): Replacement lines (use \n for newlines)
-     How to call: Use line-number mode when you know the exact lines to replace.
-   
-   Search-and-replace mode:
+   How to call: Use replace_lines when you know the exact line numbers to replace.
+   Example use case: Replacing lines 10-20 with new content, deleting a range of lines
+
+7. replace_text
+   Description: Find and replace text in a file by searching for a pattern
+   Parameters:
      - path (string, required): The path to the file
-     - search (string, required): Text to find (exact match)
+     - search (string, required): Text pattern to find (exact match, not regex)
      - replace (string, required): Replacement text
-     - count (integer, optional): Number of replacements (default: 1, use -1 for all)
-     How to call: Use search-and-replace mode when you know the text pattern but not line numbers.
-   
-   Example use case: Renaming variables, updating function implementations, fixing typos
+     - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
+   How to call: Use replace_text when you know the text to find but not the line numbers.
+   Example use case: Renaming variables, updating function names, fixing typos throughout a file
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -134,6 +135,64 @@ In addition to the system prompt, tools must be provided in the API request's `t
             }
           },
           "required": ["command"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "replace_lines",
+        "description": "Replace content in a file by line numbers (replace lines in a specific range)",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path to modify"
+            },
+            "start": {
+              "type": "integer",
+              "description": "Start line number (1-indexed)"
+            },
+            "end": {
+              "type": "integer",
+              "description": "End line number (1-indexed)"
+            },
+            "lines": {
+              "type": "string",
+              "description": "Replacement lines (use \\n for newlines)"
+            }
+          },
+          "required": ["path", "start", "end", "lines"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "replace_text",
+        "description": "Find and replace text in a file by searching for a pattern",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path to modify"
+            },
+            "search": {
+              "type": "string",
+              "description": "Text pattern to find (exact match, not regex)"
+            },
+            "replace": {
+              "type": "string",
+              "description": "Replacement text"
+            },
+            "count": {
+              "type": "integer",
+              "description": "Number of occurrences to replace (default: 1, use -1 for all)"
+            }
+          },
+          "required": ["path", "search", "replace"]
         }
       }
     }

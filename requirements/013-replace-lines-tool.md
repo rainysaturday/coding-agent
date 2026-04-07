@@ -2,52 +2,50 @@
 
 ## Description
 
-The harness must support a `replace_lines` tool that allows replacing content in a file via OpenAI's tool calling interface. The tool supports two modes:
+The harness must support tools for replacing content in a file via OpenAI's tool calling interface. There are two separate tools:
 
-1. **Line-number mode**: Replace a specific range of lines
-2. **Search-and-replace mode**: Find and replace content by matching text patterns
+1. **replace_lines**: Replace a specific range of lines by line numbers
+2. **replace_text**: Find and replace text by searching for a pattern
 
 ## Acceptance Criteria
 
+### replace_lines Tool
 - [ ] Tool named `replace_lines` is available
 - [ ] Accepts file path as input parameter (required)
-- [ ] **Line-number mode parameters**:
-  - [ ] Accepts start line number (optional when using search mode)
-  - [ ] Accepts end line number (optional when using search mode)
-  - [ ] Accepts replacement lines as input parameter
-- [ ] **Search-and-replace mode parameters**:
-  - [ ] Accepts `search` parameter - text pattern to find (required when not using line numbers)
-  - [ ] Accepts `replace` parameter - replacement text (required when using search)
-  - [ ] Accepts `count` parameter - number of occurrences to replace (optional, defaults to 1)
-- [ ] Replaces the specified content with new content
-- [ ] **Line-number mode behavior**:
-  - [ ] Handles start > end by returning error
-  - [ ] Handles start line beyond file end by appending
-  - [ ] Handles end line beyond file end by replacing to end
-  - [ ] Replacing entire file with empty content is supported
-- [ ] **Search-and-replace mode behavior**:
-  - [ ] Finds first occurrence of search text
-  - [ ] Replaces matching text with replacement text
-  - [ ] Supports replacing multiple occurrences with `count` parameter
-  - [ ] Returns error if search text not found
-  - [ ] Returns number of replacements made
-- [ ] Creates file if it does not exist (line-number mode only)
-- [ ] Preserves file encoding and line endings
-- [ ] Handles permission errors gracefully
-- [ ] Handles disk full errors gracefully
+- [ ] Accepts start line number (required)
+- [ ] Accepts end line number (required)
+- [ ] Accepts replacement lines as input parameter (required)
+- [ ] Replaces the specified range of lines with new content
+- [ ] Handles start > end by returning error
+- [ ] Handles start line beyond file end by appending
+- [ ] Handles end line beyond file end by replacing to end
+- [ ] Replacing entire file with empty content is supported
+- [ ] Creates file if it does not exist
 - [ ] Returns confirmation of replacement with details
+- [ ] Tool call failures are tracked in statistics
+
+### replace_text Tool
+- [ ] Tool named `replace_text` is available
+- [ ] Accepts file path as input parameter (required)
+- [ ] Accepts search text as input parameter (required)
+- [ ] Accepts replacement text as input parameter (required)
+- [ ] Accepts count parameter for number of replacements (optional, defaults to 1)
+- [ ] Finds and replaces matching text
+- [ ] Supports replacing multiple occurrences with count parameter
+- [ ] Returns error if search text not found
+- [ ] Returns number of replacements made
 - [ ] Tool call failures are tracked in statistics
 
 ## Tool Definition (OpenAI Format)
 
-### Line-Number Mode
+### replace_lines Tool Definition
 
 ```json
 {
   "type": "function",
   "function": {
     "name": "replace_lines",
-    "description": "Replace content in a file by line numbers",
+    "description": "Replace content in a file by line numbers (replace lines in a specific range)",
     "parameters": {
       "type": "object",
       "properties": {
@@ -74,14 +72,14 @@ The harness must support a `replace_lines` tool that allows replacing content in
 }
 ```
 
-### Search-and-Replace Mode
+### replace_text Tool Definition
 
 ```json
 {
   "type": "function",
   "function": {
-    "name": "replace_lines",
-    "description": "Replace content in a file by searching for text",
+    "name": "replace_text",
+    "description": "Find and replace text in a file by searching for a pattern",
     "parameters": {
       "type": "object",
       "properties": {
@@ -110,7 +108,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ## Tool Call Format
 
-### Line-Number Mode
+### replace_lines Tool Call
 
 ```json
 {
@@ -123,14 +121,14 @@ The harness must support a `replace_lines` tool that allows replacing content in
 }
 ```
 
-### Search-and-Replace Mode
+### replace_text Tool Call
 
 ```json
 {
   "id": "call_def456",
   "type": "function",
   "function": {
-    "name": "replace_lines",
+    "name": "replace_text",
     "arguments": "{\"path\":\"/path/to/file.txt\",\"search\":\"old name\",\"replace\":\"new name\"}"
   }
 }
@@ -138,25 +136,21 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ## Parameters
 
-### Required Parameters (either mode)
-
+### replace_lines Parameters
 - `path`: File path to modify (required, string)
-
-### Line-Number Mode Parameters (alternative to search mode)
-
-- `start`: Start line number (required when not using search, integer, 1-indexed)
-- `end`: End line number (required when not using search, integer, 1-indexed)
-- `lines`: Replacement lines (required when not using search, string)
+- `start`: Start line number (required, integer, 1-indexed)
+- `end`: End line number (required, integer, 1-indexed)
+- `lines`: Replacement lines (required, string)
   - Multi-line content uses `\n` escape sequences
   - All special characters must be JSON-escaped
 
-### Search-and-Replace Mode Parameters (alternative to line numbers)
-
-- `search`: Text pattern to find (required when not using start/end, string)
+### replace_text Parameters
+- `path`: File path to modify (required, string)
+- `search`: Text pattern to find (required, string)
   - Supports multi-line patterns with `\n` escape sequences
   - Exact string matching (not regex)
   - Case-sensitive matching
-- `replace`: Replacement text (required when using search, string)
+- `replace`: Replacement text (required, string)
   - Multi-line content uses `\n` escape sequences
   - All special characters must be JSON-escaped
 - `count`: Number of occurrences to replace (optional, integer, defaults to 1)
@@ -164,7 +158,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ## Examples
 
-### Line-Number Mode Examples
+### replace_lines Examples
 
 **Replace first few lines:**
 
@@ -205,7 +199,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 }
 ```
 
-### Search-and-Replace Mode Examples
+### replace_text Examples
 
 **Rename a variable:**
 
@@ -214,7 +208,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
   "id": "call_004",
   "type": "function",
   "function": {
-    "name": "replace_lines",
+    "name": "replace_text",
     "arguments": "{\"path\":\"./main.go\",\"search\":\"oldVariableName\",\"replace\":\"newVariableName\"}"
   }
 }
@@ -227,7 +221,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
   "id": "call_005",
   "type": "function",
   "function": {
-    "name": "replace_lines",
+    "name": "replace_text",
     "arguments": "{\"path\":\"./config.yaml\",\"search\":\"debug: false\",\"replace\":\"debug: true\"}"
   }
 }
@@ -240,7 +234,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
   "id": "call_006",
   "type": "function",
   "function": {
-    "name": "replace_lines",
+    "name": "replace_text",
     "arguments": "{\"path\":\"./handlers.go\",\"search\":\"func fetchData() {\\n    return \\\"old\\\"\\n}\",\"replace\":\"func fetchData() {\\n    return \\\"new\\\"\\n}\"}"
   }
 }
@@ -253,7 +247,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
   "id": "call_007",
   "type": "function",
   "function": {
-    "name": "replace_lines",
+    "name": "replace_text",
     "arguments": "{\"path\":\"./src/main.go\",\"search\":\"// TODO:\",\"replace\":\"// IMPLEMENTED:\",\"count\":-1}"
   }
 }
@@ -263,8 +257,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ### On Success
 
-#### Line-Number Mode
-
+#### replace_lines
 - `success`: `true`
 - `path`: The path that was modified
 - `start`: The start line that was replaced
@@ -272,8 +265,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 - `linesReplaced`: Number of lines that were replaced
 - `linesInserted`: Number of new lines inserted
 
-#### Search-and-Replace Mode
-
+#### replace_text
 - `success`: `true`
 - `path`: The path that was modified
 - `search`: The search pattern that was used
@@ -287,7 +279,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ## Behavior Notes
 
-### Line-Number Mode
+### replace_lines Behavior
 
 - Line numbers are 1-indexed
 - `start` must be <= `end`
@@ -296,7 +288,7 @@ The harness must support a `replace_lines` tool that allows replacing content in
 - Empty `lines` parameter effectively deletes the line range
 - Replacing with empty string and range 1 to large number clears file
 
-### Search-and-Replace Mode
+### replace_text Behavior
 
 - Search is case-sensitive
 - Multi-line patterns are supported (use `\n` for newlines in JSON)
@@ -307,14 +299,14 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 ## Recommendation for LLMs
 
-**When to use Search-and-Replace mode:**
+**When to use replace_text:**
 
 - When you know the exact text to find but not the line numbers
 - For simple find-and-replace operations
 - When renaming variables, functions, or configuration values
 - When the file is large and counting lines is error-prone
 
-**When to use Line-Number mode:**
+**When to use replace_lines:**
 
 - When you need precise control over line ranges
 - When you've already read the file and know the exact line numbers
@@ -323,6 +315,6 @@ The harness must support a `replace_lines` tool that allows replacing content in
 **Best practices:**
 
 1. Always read the file first using `read_file` or `read_lines` to understand its contents
-2. For search-and-replace, use a unique search pattern to avoid unintended replacements
+2. For replace_text, use a unique search pattern to avoid unintended replacements
 3. Verify changes by reading the file after replacement
 4. For multi-line replacements, ensure proper JSON escaping of newlines (`\n`)
