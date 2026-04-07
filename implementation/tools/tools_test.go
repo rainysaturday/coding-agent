@@ -89,9 +89,16 @@ func TestParseToolCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "invalid format no brackets",
-			input:   `{"name":"bash","parameters":{"command":"ls"}}`,
-			wantErr: true,
+			name:  "valid openai format",
+			input: `{"id":"call_abc123","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}`,
+			want: &ToolCall{
+				ID:   "call_abc123",
+				Name: "bash",
+				Parameters: map[string]interface{}{
+					"command": "ls",
+				},
+			},
+			wantErr: false,
 		},
 		{
 			name:    "invalid json",

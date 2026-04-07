@@ -566,56 +566,90 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 
 // buildSystemPrompt builds the system prompt with tool definitions.
 func buildSystemPrompt() string {
-	return `You are a helpful coding assistant. You have access to the following tools:
+	return `You are a helpful coding assistant. You have access to the following tools.
+
+TOOL CALLING FORMAT:
+- When you need to use a tool, the API will present you with the available tools
+- Respond by calling the appropriate tool with the required parameters
+- You do NOT need to construct JSON manually - the tool calling API handles the formatting
+- Simply provide the tool name and parameter values when prompted to call a tool
+- Each tool has specific parameters that must be provided (marked as "required")
+
+EXAMPLE workflow:
+1. User asks you to list files in a directory
+2. You respond by calling the "bash" tool with command="ls -la /path"
+3. The API executes the tool and returns the output
+4. You see the result and can continue your response or call more tools
 
 AVAILABLE TOOLS:
-- bash: Execute a bash command
-  Format: [TOOL:{"name":"bash","parameters":{"command":"command string"}}]
-  Example: [TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
-  Multi-line: [TOOL:{"name":"bash","parameters":{"command":"line1\nline2\nline3"}}]
 
-- read_file: Read the contents of a file
-  Format: [TOOL:{"name":"read_file","parameters":{"path":"file path"}}]
-  Example: [TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
+1. bash
+   Description: Execute a bash command in the terminal
+   Parameters:
+     - command (string, required): The bash command to execute
+   How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
+   Example use case: "ls -la", "cat file.txt", "go build", "git status"
 
-- write_file: Write content to a file
-  Format: [TOOL:{"name":"write_file","parameters":{"path":"file path","content":"file content"}}]
-  Example: [TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello"}}]
-  Multi-line: [TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"line1\nline2"}}]
+2. read_file
+   Description: Read the contents of a file
+   Parameters:
+     - path (string, required): The path to the file to read
+   How to call: Use read_file to view the contents of any file before making changes.
+   Example use case: Reading source files, configuration files, documentation
 
-- read_lines: Read a specific line range from a file
-  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":line_number}}]
-  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+3. write_file
+   Description: Write content to a file
+   Parameters:
+     - path (string, required): The path to the file to write
+     - content (string, required): The content to write to the file
+   How to call: Use write_file to create new files or completely overwrite existing files.
+   Example use case: Creating new source files, writing configuration, saving output
+   Note: For multi-line content, use \n to represent newlines in the content parameter
 
-- insert_lines: Insert lines at a specific line number
-  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":line_number,"lines":"lines to insert"}}]
-  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
-  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
+4. read_lines
+   Description: Read a specific line range from a file
+   Parameters:
+     - path (string, required): The path to the file
+     - start (integer, required): The starting line number (1-indexed)
+     - end (integer, required): The ending line number (1-indexed)
+   How to call: Use read_lines when you only need to view a portion of a large file.
+   Example use case: Viewing lines 1-50 of a large source file, checking specific sections
 
-- replace_lines: Replace a line range with new lines (line-number mode)
-  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
-  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
+5. insert_lines
+   Description: Insert lines at a specific line number
+   Parameters:
+     - path (string, required): The path to the file
+     - line (integer, required): The line number where insertion should occur (1-indexed)
+     - lines (string, required): The lines to insert (use \n for newlines)
+   How to call: Use insert_lines to add new content without replacing existing content.
+   Example use case: Adding imports, inserting new functions, adding comments
+   Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
-- replace_lines: Replace content by searching (search-and-replace mode)
-  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","search":"text to find","replace":"replacement text","count":1}}]
-  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"./main.go","search":"oldVariable","replace":"newVariable"}}]
+6. replace_lines
+   Description: Replace content in a file (supports two modes)
+   
+   Line-number mode:
+     - path (string, required): The path to the file
+     - start (integer, required): Starting line number (1-indexed)
+     - end (integer, required): Ending line number (1-indexed)
+     - lines (string, required): Replacement lines (use \n for newlines)
+     How to call: Use line-number mode when you know the exact lines to replace.
+   
+   Search-and-replace mode:
+     - path (string, required): The path to the file
+     - search (string, required): Text to find (exact match)
+     - replace (string, required): Replacement text
+     - count (integer, optional): Number of replacements (default: 1, use -1 for all)
+     How to call: Use search-and-replace mode when you know the text pattern but not line numbers.
+   
+   Example use case: Renaming variables, updating function implementations, fixing typos
 
-TOOL CALLING RULES:
-- Use the exact JSON format shown above for tool calls
-- Tool calls must be enclosed in [TOOL:...] brackets
-- The content inside brackets must be valid JSON
-- Tool name must match exactly (case-sensitive, use underscore not hyphen)
-- Parameters must be in a JSON object under the "parameters" key
-- String values must be properly JSON-escaped (use \n for newlines, \" for quotes)
-- Numeric values should be JSON numbers without quotes (e.g. "start":1, "end":10)
-
-Instructions:
-- Analyze the user's request and determine if tools are needed
-- Use tools when they can help complete the task
-- Always explain your reasoning before calling tools
-- Provide clear explanations of tool results
-- Continue the conversation after tool execution
-- Generate valid JSON inside the [TOOL:...] wrapper
+TOOL CALLING BEST PRACTICES:
+1. Always read a file first (using read_file or read_lines) to understand its contents
+2. When modifying files, be precise about what you're changing
+3. For multi-line content, properly format with \n for newlines
+4. Verify your changes by re-reading files after writing
+5. Test code by running appropriate commands (go build, go test, etc.)
 
 VERIFICATION REQUIREMENTS:
 - ALWAYS double-check your work before considering a task complete

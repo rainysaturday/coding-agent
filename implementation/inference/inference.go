@@ -40,17 +40,23 @@ type Message struct {
 	Content string `json:"content"`
 }
 
-// ToolDefinition represents a tool definition for the LLM.
+// ToolDefinition represents a tool definition for the LLM (OpenAI format).
 type ToolDefinition struct {
+	Type     string              `json:"type"`
+	Function FunctionDefinition  `json:"function"`
+}
+
+// FunctionDefinition defines a function tool (OpenAI format).
+type FunctionDefinition struct {
 	Name        string           `json:"name"`
 	Description string           `json:"description"`
 	Parameters  ParameterSchema  `json:"parameters"`
 }
 
-// ParameterSchema defines the schema for tool parameters.
+// ParameterSchema defines the schema for tool parameters (OpenAI format).
 type ParameterSchema struct {
-	Type       string   `json:"type"`
-	Required   []string `json:"required"`
+	Type       string            `json:"type"`
+	Required   []string          `json:"required,omitempty"`
 	Properties map[string]Property `json:"properties"`
 }
 
@@ -60,10 +66,24 @@ type Property struct {
 	Description string `json:"description"`
 }
 
+// ToolCall represents a tool call from the OpenAI API response.
+type APIToolCall struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function FunctionCall     `json:"function"`
+}
+
+// FunctionCall represents the function part of a tool call.
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 // Response represents an inference response.
 type Response struct {
 	Content     string
-	ToolCalls   []*tools.ToolCall
+	ToolCalls   []*tools.ToolCall  // Parsed tool calls compatible with tool executor
+	APIToolCalls []*APIToolCall    // Raw tool calls from API for reference
 	TokenUsage  int
 	StreamUsage int
 }
@@ -206,8 +226,9 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	var respBody struct {
 		Choices []struct {
 			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
+				Role      string          `json:"role"`
+				Content   string          `json:"content"`
+				ToolCalls []APIToolCall   `json:"tool_calls,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -229,10 +250,42 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		return nil, fmt.Errorf("no choices in response")
 	}
 
-	content := respBody.Choices[0].Message.Content
+	message := respBody.Choices[0].Message
+	content := message.Content
 
-	// Parse tool calls from content
-	toolCalls := parseToolCalls(content)
+	// Parse OpenAI tool calls
+	var toolCalls []*tools.ToolCall
+	var apiToolCalls []*APIToolCall
+
+	if len(message.ToolCalls) > 0 {
+		// Convert API tool calls to internal tool calls
+		for _, apiTC := range message.ToolCalls {
+			apiToolCalls = append(apiToolCalls, &apiTC)
+			
+			// Parse the arguments JSON string
+			var params map[string]interface{}
+			if apiTC.Function.Arguments != "" {
+				if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {
+					// If parsing fails, store as raw string in parameters
+					params = map[string]interface{}{
+						"_raw_arguments": apiTC.Function.Arguments,
+						"_parse_error":   err.Error(),
+					}
+				}
+			}
+
+			toolCall := &tools.ToolCall{
+				ID:         apiTC.ID,
+				Name:       apiTC.Function.Name,
+				Parameters: params,
+				Raw:        apiTC.Function.Arguments,
+			}
+			toolCalls = append(toolCalls, toolCall)
+		}
+	} else {
+		// Fallback: parse tool calls from content (legacy format support)
+		toolCalls = parseToolCalls(content)
+	}
 
 	// Get token usage from either usage or timings
 	tokenUsage := respBody.Usage.TotalTokens
@@ -241,9 +294,10 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	}
 
 	return &Response{
-		Content:    content,
-		ToolCalls:  toolCalls,
-		TokenUsage: tokenUsage,
+		Content:      content,
+		ToolCalls:    toolCalls,
+		APIToolCalls: apiToolCalls,
+		TokenUsage:   tokenUsage,
 	}, nil
 }
 
@@ -252,6 +306,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
+	var apiToolCalls []*APIToolCall
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -273,8 +328,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content          string `json:"content"`
-					ReasoningContent string `json:"reasoning_content"`
+					Content          string          `json:"content"`
+					ReasoningContent string          `json:"reasoning_content"`
+					ToolCalls        []APIToolCall   `json:"tool_calls,omitempty"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -306,6 +362,13 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				}
 			}
 
+			// Collect tool calls from streaming delta
+			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
+				for i := range chunk.Choices[0].Delta.ToolCalls {
+					apiToolCalls = append(apiToolCalls, &chunk.Choices[0].Delta.ToolCalls[i])
+				}
+			}
+
 			// Call callback if provided - stream immediately
 			if callback != nil && chunkText != "" {
 				callback(chunkText)
@@ -326,12 +389,38 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 
 	// Combine content and reasoning content
 	content := reasoningContent.String() + fullContent.String()
-	toolCalls := parseToolCalls(content)
+
+	// Convert API tool calls to internal format
+	var toolCalls []*tools.ToolCall
+	for _, apiTC := range apiToolCalls {
+		var params map[string]interface{}
+		if apiTC.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {
+				params = map[string]interface{}{
+					"_raw_arguments": apiTC.Function.Arguments,
+					"_parse_error":   err.Error(),
+				}
+			}
+		}
+		toolCall := &tools.ToolCall{
+			ID:         apiTC.ID,
+			Name:       apiTC.Function.Name,
+			Parameters: params,
+			Raw:        apiTC.Function.Arguments,
+		}
+		toolCalls = append(toolCalls, toolCall)
+	}
+
+	// Fallback: parse tool calls from content if no API tool calls (legacy format)
+	if len(toolCalls) == 0 {
+		toolCalls = parseToolCalls(content)
+	}
 
 	return &Response{
-		Content:    content,
-		ToolCalls:  toolCalls,
-		TokenUsage: totalTokens,
+		Content:      content,
+		ToolCalls:    toolCalls,
+		APIToolCalls: apiToolCalls,
+		TokenUsage:   totalTokens,
 	}, nil
 }
 

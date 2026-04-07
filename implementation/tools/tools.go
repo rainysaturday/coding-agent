@@ -22,10 +22,13 @@ type ToolResult struct {
 	Extra    map[string]interface{} `json:"-"`
 }
 
-// ToolCall represents a tool call parsed from the LLM response.
+// ToolCall represents a tool call parsed from the LLM response (OpenAI format compatible).
+// Supports both legacy format (name/parameters) and OpenAI format (function/arguments).
 type ToolCall struct {
+	ID         string                 `json:"id,omitempty"`  // OpenAI tool call ID
 	Name       string                 `json:"name"`
-	Parameters map[string]interface{} `json:"parameters"`
+	Parameters map[string]interface{} `json:"parameters,omitempty"`
+	Arguments  string                 `json:"arguments,omitempty"`  // OpenAI: raw JSON string of arguments
 	Raw        string                 `json:"-"`
 }
 
@@ -53,12 +56,47 @@ func (te *ToolExecutor) Stats() *Stats {
 }
 
 // ParseToolCall parses a tool call from the raw string.
+// Supports both OpenAI JSON format and legacy [TOOL:...] format.
 func ParseToolCall(raw string) (*ToolCall, error) {
-	// Pattern: [TOOL:{"name":"...","parameters":{...}}]
+	// Try OpenAI format first: {"id":"...","type":"function","function":{"name":"...","arguments":"..."}}
+	// Use a wrapper struct to properly handle the nested function object
+	var wrapper struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	}
+
+	if err := json.Unmarshal([]byte(raw), &wrapper); err == nil && wrapper.Function.Name != "" {
+		// Successfully parsed as OpenAI format
+		// Parse arguments JSON string into parameters
+		var params map[string]interface{}
+		if wrapper.Function.Arguments != "" {
+			if err := json.Unmarshal([]byte(wrapper.Function.Arguments), &params); err != nil {
+				// If arguments parsing fails, keep raw arguments
+				params = map[string]interface{}{
+					"_raw_arguments": wrapper.Function.Arguments,
+				}
+			}
+		}
+
+		tc := &ToolCall{
+			ID:         wrapper.ID,
+			Name:       wrapper.Function.Name,
+			Parameters: params,
+			Arguments:  wrapper.Function.Arguments,
+			Raw:        raw,
+		}
+		return tc, nil
+	}
+
+	// Try legacy format: [TOOL:{"name":"...","parameters":{...}}]
 	pattern := regexp.MustCompile(`\[TOOL:(\{.*\})\]`)
 	matches := pattern.FindStringSubmatch(raw)
 	if len(matches) < 2 {
-		return nil, fmt.Errorf("invalid tool call format: expected [TOOL:{...}]")
+		return nil, fmt.Errorf("invalid tool call format: expected JSON or [TOOL:{...}]")
 	}
 
 	jsonStr := matches[1]
