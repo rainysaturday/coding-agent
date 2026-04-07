@@ -32,6 +32,7 @@ type InferenceClient struct {
 	client         *http.Client
 	maxRetries     int
 	retryDelay     time.Duration
+	tools          []ToolDefinition
 }
 
 // Message represents a chat message.
@@ -122,6 +123,16 @@ func (ic *InferenceClient) SetAPIKey(key string) {
 	ic.apiKey = key
 }
 
+// SetTools sets the available tools for tool calling.
+func (ic *InferenceClient) SetTools(tools []ToolDefinition) {
+	ic.tools = tools
+}
+
+// GetTools returns the registered tools.
+func (ic *InferenceClient) GetTools() []ToolDefinition {
+	return ic.tools
+}
+
 // InferenceRequest sends a request to the inference backend.
 func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
 	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, nil)
@@ -141,6 +152,12 @@ func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, mes
 		Stream:      ic.streaming,
 		Temperature: ic.temperature,
 		MaxTokens:   ic.maxTokens,
+	}
+	
+	// Add tools if registered
+	if len(ic.tools) > 0 {
+		reqBody.Tools = ic.tools
+		reqBody.ToolChoice = "auto"
 	}
 
 	// Serialize request

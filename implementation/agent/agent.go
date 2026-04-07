@@ -79,6 +79,9 @@ func NewAgent(cfg *config.Config) *Agent {
 	// Build system prompt
 	agent.systemPrompt = buildSystemPrompt()
 
+	// Register tools with inference client
+	agent.inference.SetTools(buildTools())
+
 	return agent
 }
 
@@ -109,6 +112,11 @@ func (a *Agent) SetAPIKey(key string) {
 // GetSystemPrompt returns the current system prompt.
 func (a *Agent) GetSystemPrompt() string {
 	return a.systemPrompt
+}
+
+// GetTools returns the registered tools.
+func (a *Agent) GetTools() []inference.ToolDefinition {
+	return a.inference.GetTools()
 }
 
 // Run runs the agent with the given prompt.
@@ -489,6 +497,19 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			path = p
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] in file: %s%s\n", ColorCyan, path, ColorReset)
+	case "replace_text":
+		path := ""
+		search := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		if p, ok := params["search"].(string); ok {
+			search = p
+			if len(search) > 30 {
+				search = search[:30] + "..."
+			}
+		}
+		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -557,6 +578,19 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				count = c
 			}
 			return fmt.Sprintf("%s[Success] replaced %d line(s)%s\n", ColorGreen, count, ColorReset)
+		case "replace_text":
+			count := 0
+			if c, ok := result.Extra["replacementsMade"].(int); ok {
+				count = c
+			}
+			search := ""
+			if s, ok := result.Extra["search"].(string); ok {
+				search = s
+				if len(search) > 20 {
+					search = search[:20] + "..."
+				}
+			}
+			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -626,23 +660,24 @@ AVAILABLE TOOLS:
    Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
 6. replace_lines
-   Description: Replace content in a file (supports two modes)
-   
-   Line-number mode:
+   Description: Replace a range of lines in a file by line numbers
+   Parameters:
      - path (string, required): The path to the file
      - start (integer, required): Starting line number (1-indexed)
      - end (integer, required): Ending line number (1-indexed)
      - lines (string, required): Replacement lines (use \n for newlines)
-     How to call: Use line-number mode when you know the exact lines to replace.
-   
-   Search-and-replace mode:
+   How to call: Use replace_lines when you know the exact line numbers to replace.
+   Example use case: Replacing lines 10-20 with new content, deleting a range of lines
+
+7. replace_text
+   Description: Find and replace text in a file by searching for a pattern
+   Parameters:
      - path (string, required): The path to the file
-     - search (string, required): Text to find (exact match)
+     - search (string, required): Text pattern to find (exact match, not regex)
      - replace (string, required): Replacement text
-     - count (integer, optional): Number of replacements (default: 1, use -1 for all)
-     How to call: Use search-and-replace mode when you know the text pattern but not line numbers.
-   
-   Example use case: Renaming variables, updating function implementations, fixing typos
+     - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
+   How to call: Use replace_text when you know the text to find but not the line numbers.
+   Example use case: Renaming variables, updating function names, fixing typos throughout a file
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -669,4 +704,173 @@ Verification Checklist:
 4. Code follows Go formatting standards (gofmt)
 5. Changes align with user requirements
 6. No unintended side effects or broken dependencies`
+}
+
+// buildTools builds the tool definitions for the OpenAI API.
+func buildTools() []inference.ToolDefinition {
+	return []inference.ToolDefinition{
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "bash",
+				Description: "Execute a bash command in the terminal",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "The bash command to execute",
+						},
+					},
+					Required: []string{"command"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "read_file",
+				Description: "Read the contents of a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to read",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "write_file",
+				Description: "Write content to a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to write",
+						},
+						"content": {
+							Type:        "string",
+							Description: "Content to write to the file",
+						},
+					},
+					Required: []string{"path", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "read_lines",
+				Description: "Read a specific line range from a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to read",
+						},
+						"start": {
+							Type:        "integer",
+							Description: "Starting line number (1-indexed)",
+						},
+						"end": {
+							Type:        "integer",
+							Description: "Ending line number (1-indexed)",
+						},
+					},
+					Required: []string{"path", "start", "end"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "insert_lines",
+				Description: "Insert lines at a specific line number in a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to modify",
+						},
+						"line": {
+							Type:        "integer",
+							Description: "Line number to insert before (1-indexed)",
+						},
+						"lines": {
+							Type:        "string",
+							Description: "Lines to insert (use \\n for newlines)",
+						},
+					},
+					Required: []string{"path", "line", "lines"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "replace_lines",
+				Description: "Replace content in a file by line numbers (replace lines in a specific range)",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to modify",
+						},
+						"start": {
+							Type:        "integer",
+							Description: "Start line number (1-indexed)",
+						},
+						"end": {
+							Type:        "integer",
+							Description: "End line number (1-indexed)",
+						},
+						"lines": {
+							Type:        "string",
+							Description: "Replacement lines (use \\n for newlines)",
+						},
+					},
+					Required: []string{"path", "start", "end", "lines"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "replace_text",
+				Description: "Find and replace text in a file by searching for a pattern",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to modify",
+						},
+						"search": {
+							Type:        "string",
+							Description: "Text pattern to find (exact match, not regex)",
+						},
+						"replace": {
+							Type:        "string",
+							Description: "Replacement text",
+						},
+						"count": {
+							Type:        "integer",
+							Description: "Number of occurrences to replace (default: 1, use -1 for all)",
+						},
+					},
+					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+	}
 }
