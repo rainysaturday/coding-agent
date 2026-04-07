@@ -14,6 +14,10 @@ When a tool is called and executed, the result of the tool call must be added ba
 - [ ] Context size is monitored after adding tool results
 - [ ] Iteration continues until task is complete or AI determines no more tool calls needed
 - [ ] Maximum iteration limit is enforced to prevent infinite loops
+- [ ] **Streaming mode**: Tool calls are accumulated from partial deltas before execution
+- [ ] **Streaming mode**: Tool execution waits until all tool call data is received
+- [ ] **Non-streaming mode**: Tool call feedback is displayed to the user (stdout)
+- [ ] **Streaming mode**: Tool call feedback is streamed to the callback
 
 ## Tool Result Format (OpenAI)
 
@@ -165,6 +169,79 @@ toolMessage := &Message{
   ],
   "tools": [...]
 }
+```
+
+## Streaming Mode Handling
+
+### Tool Call Accumulation
+
+In streaming mode, tool calls arrive as partial deltas that need to be accumulated before execution:
+
+1. **Partial Tool Call Deltas**: The API sends incremental updates:
+   - Each chunk may contain partial `tool_calls` data
+   - Tool call ID is consistent across chunks
+   - Function name and arguments are appended incrementally
+
+2. **Accumulation Logic**:
+   - Use a map keyed by tool call ID to merge partial data
+   - Append function name from first chunk that contains it
+   - Append function arguments from each subsequent chunk
+   - Wait for `[DONE]` marker before processing tool calls
+
+3. **Execution Timing**:
+   - Tool calls are only executed after the full stream is complete
+   - This ensures all arguments are received before execution
+   - Prevents partial/incomplete tool call execution
+
+### Example Streaming Flow
+
+```
+Chunk 1: {delta: {tool_calls: [{id: "call_1", function: {name: "bash"}}]}}
+Chunk 2: {delta: {tool_calls: [{id: "call_1", function: {arguments: "{\"command\""}}]}}
+Chunk 3: {delta: {tool_calls: [{id: "call_1", function: {arguments: ":\"ls -la\"}"}}]}}
+[DONE]
+
+Accumulated: {id: "call_1", function: {name: "bash", arguments: "{\"command\":\"ls -la\"}"}}
+```
+
+## User Feedback
+
+### Streaming Mode (`--stream`)
+
+- Tool call status is sent via stream callback as each chunk arrives
+- Tool execution status is streamed immediately after tool completes
+- User sees real-time feedback: "[Running] bash: ls -la" → "[Success] bash completed"
+
+### Non-Streaming Mode (`--no-stream`)
+
+- Tool call status is printed to stdout before execution
+- Tool result status is printed to stdout after execution
+- User sees feedback: "[Running] bash: ls -la" → "[Success] bash completed"
+
+### Feedback Format
+
+**Tool Call Start:**
+```
+[Running] bash: ls -la
+[Reading] file: /path/to/file.txt
+[Writing] file: /path/to/file.txt
+[Replacing] 'oldVar' in: /path/to/file.txt
+```
+
+**Tool Result:**
+```
+[Success] bash completed
+Output:
+total 24
+drwxrwxrwt 1 user user 4096 ...
+
+[Success] read 10 lines
+Content:
+1: line 1
+2: line 2
+...
+
+[Success] replaced 'oldVar' 1 time(s)
 ```
 
 ## Security Considerations

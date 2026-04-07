@@ -327,3 +327,53 @@ When a tool call fails, the error should be communicated back to the LLM as a to
 3. **Response Parsing**: Extract tool calls from `response.choices[0].message.tool_calls`
 4. **Argument Parsing**: Parse the `function.arguments` JSON string into a parameter map
 5. **Result Submission**: Send tool results back as messages with `role: "tool"` and matching `tool_call_id`
+
+## Streaming Mode Handling
+
+### Tool Call Accumulation
+
+When using streaming mode, tool calls arrive as partial deltas that must be accumulated before execution:
+
+1. **Partial Deltas**: Each stream chunk may contain partial `tool_calls` data
+   - `id`: Consistent across all chunks for the same tool call
+   - `function.name`: Appears in the first chunk
+   - `function.arguments`: Incrementally appended across chunks
+
+2. **Accumulation Strategy**:
+   ```
+   // Pseudocode for accumulating tool calls
+   toolCallMap = {}
+   for each chunk:
+       for deltaTC in chunk.tool_calls:
+           if deltaTC.id not in toolCallMap:
+               toolCallMap[deltaTC.id] = new ToolCall(id: deltaTC.id)
+           if deltaTC.function.name:
+               toolCallMap[deltaTC.id].name = deltaTC.function.name
+           if deltaTC.function.arguments:
+               toolCallMap[deltaTC.id].arguments += deltaTC.function.arguments
+   ```
+
+3. **Execution Timing**:
+   - **Wait for completion**: Do not execute tool calls until `[DONE]` is received
+   - **Full arguments required**: Only execute when all arguments are accumulated
+   - **Parse after stream**: Convert accumulated tool calls to internal format after stream ends
+
+### Streaming vs Non-Streaming Behavior
+
+| Mode | Tool Call Processing | User Feedback |
+|------|---------------------|---------------|
+| Streaming | Accumulate deltas, execute after `[DONE]` | Stream via callback |
+| Non-Streaming | Parse complete response, execute immediately | Print to stdout |
+
+### Example Streaming Sequence
+
+```
+Chunk 1: delta.tool_calls[0] = {id: "call_1", function: {name: "bash"}}
+Chunk 2: delta.tool_calls[0] = {id: "call_1", function: {arguments: "{\"command\""}}
+Chunk 3: delta.tool_calls[0] = {id: "call_1", function: {arguments: ":\"ls -la\"}"}}
+[DONE]
+
+Accumulated: {id: "call_1", function: {name: "bash", arguments: "{\"command\":\"ls -la\"}"}}
+Parsed params: {command: "ls -la"}
+→ Execute bash tool
+```
