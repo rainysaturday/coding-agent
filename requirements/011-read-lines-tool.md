@@ -1,7 +1,7 @@
 # Requirement 011: Read Lines Tool
 
 ## Description
-The harness must support a `read_lines` tool that allows reading a specific line range from a file.
+The harness must support a `read_lines` tool that allows reading a specific line range from a file via OpenAI's tool calling interface.
 
 ## Acceptance Criteria
 - [ ] Tool named `read_lines` is available
@@ -17,10 +17,47 @@ The harness must support a `read_lines` tool that allows reading a specific line
 - [ ] Returns line numbers with content for reference
 - [ ] Tool call failures are tracked in statistics
 
-## Tool Usage
+## Tool Definition (OpenAI Format)
 
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "read_lines",
+    "description": "Read a specific line range from a file",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to read"
+        },
+        "start": {
+          "type": "integer",
+          "description": "Starting line number (1-indexed)"
+        },
+        "end": {
+          "type": "integer",
+          "description": "Ending line number (1-indexed)"
+        }
+      },
+      "required": ["path", "start", "end"]
+    }
+  }
+}
 ```
-[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+
+## Tool Call Format
+
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "read_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"start\":1,\"end\":10}"
+  }
+}
 ```
 
 ### Parameters
@@ -31,24 +68,45 @@ The harness must support a `read_lines` tool that allows reading a specific line
 ### Examples
 
 **Read first 10 lines:**
-```
-[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+```json
+{
+  "id": "call_001",
+  "type": "function",
+  "function": {
+    "name": "read_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"start\":1,\"end\":10}"
+  }
+}
 ```
 
 **Read lines 100-200:**
-```
-[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/large.txt","start":100,"end":200}}]
+```json
+{
+  "id": "call_002",
+  "type": "function",
+  "function": {
+    "name": "read_lines",
+    "arguments": "{\"path\":\"/path/to/large.txt\",\"start\":100,\"end\":200}"
+  }
+}
 ```
 
 **Read specific line:**
-```
-[TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":42,"end":42}}]
+```json
+{
+  "id": "call_003",
+  "type": "function",
+  "function": {
+    "name": "read_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"start\":42,\"end\":42}"
+  }
+}
 ```
 
 ## Return Values
 
 On success:
-- `output`: The requested lines with line numbers
+- `output`: The requested lines with line numbers (format: "1: line content")
 - `start`: The start line that was requested
 - `end`: The end line that was requested
 - `success`: `true`

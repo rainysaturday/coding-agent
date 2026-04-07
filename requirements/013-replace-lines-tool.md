@@ -2,7 +2,7 @@
 
 ## Description
 
-The harness must support a `replace_lines` tool that allows replacing content in a file. The tool supports two modes:
+The harness must support a `replace_lines` tool that allows replacing content in a file via OpenAI's tool calling interface. The tool supports two modes:
 
 1. **Line-number mode**: Replace a specific range of lines
 2. **Search-and-replace mode**: Find and replace content by matching text patterns
@@ -38,40 +38,102 @@ The harness must support a `replace_lines` tool that allows replacing content in
 - [ ] Returns confirmation of replacement with details
 - [ ] Tool call failures are tracked in statistics
 
-## Tool Usage
+## Tool Definition (OpenAI Format)
 
 ### Line-Number Mode
 
-#### Single Line Replacement
-
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":1,"lines":"replacement line"}}]
-```
-
-#### Multi-line Range Replacement
-
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"replacement line 1\nreplacement line 2\nreplacement line 3"}}]
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "description": "Replace content in a file by line numbers",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File path to modify"
+        },
+        "start": {
+          "type": "integer",
+          "description": "Start line number (1-indexed)"
+        },
+        "end": {
+          "type": "integer",
+          "description": "End line number (1-indexed)"
+        },
+        "lines": {
+          "type": "string",
+          "description": "Replacement lines (use \\n for newlines)"
+        }
+      },
+      "required": ["path", "start", "end", "lines"]
+    }
+  }
+}
 ```
 
 ### Search-and-Replace Mode
 
-#### Replace First Occurrence
-
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "description": "Replace content in a file by searching for text",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File path to modify"
+        },
+        "search": {
+          "type": "string",
+          "description": "Text pattern to find (exact match, not regex)"
+        },
+        "replace": {
+          "type": "string",
+          "description": "Replacement text"
+        },
+        "count": {
+          "type": "integer",
+          "description": "Number of occurrences to replace (default: 1, use -1 for all)"
+        }
+      },
+      "required": ["path", "search", "replace"]
+    }
+  }
+}
 ```
-[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","search":"old function name","replace":"new function name"}}]
+
+## Tool Call Format
+
+### Line-Number Mode
+
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"start\":1,\"end\":1,\"lines\":\"replacement line\"}"
+  }
+}
 ```
 
-#### Replace Multiple Occurrences
+### Search-and-Replace Mode
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","search":"TODO","replace":"IMPLEMENTED","count":5}}]
-```
-
-#### Replace Multi-line Block
-
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","search":"func oldHandler() {\n    // old code\n}","replace":"func newHandler() {\n    // new code\n}"}}]
+```json
+{
+  "id": "call_def456",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"search\":\"old name\",\"replace\":\"new name\"}"
+  }
+}
 ```
 
 ## Parameters
@@ -106,46 +168,95 @@ The harness must support a `replace_lines` tool that allows replacing content in
 
 **Replace first few lines:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./config.txt","start":1,"end":2,"lines":"new config\nupdated setting"}}]
+```json
+{
+  "id": "call_001",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./config.txt\",\"start\":1,\"end\":2,\"lines\":\"new config\\nupdated setting\"}"
+  }
+}
 ```
 
 **Replace entire file:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./old.txt","start":1,"end":100,"lines":"completely new content"}}]
+```json
+{
+  "id": "call_002",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./old.txt\",\"start\":1,\"end\":100,\"lines\":\"completely new content\"}"
+  }
+}
 ```
 
 **Clear file content:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./temp.txt","start":1,"end":9999,"lines":""}}]
+```json
+{
+  "id": "call_003",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./temp.txt\",\"start\":1,\"end\":9999,\"lines\":\"\"}"
+  }
+}
 ```
 
 ### Search-and-Replace Mode Examples
 
 **Rename a variable:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./main.go","search":"oldVariableName","replace":"newVariableName"}}]
+```json
+{
+  "id": "call_004",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./main.go\",\"search\":\"oldVariableName\",\"replace\":\"newVariableName\"}"
+  }
+}
 ```
 
 **Update a configuration value:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./config.yaml","search":"debug: false","replace":"debug: true"}}]
+```json
+{
+  "id": "call_005",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./config.yaml\",\"search\":\"debug: false\",\"replace\":\"debug: true\"}"
+  }
+}
 ```
 
 **Replace a function implementation:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./handlers.go","search":"func fetchData() string {\n    return \"old\"\n}","replace":"func fetchData() string {\n    return \"new\"\n}"}}]
+```json
+{
+  "id": "call_006",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./handlers.go\",\"search\":\"func fetchData() {\\n    return \\\"old\\\"\\n}\",\"replace\":\"func fetchData() {\\n    return \\\"new\\\"\\n}\"}"
+  }
+}
 ```
 
 **Replace all TODOs:**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"./src/main.go","search":"// TODO:","replace":"// IMPLEMENTED:","count":-1}}]
+```json
+{
+  "id": "call_007",
+  "type": "function",
+  "function": {
+    "name": "replace_lines",
+    "arguments": "{\"path\":\"./src/main.go\",\"search\":\"// TODO:\",\"replace\":\"// IMPLEMENTED:\",\"count\":-1}"
+  }
+}
 ```
 
 ## Return Values

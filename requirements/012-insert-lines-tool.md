@@ -1,7 +1,7 @@
 # Requirement 012: Insert Lines Tool
 
 ## Description
-The harness must support an `insert_lines` tool that allows inserting a set of lines at a specified line number in a file.
+The harness must support an `insert_lines` tool that allows inserting a set of lines at a specified line number in a file via OpenAI's tool calling interface.
 
 ## Acceptance Criteria
 - [ ] Tool named `insert_lines` is available
@@ -18,16 +18,47 @@ The harness must support an `insert_lines` tool that allows inserting a set of l
 - [ ] Returns confirmation of insertion with details
 - [ ] Tool call failures are tracked in statistics
 
-## Tool Usage
+## Tool Definition (OpenAI Format)
 
-### Single Line
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"single line to insert"}}]
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "insert_lines",
+    "description": "Insert lines at a specific line number in a file",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File path to modify"
+        },
+        "line": {
+          "type": "integer",
+          "description": "Line number to insert before (1-indexed)"
+        },
+        "lines": {
+          "type": "string",
+          "description": "Lines to insert (use \\n for newlines)"
+        }
+      },
+      "required": ["path", "line", "lines"]
+    }
+  }
+}
 ```
 
-### Multi-line Content
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line 1\nnew line 2\nnew line 3"}}]
+## Tool Call Format
+
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "insert_lines",
+    "arguments": "{\"path\":\"/path/to/file.txt\",\"line\":5,\"lines\":\"single line to insert\"}"
+  }
+}
 ```
 
 ### Parameters
@@ -40,18 +71,39 @@ The harness must support an `insert_lines` tool that allows inserting a set of l
 ### Examples
 
 **Insert single line:**
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"./notes.txt","line":1,"lines":"# Header"}}]
+```json
+{
+  "id": "call_001",
+  "type": "function",
+  "function": {
+    "name": "insert_lines",
+    "arguments": "{\"path\":\"./notes.txt\",\"line\":1,\"lines\":\"# Header\"}"
+  }
+}
 ```
 
 **Insert multiple lines:**
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"./script.sh","line":2,"lines":"set -e\nset -u\nset -o pipefail"}}]
+```json
+{
+  "id": "call_002",
+  "type": "function",
+  "function": {
+    "name": "insert_lines",
+    "arguments": "{\"path\":\"./script.sh\",\"line\":2,\"lines\":\"set -e\\nset -u\\nset -o pipefail\"}"
+  }
+}
 ```
 
 **Insert at end of file:**
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"./log.txt","line":9999,"lines":"New log entry"}}]
+```json
+{
+  "id": "call_003",
+  "type": "function",
+  "function": {
+    "name": "insert_lines",
+    "arguments": "{\"path\":\"./log.txt\",\"line\":9999,\"lines\":\"New log entry\"}"
+  }
+}
 ```
 
 ## Return Values

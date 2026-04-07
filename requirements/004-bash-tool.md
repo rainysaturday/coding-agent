@@ -1,7 +1,7 @@
 # Requirement 004: Bash Tool
 
 ## Description
-The harness must support a `bash` tool that allows execution of shell commands.
+The harness must support a `bash` tool that allows execution of shell commands via OpenAI's tool calling interface.
 
 ## Acceptance Criteria
 - [ ] Tool named `bash` is available
@@ -12,18 +12,76 @@ The harness must support a `bash` tool that allows execution of shell commands.
 - [ ] Handles command execution errors gracefully
 - [ ] Tool call failures are tracked in statistics
 
-## Tool Usage
+## Tool Definition (OpenAI Format)
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "description": "Execute a bash command in the terminal",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "The bash command or script to execute"
+        }
+      },
+      "required": ["command"]
+    }
+  }
+}
+```
+
+## Tool Call Format
+
+The OpenAI API returns tool calls in the following format:
+
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"ls -la /home\"}"
+  }
+}
+```
 
 ### Single-line Commands
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"ls -la /home\"}"
+  }
+}
 ```
-[TOOL:{"name":"bash","parameters":{"command":"ls -la /home"}}]
-[TOOL:{"name":"bash","parameters":{"command":"echo \"Hello World\""}}]
-[TOOL:{"name":"bash","parameters":{"command":"grep -r \"pattern\" ."}}]
+
+```json
+{
+  "id": "call_def456",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"echo \\\"Hello World\\\"\"}"
+  }
+}
 ```
 
 ### Multi-line Scripts
-```
-[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\n# Multi-line script\necho \"Starting...\"\nfor i in {1..10}; do\n    echo \"Iteration $i\"\ndone\necho \"Done!\""}}]
+```json
+{
+  "id": "call_ghi789",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"#!/bin/bash\\n# Multi-line script\\necho \\\"Starting...\\\"\\nfor i in {1..10}; do\\n    echo \\\"Iteration $i\\\"\\ndone\\necho \\\"Done!\\\"\"}"
+  }
+}
 ```
 
 ### Parameters
@@ -35,23 +93,51 @@ The harness must support a `bash` tool that allows execution of shell commands.
 ### Examples
 
 **Simple command:**
-```
-[TOOL:{"name":"bash","parameters":{"command":"pwd"}}]
+```json
+{
+  "id": "call_001",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"pwd\"}"
+  }
+}
 ```
 
 **Command with quotes:**
-```
-[TOOL:{"name":"bash","parameters":{"command":"echo \"Hello World\""}}]
+```json
+{
+  "id": "call_002",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"echo \\\"Hello World\\\"\"}"
+  }
+}
 ```
 
 **Multi-line script:**
-```
-[TOOL:{"name":"bash","parameters":{"command":"#!/bin/bash\nset -e\ncd /tmp\ncat > test.txt << EOF\nline 1\nline 2\nEOF\ncat test.txt"}}]
+```json
+{
+  "id": "call_003",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"#!/bin/bash\\nset -e\\ncd /tmp\\ncat > test.txt << EOF\\nline 1\\nline 2\\nEOF\\ncat test.txt\"}"
+  }
+}
 ```
 
 **Complex command with special characters:**
-```
-[TOOL:{"name":"bash","parameters":{"command":"echo \"Price: $100 \\\"special\\\" items\""}}]
+```json
+{
+  "id": "call_004",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"echo \\\"Price: $100 \\\\\\\"special\\\\\\\" items\\\"\"}"
+  }
+}
 ```
 
 ## Return Values
@@ -59,7 +145,9 @@ The harness must support a `bash` tool that allows execution of shell commands.
 On success:
 - `output`: Combined stdout and stderr from command execution
 - `success`: `true`
+- `exit_code`: 0
 
 On failure:
 - `error`: Description of the error
 - `success`: `false`
+- `exit_code`: Non-zero exit code

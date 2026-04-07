@@ -2,19 +2,19 @@
 
 ## Description
 
-The list of available tools and their JSON-based calling format must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the inference engine has consistent knowledge of available tools.
+The list of available tools and their descriptions must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the LLM has consistent knowledge of available tools. When using OpenAI's tool calling API, tools are provided both in the system prompt (for context) and in the API request's `tools` field (for native tool calling).
 
 ## Acceptance Criteria
 
 - [ ] Tool list is included in system prompt at the beginning of every conversation
-- [ ] Tool calling format is included in system prompt
+- [ ] Tool descriptions are included in system prompt
 - [ ] System prompt is preserved during context compression
 - [ ] System prompt is NOT modified or removed during conversation
 - [ ] System prompt is updated when new tools are added
-- [ ] System prompt includes tool descriptions
+- [ ] System prompt includes tool descriptions and usage guidelines
 - [ ] System prompt is sent with every inference request
 - [ ] System prompt remains constant throughout conversation lifecycle
-- [ ] System prompt is compressed along with context when needed
+- [ ] Tools are also provided in API request's `tools` field for native tool calling
 - [ ] System prompt instructs agent to double-check and verify all work
 - [ ] Agent verifies correctness of files created/modified before considering task complete
 - [ ] Agent tests code execution or validates output when possible
@@ -25,61 +25,132 @@ The list of available tools and their JSON-based calling format must ALWAYS be p
 ### System Prompt Structure
 
 ```
-You are a helpful coding assistant. You have access to the following tools:
+You are a helpful coding assistant. You have access to the following tools.
+
+TOOL CALLING FORMAT:
+- When you need to use a tool, the API will present you with the available tools
+- Respond by calling the appropriate tool with the required parameters
+- You do NOT need to construct JSON manually - the tool calling API handles the formatting
+- Simply provide the tool name and parameter values when prompted to call a tool
+- Each tool has specific parameters that must be provided (marked as "required")
+
+EXAMPLE workflow:
+1. User asks you to list files in a directory
+2. You respond by calling the "bash" tool with command="ls -la /path"
+3. The API executes the tool and returns the output
+4. You see the result and can continue your response or call more tools
 
 AVAILABLE TOOLS:
-- bash: Execute a bash command
-  Format: [TOOL:{"name":"bash","parameters":{"command":"command string"}}]
-  Example: [TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
-  Multi-line: [TOOL:{"name":"bash","parameters":{"command":"line1\nline2\nline3"}}]
 
-- read_file: Read the contents of a file
-  Format: [TOOL:{"name":"read_file","parameters":{"path":"file path"}}]
-  Example: [TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
+1. bash
+   Description: Execute a bash command in the terminal
+   Parameters:
+     - command (string, required): The bash command to execute
+   How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
+   Example use case: "ls -la", "cat file.txt", "go build", "git status"
 
-- write_file: Write content to a file
-  Format: [TOOL:{"name":"write_file","parameters":{"path":"file path","content":"file content"}}]
-  Example: [TOOL:{"name":"write_file","parameters":{"path":"/path/to/file.txt","content":"Hello"}}]
-  Multi-line: [TOOL:{"name":"write_file","parameters":{"path":"file.txt","content":"line1\nline2"}}]
+2. read_file
+   Description: Read the contents of a file
+   Parameters:
+     - path (string, required): The path to the file to read
+   How to call: Use read_file to view the contents of any file before making changes.
+   Example use case: Reading source files, configuration files, documentation
 
-- read_lines: Read a specific line range from a file
-  Format: [TOOL:{"name":"read_lines","parameters":{"path":"file path","start":line_number,"end":line_number}}]
-  Example: [TOOL:{"name":"read_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":10}}]
+3. write_file
+   Description: Write content to a file
+   Parameters:
+     - path (string, required): The path to the file to write
+     - content (string, required): The content to write to the file
+   How to call: Use write_file to create new files or completely overwrite existing files.
+   Example use case: Creating new source files, writing configuration, saving output
+   Note: For multi-line content, use \n to represent newlines in the content parameter
 
-- insert_lines: Insert lines at a specific line number
-  Format: [TOOL:{"name":"insert_lines","parameters":{"path":"file path","line":line_number,"lines":"lines to insert"}}]
-  Example: [TOOL:{"name":"insert_lines","parameters":{"path":"/path/to/file.txt","line":5,"lines":"new line"}}]
-  Multi-line: [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"line1\nline2"}}]
+4. read_lines
+   Description: Read a specific line range from a file
+   Parameters:
+     - path (string, required): The path to the file
+     - start (integer, required): The starting line number (1-indexed)
+     - end (integer, required): The ending line number (1-indexed)
+   How to call: Use read_lines when you only need to view a portion of a large file.
+   Example use case: Viewing lines 1-50 of a large source file, checking specific sections
 
-- replace_lines: Replace a line range with new lines
-  Format: [TOOL:{"name":"replace_lines","parameters":{"path":"file path","start":line_number,"end":line_number,"lines":"replacement lines"}}]
-  Example: [TOOL:{"name":"replace_lines","parameters":{"path":"/path/to/file.txt","start":1,"end":5,"lines":"new content"}}]
-  Multi-line: [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":3,"lines":"line1\nline2"}}]
+5. insert_lines
+   Description: Insert lines at a specific line number
+   Parameters:
+     - path (string, required): The path to the file
+     - line (integer, required): The line number where insertion should occur (1-indexed)
+     - lines (string, required): The lines to insert (use \n for newlines)
+   How to call: Use insert_lines to add new content without replacing existing content.
+   Example use case: Adding imports, inserting new functions, adding comments
+   Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
-TOOL CALLING RULES:
-- Use the exact JSON format shown above for tool calls
-- Tool calls must be enclosed in [TOOL:...] brackets
-- The content inside brackets must be valid JSON
-- Tool name must match exactly (case-sensitive, use underscore not hyphen)
-- Parameters must be in a JSON object under the "parameters" key
-- String values must be properly JSON-escaped (use \n for newlines, \" for quotes)
-- Numeric values should be JSON numbers without quotes (e.g. "start":1, "end":10)
+6. replace_lines
+   Description: Replace content in a file (supports two modes)
+   
+   Line-number mode:
+     - path (string, required): The path to the file
+     - start (integer, required): Starting line number (1-indexed)
+     - end (integer, required): Ending line number (1-indexed)
+     - lines (string, required): Replacement lines (use \n for newlines)
+     How to call: Use line-number mode when you know the exact lines to replace.
+   
+   Search-and-replace mode:
+     - path (string, required): The path to the file
+     - search (string, required): Text to find (exact match)
+     - replace (string, required): Replacement text
+     - count (integer, optional): Number of replacements (default: 1, use -1 for all)
+     How to call: Use search-and-replace mode when you know the text pattern but not line numbers.
+   
+   Example use case: Renaming variables, updating function implementations, fixing typos
 
-Instructions:
-- Analyze the user's request and determine if tools are needed
-- Use tools when they can help complete the task
-- Always explain your reasoning before calling tools
-- Provide clear explanations of tool results
-- Continue the conversation after tool execution
-- Generate valid JSON inside the [TOOL:...] wrapper
+TOOL CALLING BEST PRACTICES:
+1. Always read a file first (using read_file or read_lines) to understand its contents
+2. When modifying files, be precise about what you're changing
+3. For multi-line content, properly format with \n for newlines
+4. Verify your changes by re-reading files after writing
+5. Test code by running appropriate commands (go build, go test, etc.)
+```
+
+### OpenAI Tool Schema
+
+In addition to the system prompt, tools must be provided in the API request's `tools` field:
+
+```json
+{
+  "model": "gpt-4o",
+  "messages": [...],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "bash",
+        "description": "Execute a bash command in the terminal",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "description": "The bash command to execute"
+            }
+          },
+          "required": ["command"]
+        }
+      }
+    }
+    // ... other tools
+  ],
+  "tool_choice": "auto"
+}
+```
 
 ### System Prompt Management
 
 1. **Initial Setup**: System prompt is created with all available tools
 2. **Context Creation**: System prompt is the first message in the context
-3. **Compression**: System prompt is preserved and prepended to summary
-4. **Tool Updates**: When tools are added/removed, system prompt is regenerated
-5. **Persistence**: System prompt remains unchanged throughout conversation
+3. **API Request**: Tools are provided in both system prompt and `tools` field
+4. **Compression**: System prompt is preserved and prepended to summary
+5. **Tool Updates**: When tools are added/removed, system prompt is regenerated
+6. **Persistence**: System prompt remains unchanged throughout conversation
 
 ### Compression Behavior
 
@@ -90,7 +161,8 @@ During context compression:
 4. System prompt content is NOT summarized
 5. Only the conversation history is compressed
 
-VERIFICATION REQUIREMENTS:
+### Verification Requirements
+
 - ALWAYS double-check your work before considering a task complete
 - Verify that created/modified files exist and contain the expected content
 - Test code execution when possible (e.g., run go build, go test)
@@ -101,56 +173,48 @@ VERIFICATION REQUIREMENTS:
 - If verification fails, fix the issue and re-verify
 - Provide a final verification summary before concluding the task
 
-Verification Checklist:
+**Verification Checklist:**
 1. Files exist at the expected paths
 2. File content matches the intended changes
 3. Code compiles without errors (for Go code)
 4. Code follows Go formatting standards (gofmt)
 5. Changes align with user requirements
 6. No unintended side effects or broken dependencies
+
 ### System Prompt Injection Point
 
 ```
-
 [SYSTEM PROMPT - ALWAYS FIRST]
 [USER MESSAGE 1]
 [ASSISTANT RESPONSE 1]
 [USER MESSAGE 2]
 [ASSISTANT RESPONSE 2]
 ...
+```
 
-````
+## Tool Result Format
 
-## JSON Format Details
+After tool execution, results should be sent back to the LLM as tool messages:
 
-### Structure
 ```json
 {
-  "name": "tool_name",
-  "parameters": {
-    "param1": "value1",
-    "param2": 123,
-    "param3": "value with\nnewlines"
-  }
+  "role": "tool",
+  "tool_call_id": "call_abc123",
+  "content": "Tool execution output or result"
 }
-````
+```
 
-### Escaping Rules
+## Error Handling
 
-- Newlines: `\n`
-- Carriage returns: `\r`
-- Tabs: `\t`
-- Double quotes: `\"`
-- Backslashes: `\\`
-- Unicode: `\uXXXX`
+When a tool call fails, the error should be communicated back to the LLM:
 
-### Common Mistakes to Avoid
-
-- Using old format `[tool:name(param="value")]` - NOT SUPPORTED
-- Forgetting the `parameters` key wrapper
-- Using hyphens instead of underscores in tool names
-- Forgetting to escape quotes in strings
-- Quoting numeric values (use `"start":1` not `"start":"1"`)
+```json
+{
+  "role": "tool",
+  "tool_call_id": "call_abc123",
+  "content": "Error: Invalid tool call - <specific error message>"
+}
+```
 
 ## Security Considerations
 
