@@ -324,10 +324,17 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var reasoningContent strings.Builder
 	var totalTokens int
 	
-	// Use a map to accumulate partial tool calls by ID
-	toolCallMap := make(map[string]*APIToolCall)
-	// Track which tool calls we've already notified about (to avoid duplicate notifications)
-	notifiedToolCalls := make(map[string]bool)
+	// Use a slice to accumulate tool calls in order
+	// Each entry accumulates partial data from streaming deltas
+	type accumulatedToolCall struct {
+		ID        string
+		Type      string
+		Name      string
+		Arguments string
+	}
+	var toolCallsList []*accumulatedToolCall
+	// Track which tool calls we've already notified about
+	notifiedToolCalls := make(map[int]bool)
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -387,48 +394,69 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			// Tool calls come in partial chunks that need to be merged
 			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
 				for _, deltaTC := range chunk.Choices[0].Delta.ToolCalls {
-					// Ensure we have an ID
-					if deltaTC.ID == "" {
-						// New tool call without ID - create one with index
-						deltaTC.ID = fmt.Sprintf("call_%d", len(toolCallMap))
+					// Determine which tool call this delta belongs to
+					// If the tool call has an ID, look for an existing one with that ID
+					// If no ID or not found, check if we should merge with the last tool call
+					
+					targetIndex := -1
+					
+					// First, try to find by ID
+					if deltaTC.ID != "" {
+						for i, tc := range toolCallsList {
+							if tc.ID == deltaTC.ID {
+								targetIndex = i
+								break
+							}
+						}
 					}
 					
-					// Check if this tool call already exists
-					if existing, ok := toolCallMap[deltaTC.ID]; ok {
-						// Merge with existing tool call - accumulate fields
-						// Name typically comes first and doesn't change
-						if deltaTC.Function.Name != "" {
-							existing.Function.Name = deltaTC.Function.Name
-						}
-						// Arguments are streamed as incremental JSON string fragments
+					// If not found by ID and this chunk has no ID or no name,
+					// it might be a continuation of the last tool call
+					if targetIndex == -1 && (deltaTC.ID == "" && deltaTC.Function.Name == "") && len(toolCallsList) > 0 {
+						// Check if this chunk has arguments (indicating it's a continuation)
 						if deltaTC.Function.Arguments != "" {
-							existing.Function.Arguments += deltaTC.Function.Arguments
+							targetIndex = len(toolCallsList) - 1
 						}
-						// Type should be consistent
-						if deltaTC.Type != "" {
-							existing.Type = deltaTC.Type
-						}
-					} else {
-						// New tool call - make a deep copy to avoid reference issues
-						newTC := &APIToolCall{
-							ID:   deltaTC.ID,
-							Type: deltaTC.Type,
-							Function: FunctionCall{
-								Name:      deltaTC.Function.Name,
-								Arguments: deltaTC.Function.Arguments,
-							},
-						}
-						toolCallMap[deltaTC.ID] = newTC
-						
-						// Notify about new tool call if callback is available
-						// Only notify once per tool call (when we first see it)
-						if callback != nil && deltaTC.Function.Name != "" {
-							toolName := deltaTC.Function.Name
-							// Stream a notification that a tool call is being made
-							notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
-							callback(notification)
-							notifiedToolCalls[deltaTC.ID] = true
-						}
+					}
+					
+					if targetIndex == -1 {
+						// New tool call - create a new entry at the next index
+						targetIndex = len(toolCallsList)
+					}
+					
+					// Ensure the slice is large enough
+					for len(toolCallsList) <= targetIndex {
+						toolCallsList = append(toolCallsList, &accumulatedToolCall{})
+					}
+					
+					existing := toolCallsList[targetIndex]
+					
+					// Merge with existing tool call - accumulate fields
+					// ID
+					if deltaTC.ID != "" {
+						existing.ID = deltaTC.ID
+					}
+					// Name typically comes first and doesn't change
+					if deltaTC.Function.Name != "" {
+						existing.Name = deltaTC.Function.Name
+					}
+					// Arguments are streamed as incremental JSON string fragments
+					if deltaTC.Function.Arguments != "" {
+						existing.Arguments += deltaTC.Function.Arguments
+					}
+					// Type should be consistent
+					if deltaTC.Type != "" {
+						existing.Type = deltaTC.Type
+					}
+					
+					// Notify about new tool call if callback is available
+					// Only notify once per tool call (when we first see the name)
+					if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
+						toolName := deltaTC.Function.Name
+						// Stream a notification that a tool call is being made
+						notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
+						callback(notification)
+						notifiedToolCalls[targetIndex] = true
 					}
 				}
 			}
@@ -458,27 +486,41 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var apiToolCalls []*APIToolCall
 	var toolCalls []*tools.ToolCall
 	
-	// Process tool calls in order (by ID for consistency)
-	for _, apiTC := range toolCallMap {
+	// Process tool calls in order
+	for _, accTC := range toolCallsList {
+		// Skip empty tool calls (those that were only created for merging)
+		if accTC.Name == "" && accTC.Arguments == "" {
+			continue
+		}
+		
+		// Create API tool call for reference
+		apiTC := &APIToolCall{
+			ID:   accTC.ID,
+			Type: accTC.Type,
+			Function: FunctionCall{
+				Name:      accTC.Name,
+				Arguments: accTC.Arguments,
+			},
+		}
 		apiToolCalls = append(apiToolCalls, apiTC)
 		
 		// Parse the accumulated arguments JSON string
 		var params map[string]interface{}
-		if apiTC.Function.Arguments != "" {
-			if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {
+		if accTC.Arguments != "" {
+			if err := json.Unmarshal([]byte(accTC.Arguments), &params); err != nil {
 				// If parsing fails, log the error but don't fail entirely
 				params = map[string]interface{}{
-					"_raw_arguments": apiTC.Function.Arguments,
+					"_raw_arguments": accTC.Arguments,
 					"_parse_error":   err.Error(),
 				}
 			}
 		}
 		
 		toolCall := &tools.ToolCall{
-			ID:         apiTC.ID,
-			Name:       apiTC.Function.Name,
+			ID:         accTC.ID,
+			Name:       accTC.Name,
 			Parameters: params,
-			Raw:        apiTC.Function.Arguments,
+			Raw:        accTC.Arguments,
 		}
 		toolCalls = append(toolCalls, toolCall)
 	}
