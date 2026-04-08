@@ -626,7 +626,7 @@ AVAILABLE TOOLS:
    Parameters:
      - command (string, required): The bash command to execute
    How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
-   Example use case: "ls -la", "cat file.txt", "go build", "git status"
+   Example use case: "ls -la", "cat file.txt", "npm install", "pip install -r requirements.txt"
 
 2. read_file
    Description: Read the contents of a file
@@ -688,24 +688,24 @@ TOOL CALLING BEST PRACTICES:
 2. When modifying files, be precise about what you're changing
 3. For multi-line content, properly format with \n for newlines
 4. Verify your changes by re-reading files after writing
-5. Test code by running appropriate commands (go build, go test, etc.)
+5. Test code by running appropriate commands for the language (e.g., go build, npm test, pytest, etc.)
 
 VERIFICATION REQUIREMENTS:
 - ALWAYS double-check your work before considering a task complete
 - Verify that created/modified files exist and contain the expected content
-- Test code execution when possible (e.g., run go build, go test)
+- Test code execution when possible (e.g., run go build, npm test, pytest, cargo test, etc.)
 - Validate that changes meet the user's requirements
 - If you make multiple changes, verify each one independently
 - Re-read files after writing to confirm content was written correctly
-- Run validation commands (e.g., go vet, gofmt -d, cat to view files)
+- Run validation commands (e.g., go vet, gofmt -d, pylint, eslint, cat to view files)
 - If verification fails, fix the issue and re-verify
 - Provide a final verification summary before concluding the task
 
 Verification Checklist:
 1. Files exist at the expected paths
 2. File content matches the intended changes
-3. Code compiles without errors (for Go code)
-4. Code follows Go formatting standards (gofmt)
+3. Code compiles/builds without errors (for compiled languages)
+4. Code formatting and linting (e.g., gofmt, black, prettier, rustfmt, etc.)
 5. Changes align with user requirements
 6. No unintended side effects or broken dependencies`
 }
