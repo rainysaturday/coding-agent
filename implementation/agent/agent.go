@@ -548,23 +548,22 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				exitCode = fmt.Sprintf(" (exit code: %d)", result.ExitCode)
 			}
 			return fmt.Sprintf("%s[Success] bash completed%s\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
-		case "read_file":
+	case "read_file":
 			output := result.Output
 			lines := strings.Split(output, "\n")
 			if len(lines) > 10 {
 				lines = lines[:10]
 				output = strings.Join(lines, "\n") + "\n... [content truncated]"
 			}
-			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, len(lines), output, ColorReset)
-		case "read_lines":
-			output := result.Output
-			lines := strings.Split(output, "\n")
-			if len(lines) > 10 {
-				lines = lines[:10]
-				output = strings.Join(lines, "\n") + "\n... [content truncated]"
+			// Use accurate line count from Extra if available
+			linesRead := len(strings.Split(result.Output, "\n"))
+			if result.Extra != nil {
+				if lr, ok := result.Extra["linesRead"].(int); ok {
+					linesRead = lr
+				}
 			}
-			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, len(lines), output, ColorReset)
-		case "write_file":
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
+case "write_file":
 			if msg, ok := result.Extra["message"].(string); ok {
 				return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, msg, ColorReset)
 			}

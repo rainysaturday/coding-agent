@@ -203,10 +203,14 @@ func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResu
 		}
 	}
 
-	return &ToolResult{
+return &ToolResult{
 		Success: true,
 		Output:  string(content),
 		Path:    path,
+		Extra: map[string]interface{}{
+			"linesRead":   len(strings.Split(string(content), "\n")),
+			"contentLength": len(content),
+		},
 	}
 }
 
@@ -246,11 +250,12 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	return &ToolResult{
+return &ToolResult{
 		Success: true,
 		Path:    path,
 		Extra: map[string]interface{}{
-			"message": "File written successfully",
+			"message":        fmt.Sprintf("File written successfully: %s", path),
+			"contentLength":  len(content),
 		},
 	}
 }
