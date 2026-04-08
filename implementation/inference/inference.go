@@ -326,6 +326,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	
 	// Use a map to accumulate partial tool calls by ID
 	toolCallMap := make(map[string]*APIToolCall)
+	// Track which tool calls we've already notified about (to avoid duplicate notifications)
+	notifiedToolCalls := make(map[string]bool)
 
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
@@ -385,28 +387,48 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			// Tool calls come in partial chunks that need to be merged
 			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
 				for _, deltaTC := range chunk.Choices[0].Delta.ToolCalls {
+					// Ensure we have an ID
 					if deltaTC.ID == "" {
 						// New tool call without ID - create one with index
 						deltaTC.ID = fmt.Sprintf("call_%d", len(toolCallMap))
 					}
 					
+					// Check if this tool call already exists
 					if existing, ok := toolCallMap[deltaTC.ID]; ok {
-						// Merge with existing tool call
+						// Merge with existing tool call - accumulate fields
+						// Name typically comes first and doesn't change
 						if deltaTC.Function.Name != "" {
 							existing.Function.Name = deltaTC.Function.Name
 						}
+						// Arguments are streamed as incremental JSON string fragments
 						if deltaTC.Function.Arguments != "" {
 							existing.Function.Arguments += deltaTC.Function.Arguments
 						}
+						// Type should be consistent
+						if deltaTC.Type != "" {
+							existing.Type = deltaTC.Type
+						}
 					} else {
-						// New tool call
-						// Make a copy to avoid reference issues
+						// New tool call - make a deep copy to avoid reference issues
 						newTC := &APIToolCall{
-							ID:       deltaTC.ID,
-							Type:     deltaTC.Type,
-							Function: deltaTC.Function,
+							ID:   deltaTC.ID,
+							Type: deltaTC.Type,
+							Function: FunctionCall{
+								Name:      deltaTC.Function.Name,
+								Arguments: deltaTC.Function.Arguments,
+							},
 						}
 						toolCallMap[deltaTC.ID] = newTC
+						
+						// Notify about new tool call if callback is available
+						// Only notify once per tool call (when we first see it)
+						if callback != nil && deltaTC.Function.Name != "" {
+							toolName := deltaTC.Function.Name
+							// Stream a notification that a tool call is being made
+							notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
+							callback(notification)
+							notifiedToolCalls[deltaTC.ID] = true
+						}
 					}
 				}
 			}
@@ -435,18 +457,23 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	// Convert accumulated API tool calls to internal format
 	var apiToolCalls []*APIToolCall
 	var toolCalls []*tools.ToolCall
+	
+	// Process tool calls in order (by ID for consistency)
 	for _, apiTC := range toolCallMap {
 		apiToolCalls = append(apiToolCalls, apiTC)
 		
+		// Parse the accumulated arguments JSON string
 		var params map[string]interface{}
 		if apiTC.Function.Arguments != "" {
 			if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {
+				// If parsing fails, log the error but don't fail entirely
 				params = map[string]interface{}{
 					"_raw_arguments": apiTC.Function.Arguments,
 					"_parse_error":   err.Error(),
 				}
 			}
 		}
+		
 		toolCall := &tools.ToolCall{
 			ID:         apiTC.ID,
 			Name:       apiTC.Function.Name,

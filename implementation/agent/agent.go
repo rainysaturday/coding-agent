@@ -179,6 +179,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			// Execute tool calls
 			for _, tc := range response.ToolCalls {
 				// Stream tool call status to user
+				// In streaming mode, the tool call notification was already sent during inference
+				// So we only need to stream the execution status
 				streamStatus(tc.Name, tc.Parameters, a.streamCallback)
 
 				step := Step{

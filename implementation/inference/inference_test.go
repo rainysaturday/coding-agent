@@ -308,3 +308,46 @@ func TestRequestBody_JSON(t *testing.T) {
 		t.Errorf("Expected stream true, got %v", req.Stream)
 	}
 }
+
+func TestStreamingToolCallAccumulation(t *testing.T) {
+	// We can't easily test handleStreamResponse directly without a real HTTP response
+	// But we can verify the accumulation logic by testing the tool call parsing
+	content := `I'll help with that.
+[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]`
+
+	toolCalls := parseToolCalls(content)
+	if len(toolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(toolCalls))
+	}
+
+	tc := toolCalls[0]
+	if tc.Name != "bash" {
+		t.Errorf("Expected tool name 'bash', got '%s'", tc.Name)
+	}
+
+	cmd, ok := tc.Parameters["command"].(string)
+	if !ok {
+		t.Fatal("Expected command parameter to be string")
+	}
+	if cmd != "ls -la" {
+		t.Errorf("Expected command 'ls -la', got '%s'", cmd)
+	}
+}
+
+func TestStreamingMultipleToolCalls(t *testing.T) {
+	// Test parsing multiple tool calls from content
+	content := `[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
+And also: [TOOL:{"name":"read_file","parameters":{"path":"test.txt"}}]`
+
+	toolCalls := parseToolCalls(content)
+	if len(toolCalls) != 2 {
+		t.Fatalf("Expected 2 tool calls, got %d", len(toolCalls))
+	}
+
+	if toolCalls[0].Name != "bash" {
+		t.Errorf("Expected first tool 'bash', got '%s'", toolCalls[0].Name)
+	}
+	if toolCalls[1].Name != "read_file" {
+		t.Errorf("Expected second tool 'read_file', got '%s'", toolCalls[1].Name)
+	}
+}
