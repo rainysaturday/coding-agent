@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"sync"
 	"time"
@@ -240,7 +241,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Type 'stats' to view statistics, 'clear' to clear output.")
+	fmt.Println("Commands start with '/': /stats, /clear, /clear-history")
 	fmt.Println()
 
 	// Initialize TUI
@@ -298,21 +299,27 @@ func runInteractiveMode(cfg *config.Config) error {
 			continue
 		}
 
-		// Handle commands
-		if input == "stats" {
-			stats := ag.GetStats()
-			tuiInstance.DisplayStats(stats)
-			continue
-		}
+		// Handle commands (with / prefix)
+		if strings.HasPrefix(input, "/") {
+			command := strings.TrimPrefix(input, "/")
 
-		if input == "clear" {
-			tuiInstance.ClearOutput()
-			continue
-		}
-
-		if input == "clear-history" {
-			tuiInstance.ClearHistory()
-			continue
+			switch command {
+			case "stats":
+				stats := ag.GetStats()
+				tuiInstance.DisplayStats(stats)
+				continue
+			case "clear":
+				tuiInstance.ClearOutput()
+				continue
+			case "clear-history":
+				tuiInstance.ClearHistory()
+				continue
+			default:
+				// Unknown command - show error
+				fmt.Printf("Unknown command: /%s\n", command)
+				fmt.Println("Available commands: /stats, /clear, /clear-history")
+				continue
+			}
 		}
 
 		// Reset cancellation for new request
