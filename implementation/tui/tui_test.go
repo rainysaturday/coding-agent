@@ -220,6 +220,7 @@ func TestPrintColored(t *testing.T) {
 	printColored(ColorYellow, "test")
 	printColored(ColorBlue, "test")
 	printColored(ColorCyan, "test")
+	printColored(ColorDim, "test")
 }
 
 func TestColors(t *testing.T) {
@@ -241,4 +242,106 @@ func TestColors(t *testing.T) {
 	if ColorCyan == "" {
 		t.Error("ColorCyan is empty")
 	}
+	if ColorDim == "" {
+		t.Error("ColorDim is empty")
+	}
+}
+
+func TestColorValues(t *testing.T) {
+	expectedColorReset := "\033[0m"
+	expectedColorRed := "\033[31m"
+	expectedColorDim := "\033[90m"
+
+	if ColorReset != expectedColorReset {
+		t.Errorf("ColorReset = %q, want %q", ColorReset, expectedColorReset)
+	}
+	if ColorRed != expectedColorRed {
+		t.Errorf("ColorRed = %q, want %q", ColorRed, expectedColorRed)
+	}
+	if ColorDim != expectedColorDim {
+		t.Errorf("ColorDim = %q, want %q", ColorDim, expectedColorDim)
+	}
+}
+
+func TestStreamingContentType(t *testing.T) {
+	// Verify the enum values
+	if StreamingContentTypeNormal != 0 {
+		t.Errorf("Expected StreamingContentTypeNormal = 0, got %d", StreamingContentTypeNormal)
+	}
+	if StreamingContentTypeReasoning != 1 {
+		t.Errorf("Expected StreamingContentTypeReasoning = 1, got %d", StreamingContentTypeReasoning)
+	}
+}
+
+func TestStreamChunkBackwardCompatibility(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+
+	// Start a stream
+	tui.StartStream()
+
+	// Use legacy StreamChunk method - should default to normal content
+	tui.StreamChunk("test text")
+
+	// End the stream
+	tui.StreamEnd()
+
+	// Verify it doesn't panic and works correctly
+	// (Actual output can't be easily verified in tests)
+}
+
+func TestStreamChunkWithType(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+
+	// Test normal content type
+	tui.StartStream()
+	tui.StreamChunkWithType("normal text", StreamingContentTypeNormal)
+	tui.StreamEnd()
+
+	// Test reasoning content type
+	tui.StartStream()
+	tui.StreamChunkWithType("reasoning text", StreamingContentTypeReasoning)
+	tui.StreamEnd()
+
+	// Verify both work without panicking
+}
+
+func TestStreamReasoningChunk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+
+	// Start stream and stream reasoning content
+	tui.StartStream()
+	tui.StreamReasoningChunk("Let me think about this...")
+	tui.StreamEnd()
+
+	// Verify it doesn't panic
+}
+
+func TestStreamNormalChunk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+
+	// Start stream and stream normal content
+	tui.StartStream()
+	tui.StreamNormalChunk("Here is the answer")
+	tui.StreamEnd()
+
+	// Verify it doesn't panic
+}
+
+func TestStreamChunkWithTypeMultipleChunks(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+
+	// Stream multiple chunks of different types
+	tui.StartStream()
+	tui.StreamChunkWithType("reasoning part 1", StreamingContentTypeReasoning)
+	tui.StreamChunkWithType("reasoning part 2", StreamingContentTypeReasoning)
+	tui.StreamChunkWithType("normal part 1", StreamingContentTypeNormal)
+	tui.StreamChunkWithType("normal part 2", StreamingContentTypeNormal)
+	tui.StreamEnd()
+
+	// Verify it doesn't panic
 }

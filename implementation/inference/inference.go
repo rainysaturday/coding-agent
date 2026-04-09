@@ -15,9 +15,25 @@ import (
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/tools"
 )
-
-// StreamingCallback is a function called for each streaming chunk.
+// StreamingCallback is a function type for handling streaming chunks.
 type StreamingCallback func(chunk string)
+
+// StreamingContentType represents the type of content being streamed.
+type StreamingContentType int
+
+const (
+	StreamingContentTypeNormal StreamingContentType = iota
+	StreamingContentTypeReasoning
+)
+
+// StreamingChunk represents a streaming chunk with content type.
+type StreamingChunk struct {
+	Text        string
+	ContentType StreamingContentType
+}
+
+// StreamingCallbackWithType is a function type for handling streaming chunks with content type.
+type StreamingCallbackWithType func(chunk StreamingChunk)
 
 // InferenceClient handles communication with the LLM backend.
 type InferenceClient struct {
