@@ -89,68 +89,67 @@ func (t *TUI) Prompt() (string, error) {
 	return input, nil
 }
 
-// readLineWithHistory reads a line with arrow key history navigation.
+// readLineWithHistory reads a line with Ctrl+P/Ctrl+N history navigation.
+// Uses ReadString to read the full line at once, preventing character echo issues.
+// In canonical mode, the terminal handles echoing, so we just need to process the input.
 func (t *TUI) readLineWithHistory() (string, error) {
-	var line []byte
 	reader := bufio.NewReader(os.Stdin)
+	var line []byte
 
 	for {
-		char, err := reader.ReadByte()
+		// Read the full line (blocks until Enter is pressed)
+		input, err := reader.ReadString('\n')
 		if err != nil {
 			return string(line), err
 		}
 
-		// Handle escape sequences (arrow keys)
-		if char == 27 { // ESC
-			// Read the rest of the escape sequence
-			next1, err := reader.ReadByte()
-			if err != nil {
+		// Remove trailing newline/carriage return
+		input = strings.TrimRight(input, "\r\n")
+
+		// Handle empty input (just Enter pressed)
+		if input == "" {
+			fmt.Println()
+			return string(line), nil
+		}
+
+		// Check if this is a control character sequence (single character)
+		if len(input) == 1 {
+			switch input[0] {
+			case 3: // Ctrl+C
+				t.mu.Lock()
+				t.cancelled = true
+				t.mu.Unlock()
+				fmt.Println("\n[Cancelled]")
+				return "", fmt.Errorf("cancelled")
+			case 16: // Ctrl+P - Previous history
+				t.handleHistoryUp()
+				continue // Continue to read next input
+			case 14: // Ctrl+N - Next history
+				t.handleHistoryDown()
+				continue // Continue to read next input
+			case 127, 8: // Backspace/Delete
+				if len(line) > 0 {
+					line = line[:len(line)-1]
+					fmt.Print("\b \b")
+				}
 				continue
 			}
-			if next1 == 91 { // '['
-				next2, err := reader.ReadByte()
-				if err != nil {
-					continue
-				}
-				switch next2 {
-				case 65: // Up arrow
-					t.handleHistoryUpBytes(&line)
-				case 66: // Down arrow
-					t.handleHistoryDownBytes(&line)
-				}
-				continue
-			}
-			// Not an arrow key, just continue
+		}
+
+		// Handle escape sequences (arrow keys, etc.) - ignore them since we use Ctrl+P/N
+		if len(input) > 0 && input[0] == 27 { // ESC
 			continue
 		}
 
-		// Handle control characters
-		switch char {
-		case 127, 8: // Backspace
-			if len(line) > 0 {
-				line = line[:len(line)-1]
-				fmt.Print("\b \b")
-			}
-		case 13, 10: // Enter
-			fmt.Println()
-			return string(line), nil
-		case 3: // Ctrl+C
-			t.mu.Lock()
-			t.cancelled = true
-			t.mu.Unlock()
-			fmt.Println("\n[Cancelled]")
-			return "", fmt.Errorf("cancelled")
-		default:
-			if char >= 32 && char < 127 { // Printable ASCII
-				line = append(line, char)
-				fmt.Printf("%c", char)
-			}
-		}
+		// Regular text input - append to line and return
+		// Note: Terminal already echoed the characters in canonical mode
+		line = append(line, []byte(input)...)
+		return string(line), nil
 	}
 }
 
-// handleHistoryUpBytes navigates to the previous history entry using byte slice.
-func (t *TUI) handleHistoryUpBytes(line *[]byte) {
+// handleHistoryUp navigates to the previous history entry.
+func (t *TUI) handleHistoryUp() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -167,13 +166,12 @@ func (t *TUI) handleHistoryUpBytes(line *[]byte) {
 	// Clear line and display history entry
 	fmt.Print("\r\033[K> ")
 	if t.historyIndex < len(t.history) {
-		*line = []byte(t.history[t.historyIndex])
 		fmt.Print(t.history[t.historyIndex])
 	}
 }
 
-// handleHistoryDownBytes navigates to the next history entry using byte slice.
-func (t *TUI) handleHistoryDownBytes(line *[]byte) {
+// handleHistoryDown navigates to the next history entry.
+func (t *TUI) handleHistoryDown() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -184,11 +182,9 @@ func (t *TUI) handleHistoryDownBytes(line *[]byte) {
 	if t.historyIndex > 0 {
 		t.historyIndex--
 		fmt.Print("\r\033[K> ")
-		*line = []byte(t.history[t.historyIndex])
 		fmt.Print(t.history[t.historyIndex])
 	} else {
 		fmt.Print("\r\033[K> ")
-		*line = []byte{}
 		t.historyIndex = -1
 	}
 }
