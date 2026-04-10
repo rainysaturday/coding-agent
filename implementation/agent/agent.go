@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -660,9 +661,43 @@ case "write_file":
 	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", ColorRed, toolName, result.Error, ColorReset)
 }
 
+// getEnvironmentInfo gathers runtime environment information.
+func getEnvironmentInfo() string {
+	// Get current working directory
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "unknown"
+	}
+
+	// Get executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "unknown"
+	}
+
+	// Get OS and architecture
+	osInfo := runtime.GOOS
+	archInfo := runtime.GOARCH
+
+	return fmt.Sprintf(`ENVIRONMENT INFORMATION:
+- Current Working Directory: %s
+- Agent Executable: %s
+- Operating System: %s
+- Architecture: %s
+
+You can use the agent executable to spawn sub-agents for parallel tasks using the -p parameter:
+  coding-agent -p "Your task here"
+`, cwd, exePath, osInfo, archInfo)
+}
+
 // buildSystemPrompt builds the system prompt with tool definitions.
 func buildSystemPrompt() string {
-	return `You are a helpful coding assistant. You have access to the following tools.
+	// Get environment information
+	envInfo := getEnvironmentInfo()
+
+	return fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
+
+%s
 
 TOOL CALLING FORMAT:
 - When you need to use a tool, the API will present you with the available tools
@@ -765,7 +800,7 @@ Verification Checklist:
 3. Code compiles/builds without errors (for compiled languages)
 4. Code formatting and linting (e.g., gofmt, black, prettier, rustfmt, etc.)
 5. Changes align with user requirements
-6. No unintended side effects or broken dependencies`
+6. No unintended side effects or broken dependencies`, envInfo)
 }
 
 // buildTools builds the tool definitions for the OpenAI API.

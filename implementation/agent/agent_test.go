@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/coding-agent/harness/config"
@@ -24,6 +27,88 @@ func TestNewAgent(t *testing.T) {
 
 	if agent.stats == nil {
 		t.Error("NewAgent() stats is nil")
+	}
+}
+
+func TestGetEnvironmentInfo(t *testing.T) {
+	envInfo := getEnvironmentInfo()
+
+	// Check that envInfo is not empty
+	if envInfo == "" {
+		t.Fatal("getEnvironmentInfo() returned empty string")
+	}
+
+	// Check for required sections
+	if !strings.Contains(envInfo, "ENVIRONMENT INFORMATION:") {
+		t.Error("getEnvironmentInfo() missing 'ENVIRONMENT INFORMATION:' header")
+	}
+
+	// Get actual values for comparison
+	cwd, _ := os.Getwd()
+	exePath, _ := os.Executable()
+	osInfo := runtime.GOOS
+	archInfo := runtime.GOARCH
+
+	// Check for environment fields
+	if !strings.Contains(envInfo, "Current Working Directory:") {
+		t.Error("getEnvironmentInfo() missing 'Current Working Directory:' field")
+	}
+	if !strings.Contains(envInfo, "Agent Executable:") {
+		t.Error("getEnvironmentInfo() missing 'Agent Executable:' field")
+	}
+	if !strings.Contains(envInfo, "Operating System:") {
+		t.Error("getEnvironmentInfo() missing 'Operating System:' field")
+	}
+	if !strings.Contains(envInfo, "Architecture:") {
+		t.Error("getEnvironmentInfo() missing 'Architecture:' field")
+	}
+
+	// Check that actual values are included
+	if !strings.Contains(envInfo, cwd) {
+		t.Errorf("getEnvironmentInfo() does not contain actual cwd: %s", cwd)
+	}
+	if !strings.Contains(envInfo, exePath) {
+		t.Errorf("getEnvironmentInfo() does not contain actual exePath: %s", exePath)
+	}
+	if !strings.Contains(envInfo, osInfo) {
+		t.Errorf("getEnvironmentInfo() does not contain actual OS: %s", osInfo)
+	}
+	if !strings.Contains(envInfo, archInfo) {
+		t.Errorf("getEnvironmentInfo() does not contain actual arch: %s", archInfo)
+	}
+
+	// Check for sub-agent spawning instruction
+	if !strings.Contains(envInfo, "coding-agent -p") {
+		t.Error("getEnvironmentInfo() missing sub-agent spawning instruction")
+	}
+}
+
+func TestBuildSystemPromptContainsEnvironmentInfo(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	// Check that system prompt includes environment information
+	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
+		t.Error("buildSystemPrompt() does not include environment information")
+	}
+
+	// Get actual values for comparison
+	cwd, _ := os.Getwd()
+	exePath, _ := os.Executable()
+	osInfo := runtime.GOOS
+	archInfo := runtime.GOARCH
+
+	// Verify environment values are in the prompt
+	if !strings.Contains(prompt, cwd) {
+		t.Errorf("buildSystemPrompt() does not contain actual cwd: %s", cwd)
+	}
+	if !strings.Contains(prompt, exePath) {
+		t.Errorf("buildSystemPrompt() does not contain actual exePath: %s", exePath)
+	}
+	if !strings.Contains(prompt, osInfo) {
+		t.Errorf("buildSystemPrompt() does not contain actual OS: %s", osInfo)
+	}
+	if !strings.Contains(prompt, archInfo) {
+		t.Errorf("buildSystemPrompt() does not contain actual arch: %s", archInfo)
 	}
 }
 
