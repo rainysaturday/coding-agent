@@ -41,6 +41,10 @@ type Config struct {
 
 	// Agent settings
 	MaxIterations     int
+
+	// Debug settings
+	Debug        bool
+	DebugLog     string
 }
 
 // DefaultConfig returns a config with default values.
@@ -56,6 +60,8 @@ func DefaultConfig() *Config {
 		ReadTimeout:         7200, // 2 hours default
 		APIEndpoint:         "http://localhost:8080", // llama.cpp default
 		MaxIterations:       1000, // Default max iterations for loop protection
+		Debug:               false,
+		DebugLog:            "debug.log",
 	}
 }
 
@@ -188,6 +194,14 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.OutputFile = args[i]
+		case "--debug":
+			cfg.Debug = true
+		case "--debug-log":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--debug-log requires an argument")
+			}
+			i++
+			cfg.DebugLog = args[i]
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -270,6 +284,10 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Verbose = value == "true" || value == "1"
 		case "quiet":
 			cfg.Quiet = value == "true" || value == "1"
+		case "debug":
+			cfg.Debug = value == "true" || value == "1"
+		case "debug_log":
+			cfg.DebugLog = value
 		}
 	}
 
@@ -327,6 +345,13 @@ func loadEnv(cfg *Config) {
 		if val == "false" || val == "0" {
 			cfg.Streaming = false
 		}
+	}
+	// Debug settings
+	if val := os.Getenv("CODING_AGENT_DEBUG"); val != "" {
+		cfg.Debug = val == "true" || val == "1"
+	}
+	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
+		cfg.DebugLog = val
 	}
 }
 

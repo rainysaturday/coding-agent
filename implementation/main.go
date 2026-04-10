@@ -58,6 +58,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Set build version for agent debug logging
+	version := gitHash
+	if gitDirty == "dirty" {
+		version = version + " [dirty]"
+	}
+	agent.SetBuildVersion(version)
+
 	// Detect run mode
 	if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin {
 		// One-shot mode
@@ -105,6 +112,8 @@ func displayHelp() {
 	fmt.Println("      --stdin              Read prompt from stdin")
 	fmt.Println("      --prompt-file path   Read prompt from file")
 	fmt.Println("      --config path        Load configuration from file")
+	fmt.Println("      --debug              Enable debug logging (saves conversation to file)")
+	fmt.Println("      --debug-log path     Path to debug log file (default: debug.log)")
 	fmt.Println("      --model string       Model to use (default: \"llama3\")")
 	fmt.Println("      --temperature float  Inference temperature (default: 0.7)")
 	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 4096)")
@@ -124,7 +133,9 @@ func displayHelp() {
 	fmt.Println("  coding-agent --prompt-file task.txt")
 	fmt.Println("  coding-agent --config config.txt")
 	fmt.Println("  echo \"Fix bug\" | coding-agent --stdin")
-	fmt.Println("  coding-agent")
+	fmt.Println("  coding-agent --debug")
+	fmt.Println("  coding-agent --debug --debug-log /tmp/agent-debug.log")
+	fmt.Println("  coding-agent -p \"Task\" --debug")
 }
 
 func runOneShotMode(cfg *config.Config) error {
@@ -157,6 +168,11 @@ func runOneShotMode(cfg *config.Config) error {
 	startTime := time.Now()
 	result, err := ag.Run(ctx, prompt)
 	duration := time.Since(startTime)
+
+	// Close debug logger at the end of one-shot mode
+	if cfg.Debug {
+		ag.CloseDebugLogger()
+	}
 
 	if err != nil {
 		return fmt.Errorf("agent execution failed: %w", err)
@@ -250,6 +266,13 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Initialize agent
 	ag := agent.NewAgent(cfg)
 
+	// Ensure debug logger is closed on exit
+	if cfg.Debug {
+		defer func() {
+			ag.CloseDebugLogger()
+		}()
+	}
+
 	// Set context size callback
 	ag.SetContextSizeCallback(func(size, max int) {
 		tuiInstance.SetContextSize(size, max)
@@ -264,13 +287,8 @@ func runInteractiveMode(cfg *config.Config) error {
 
 	// Handle signals
 	go func() {
-		for {
-			<-sigChan
-			cancel()
-			// Re-create context for next operation
-			ctx, cancel = context.WithCancel(context.Background())
-			tuiInstance.CancelOperation()
-		}
+		<-sigChan
+		cancel()
 	}()
 
 	// Wait group to track running agent operations

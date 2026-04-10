@@ -4,11 +4,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/debug"
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tools"
 )
@@ -33,6 +35,7 @@ type Agent struct {
 	contextSizeCallback ContextSizeCallback
 	maxContextSize     int
 	compressionCount   int
+	debugLogger        *debug.DebugLogger
 	mu                 sync.Mutex
 }
 
@@ -64,6 +67,23 @@ type Result struct {
 
 // NewAgent creates a new agent.
 func NewAgent(cfg *config.Config) *Agent {
+	// Create debug logger if enabled
+	var debugLogger *debug.DebugLogger
+	if cfg.Debug {
+		var err error
+		debugLogger, err = debug.NewDebugLogger(cfg.DebugLog, getBuildVersion())
+		if err != nil {
+			// Log error but continue without debug logging
+			fmt.Fprintf(os.Stderr, "Warning: failed to initialize debug logger: %v\n", err)
+			debugLogger = nil
+		} else {
+			// Warn user about debug logging
+			fmt.Fprintf(os.Stderr, "[WARNING] Debug logging enabled. All conversation data will be saved to:\n")
+			fmt.Fprintf(os.Stderr, "  %s\n", cfg.DebugLog)
+			fmt.Fprintf(os.Stderr, "This may include sensitive information. Ensure the log file is protected.\n\n")
+		}
+	}
+
 	agent := &Agent{
 		config:       cfg,
 		inference:    inference.NewInferenceClient(cfg),
@@ -74,10 +94,16 @@ func NewAgent(cfg *config.Config) *Agent {
 		},
 		maxIterations:  cfg.MaxIterations,
 		maxContextSize: cfg.ContextSize,
+		debugLogger:    debugLogger,
 	}
 
 	// Build system prompt
 	agent.systemPrompt = buildSystemPrompt()
+
+	// Log system prompt if debug is enabled
+	if agent.debugLogger != nil {
+		agent.debugLogger.LogSystemPrompt(agent.systemPrompt, inference.EstimateTokens(agent.systemPrompt))
+	}
 
 	// Register tools with inference client
 	agent.inference.SetTools(buildTools())
@@ -121,6 +147,11 @@ func (a *Agent) GetTools() []inference.ToolDefinition {
 
 // Run runs the agent with the given prompt.
 func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
+	// Log user message if debug is enabled
+	if a.debugLogger != nil {
+		a.debugLogger.LogUserMessage(prompt, inference.EstimateTokens(prompt))
+	}
+
 	// Add user message to context
 	a.mu.Lock()
 	a.context = append(a.context, &inference.Message{
@@ -174,6 +205,19 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		a.stats.OutputTokens += response.TokenUsage / 2
 		a.mu.Unlock()
 
+		// Log assistant response if debug is enabled
+		if a.debugLogger != nil {
+			// Log the assistant's text response (if any)
+			if response.Content != "" {
+				a.debugLogger.LogAssistantMessage(response.Content, response.TokenUsage/2)
+			}
+			
+			// Log tool calls
+			for _, tc := range response.ToolCalls {
+				a.debugLogger.LogToolCall(tc.ID, tc.Name, tc.Parameters)
+			}
+		}
+
 		// Check if there are tool calls
 		if len(response.ToolCalls) > 0 {
 			// Execute tool calls
@@ -191,6 +235,11 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Execute the tool
 				result := a.toolExecutor.Execute(tc)
 				step.ToolResult = result
+
+				// Log tool result if debug is enabled
+				if a.debugLogger != nil {
+					a.debugLogger.LogToolResult(tc.ID, tc.Name, result.Success, result.Output)
+				}
 
 				// Stream tool result status to user
 				streamResult(tc.Name, result, a.streamCallback)
@@ -226,6 +275,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,
 		}, nil
 	}
+}
+
+// CloseDebugLogger closes the debug logger and writes the session summary.
+// This should be called when the session ends (in interactive mode, when exiting).
+func (a *Agent) CloseDebugLogger() error {
+	if a.debugLogger != nil {
+		return a.debugLogger.Close()
+	}
+	return nil
 }
 
 // RunStream runs the agent with streaming support.
@@ -877,4 +935,17 @@ func buildTools() []inference.ToolDefinition {
 			},
 		},
 	}
+}
+
+// getBuildVersion returns the build version string.
+// This is injected at build time via linker flags.
+var buildVersion = "unknown"
+
+func getBuildVersion() string {
+	return buildVersion
+}
+
+// SetBuildVersion sets the build version (called from main at startup).
+func SetBuildVersion(version string) {
+	buildVersion = version
 }
