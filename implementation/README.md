@@ -5,6 +5,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting an inpu
 ## Overview
 
 This project implements a coding agent that can:
+
 - Execute bash commands
 - Read and write files
 - Read and modify specific line ranges in files
@@ -15,11 +16,13 @@ This project implements a coding agent that can:
 ## Features
 
 ### Core Features
+
 - **Minimal TUI** with input prompt for user interaction
 - **Runtime statistics** tracking (tokens, tool calls, iterations)
 - **Tool support** for common coding tasks
 
 ### Supported Tools
+
 1. **bash** - Execute shell commands and scripts
 2. **read_file** - Read entire file contents
 3. **write_file** - Write content to files
@@ -28,6 +31,7 @@ This project implements a coding agent that can:
 6. **replace_lines** - Replace lines by range or search-and-replace
 
 ### Technical Features
+
 - **Zero external dependencies** - Uses only Go standard library
 - **Cross-platform** - Works on Linux, macOS, and Windows
 - **Streaming responses** - Real-time token display
@@ -39,6 +43,7 @@ This project implements a coding agent that can:
 ## Building
 
 ### Prerequisites
+
 - Go 1.22 or later
 
 ### Build Commands
@@ -112,35 +117,35 @@ echo "Refactor utils.go" | ./coding-agent --stdin
 
 ### Command-Line Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-p, --prompt` | Prompt for one-shot mode | - |
-| `--stdin` | Read prompt from stdin | false |
-| `--prompt-file` | Read prompt from file | - |
-| `--model` | Model to use | llama3 |
-| `--temperature` | Inference temperature | 0.7 |
-| `--max-tokens` | Maximum tokens to generate | 4096 |
-| `--context-size` | Context window size | 128000 |
-| `--no-stream` | Disable streaming | false |
-| `--verbose` | Enable verbose output | false |
-| `--quiet` | Suppress non-essential output | false |
-| `--output` | Write results to file | - |
-| `-h, --help` | Show help message | - |
-| `-v, --version` | Show version information | - |
+| Option           | Description                   | Default |
+| ---------------- | ----------------------------- | ------- |
+| `-p, --prompt`   | Prompt for one-shot mode      | -       |
+| `--stdin`        | Read prompt from stdin        | false   |
+| `--prompt-file`  | Read prompt from file         | -       |
+| `--model`        | Model to use                  | llama3  |
+| `--temperature`  | Inference temperature         | 0.7     |
+| `--max-tokens`   | Maximum tokens to generate    | 4096    |
+| `--context-size` | Context window size           | 128000  |
+| `--no-stream`    | Disable streaming             | false   |
+| `--verbose`      | Enable verbose output         | false   |
+| `--quiet`        | Suppress non-essential output | false   |
+| `--output`       | Write results to file         | -       |
+| `-h, --help`     | Show help message             | -       |
+| `-v, --version`  | Show version information      | -       |
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `CODING_AGENT_MODEL` | Model to use |
-| `CODING_AGENT_TEMPERATURE` | Inference temperature |
-| `CODING_AGENT_MAX_TOKENS` | Maximum tokens |
-| `CODING_AGENT_CONTEXT_SIZE` | Context window size |
-| `CODING_AGENT_API_ENDPOINT` | API endpoint URL |
-| `CODING_AGENT_API_KEY` | API key for authentication |
-| `CODING_AGENT_INITIAL_TOKEN_TIMEOUT` | Initial token timeout (seconds) |
-| `CODING_AGENT_STREAMING` | Enable/disable streaming (true/false) |
-| `CODING_AGENT_MAX_HISTORY` | Maximum input history entries |
+| Variable                             | Description                           |
+| ------------------------------------ | ------------------------------------- |
+| `CODING_AGENT_MODEL`                 | Model to use                          |
+| `CODING_AGENT_TEMPERATURE`           | Inference temperature                 |
+| `CODING_AGENT_MAX_TOKENS`            | Maximum tokens                        |
+| `CODING_AGENT_CONTEXT_SIZE`          | Context window size                   |
+| `CODING_AGENT_API_ENDPOINT`          | API endpoint URL                      |
+| `CODING_AGENT_API_KEY`               | API key for authentication            |
+| `CODING_AGENT_INITIAL_TOKEN_TIMEOUT` | Initial token timeout (seconds)       |
+| `CODING_AGENT_STREAMING`             | Enable/disable streaming (true/false) |
+| `CODING_AGENT_MAX_HISTORY`           | Maximum input history entries         |
 
 ## Tool Calling Format
 
@@ -153,36 +158,43 @@ All tool calls use a standardized JSON format:
 ### Examples
 
 **Bash command:**
+
 ```
 [TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
 ```
 
 **Read file:**
+
 ```
 [TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
 ```
 
 **Write file with multi-line content:**
+
 ```
 [TOOL:{"name":"write_file","parameters":{"path":"script.sh","content":"#!/bin/bash\necho hello"}}]
 ```
 
 **Read lines:**
+
 ```
 [TOOL:{"name":"read_lines","parameters":{"path":"file.txt","start":1,"end":10}}]
 ```
 
 **Insert lines:**
+
 ```
 [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"new line"}}]
 ```
 
 **Replace lines (by range):**
+
 ```
 [TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]
 ```
 
 **Replace lines (search-and-replace):**
+
 ```
 [TOOL:{"name":"replace_lines","parameters":{"path":"main.go","search":"oldName","replace":"newName"}}]
 ```
@@ -190,6 +202,7 @@ All tool calls use a standardized JSON format:
 ## Runtime Statistics
 
 The agent tracks and displays:
+
 - Input tokens processed
 - Output tokens generated
 - Tool calls (total and failed)
@@ -202,19 +215,23 @@ View statistics with the `stats` command in TUI mode.
 ## Configuration
 
 ### Context Size
+
 Default: 128000 tokens
 
 Can be configured via:
+
 - Environment variable: `CODING_AGENT_CONTEXT_SIZE`
 - Command-line flag: `--context-size`
 - Config file (future)
 
 ### Initial Token Timeout
+
 Default: 7200 seconds (2 hours)
 
 Minimum: 10 seconds
 
 Can be configured via:
+
 - Environment variable: `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`
 - Command-line flag: `--initial-token-timeout` (future)
 
@@ -276,20 +293,23 @@ This implementation covers all 25 requirements:
 ## Testing
 
 Run all tests:
+
 ```bash
 make test
 ```
 
 Run with coverage:
+
 ```bash
 make test-cover
 ```
 
 Run with race detector:
+
 ```bash
 make test-race
 ```
 
 ## License
 
-MIT License
+See LICENSE

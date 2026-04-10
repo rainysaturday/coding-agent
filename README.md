@@ -139,7 +139,7 @@ fi
 │   └── main.go        # Entry point
 ├── requirements/      # Requirement specifications
 ├── README.md          # This file
-└── LICENSE            # MIT License
+└── LICENSE
 ```
 
 ## Requirements
@@ -244,7 +244,7 @@ Error: maximum iterations (1000) exceeded
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 
 ## Contributing
 
