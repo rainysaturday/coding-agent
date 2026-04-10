@@ -252,6 +252,7 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 
 return &ToolResult{
 		Success: true,
+		Output:  fmt.Sprintf("File written successfully: %s (%d bytes)", path, len(content)),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"message":        fmt.Sprintf("File written successfully: %s", path),
@@ -433,6 +434,7 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 
 	return &ToolResult{
 		Success: true,
+		Output:  fmt.Sprintf("Inserted %d line(s) at line %d in: %s", len(newLines), insertLine, path),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"line":         insertLine,
@@ -541,6 +543,7 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 
 	return &ToolResult{
 		Success: true,
+		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"search":           searchText,
@@ -685,6 +688,7 @@ func (te *ToolExecutor) replaceLinesByNumber(path string, params map[string]inte
 
 	return &ToolResult{
 		Success: true,
+		Output:  fmt.Sprintf("Replaced lines %d-%d with %d line(s) in: %s", startLine, endLine, len(newLines), path),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"start":        startLine,
@@ -787,6 +791,7 @@ func (te *ToolExecutor) replaceLinesBySearch(path string, params map[string]inte
 
 	return &ToolResult{
 		Success: true,
+		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"search":           searchText,

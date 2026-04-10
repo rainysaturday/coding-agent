@@ -326,6 +326,52 @@ func TestExecuteWriteFile(t *testing.T) {
 	}
 }
 
+func TestExecuteWriteFileOutput(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	content := "Hello, World!"
+
+	params := map[string]interface{}{
+		"path":    testFile,
+		"content": content,
+	}
+
+	result := te.executeWriteFile(params)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify output contains useful information
+	if result.Output == "" {
+		t.Error("Expected output to contain success message")
+	}
+
+	if !strings.Contains(result.Output, "File written successfully") {
+		t.Errorf("Expected output to contain 'File written successfully', got: %s", result.Output)
+	}
+
+	if !strings.Contains(result.Output, testFile) {
+		t.Errorf("Expected output to contain file path %s, got: %s", testFile, result.Output)
+	}
+
+	if !strings.Contains(result.Output, "bytes") {
+		t.Errorf("Expected output to contain byte count, got: %s", result.Output)
+	}
+
+	// Verify file was actually written
+	writtenContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read written file: %v", err)
+	}
+
+	if string(writtenContent) != content {
+		t.Errorf("Expected content %q, got %q", content, string(writtenContent))
+	}
+}
+
 func TestExecuteReadLines(t *testing.T) {
 	te := NewToolExecutor()
 
@@ -557,6 +603,53 @@ func TestExecuteInsertLines(t *testing.T) {
 	}
 }
 
+func TestExecuteInsertLinesOutput(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	content := "line 1\nline 2\nline 3\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	params := map[string]interface{}{
+		"path": testFile,
+		"line": 2.0,
+		"lines": "inserted line",
+	}
+
+	result := te.executeInsertLines(params)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify output contains useful information
+	if result.Output == "" {
+		t.Error("Expected output to contain success message")
+	}
+
+	if !strings.Contains(result.Output, "Inserted") {
+		t.Errorf("Expected output to contain 'Inserted', got: %s", result.Output)
+	}
+
+	if !strings.Contains(result.Output, testFile) {
+		t.Errorf("Expected output to contain file path %s, got: %s", testFile, result.Output)
+	}
+
+	// Verify file was actually modified
+	writtenContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read written file: %v", err)
+	}
+
+	if !strings.Contains(string(writtenContent), "inserted line") {
+		t.Errorf("Expected content to contain 'inserted line', got: %s", string(writtenContent))
+	}
+}
+
 func TestExecuteReplaceLines(t *testing.T) {
 	te := NewToolExecutor()
 
@@ -681,6 +774,58 @@ func TestExecuteReplaceLines(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExecuteReplaceTextOutput(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	content := "Hello world! Hello again!\n"
+	err := os.WriteFile(testFile, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	params := map[string]interface{}{
+		"path":    testFile,
+		"search":  "Hello",
+		"replace": "Hi",
+		"count":   -1.0, // Replace all
+	}
+
+	result := te.executeReplaceText(params)
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify output contains useful information
+	if result.Output == "" {
+		t.Error("Expected output to contain success message")
+	}
+
+	if !strings.Contains(result.Output, "Replaced") {
+		t.Errorf("Expected output to contain 'Replaced', got: %s", result.Output)
+	}
+
+	if !strings.Contains(result.Output, testFile) {
+		t.Errorf("Expected output to contain file path %s, got: %s", testFile, result.Output)
+	}
+
+	// Verify file was actually modified
+	writtenContent, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read written file: %v", err)
+	}
+
+	if strings.Contains(string(writtenContent), "Hello") {
+		t.Errorf("Expected content to have all 'Hello' replaced, got: %s", string(writtenContent))
+	}
+
+	if !strings.Contains(string(writtenContent), "Hi") {
+		t.Errorf("Expected content to contain 'Hi', got: %s", string(writtenContent))
 	}
 }
 
