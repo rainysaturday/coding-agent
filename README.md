@@ -89,9 +89,9 @@ echo "List files in /tmp" | ./coding-agent --stdin
 
 ### Available Commands (Interactive Mode)
 
-- `stats` - Display runtime statistics
-- `clear` - Clear the output display
-- `clear-history` - Clear input history
+- `/stats` - Display runtime statistics
+- `/clear` - Clear the output display
+- `/clear-history` - Clear input history
 
 ## Usage Examples
 
@@ -126,9 +126,7 @@ else
 fi
 ```
 
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 /workspace/
@@ -143,6 +141,42 @@ fi
 ├── README.md          # This file
 └── LICENSE            # MIT License
 ```
+
+## Requirements
+
+Detailed specifications for all features are documented in the `requirements/` folder:
+
+- **001-go-runtime.md**: Go runtime requirements
+- **002-tui-input-prompt.md**: TUI with input prompt
+- **003-runtime-statistics.md**: Runtime statistics tracking
+- **004-bash-tool.md**: Bash tool implementation
+- **005-read-file-tool.md**: Read file tool
+- **006-write-file-tool.md**: Write file tool
+- **007-inference-backend.md**: Inference backend
+- **008-context-size.md**: Context size management
+- **009-context-compression.md**: Context compression
+- **010-streaming-inference.md**: Streaming inference
+- **011-read-lines-tool.md**: Read lines tool
+- **012-insert-lines-tool.md**: Insert lines tool
+- **013-replace-lines-tool.md**: Replace lines tool
+- **014-tool-calling-format.md**: Tool calling format
+- **015-tool-prefix-prompt.md**: Tool prefix prompt
+- **016-tool-result-context.md**: Tool result context
+- **017-tui-tool-feedback.md**: TUI tool feedback
+- **018-llm-error-feedback.md**: LLM error feedback
+- **019-tui-history-navigation.md**: TUI history navigation
+- **020-tui-ctrl-c-cancellation.md**: Ctrl+C cancellation
+- **021-tui-context-size-display.md**: Context size display
+- **022-no-user-input-echo.md**: No user input echo
+- **023-versioning.md**: Versioning
+- **024-zero-external-dependencies.md**: Zero external dependencies
+- **025-non-interactive-one-shot-mode.md**: One-shot mode
+- **026-configurable-max-iterations.md**: Configurable max iterations
+- **027-tui-reasoning-token-coloring.md**: Reasoning token coloring
+- **028-debug-flag.md**: Debug flag
+- **029-system-prompt-environment-info.md**: System prompt environment info
+
+## Development
 
 ### Building for Development
 
@@ -163,10 +197,12 @@ go vet ./...
 
 ### Adding New Tools
 
-1. Implement the tool in `implementation/tools/tools.go`
+See **004-bash.md** through **016-tool-result-context.md** for tool implementation patterns.
+
+1. Implement the tool in `implementation/tools/`
 2. Add the tool definition to `buildTools()` in `implementation/agent/agent.go`
 3. Add the tool description to `buildSystemPrompt()` in `implementation/agent/agent.go`
-4. Update this README with the new tool documentation
+4. Update the requirements documentation
 
 ### Adding Requirements
 
@@ -175,49 +211,9 @@ go vet ./...
 3. Include acceptance criteria with checkboxes
 4. Update the implementation accordingly
 
-### Configuration Options
+## Troubleshooting
 
-| Option | Flag | Env Variable | Default |
-|--------|------|--------------|---------|
-| Model | `--model` | `CODING_AGENT_MODEL` | `llama3` |
-| Temperature | `--temperature` | `CODING_AGENT_TEMPERATURE` | `0.7` |
-| Max Tokens | `--max-tokens` | `CODING_AGENT_MAX_TOKENS` | `4096` |
-| Context Size | `--context-size` | `CODING_AGENT_CONTEXT_SIZE` | `128000` |
-| Max Iterations | `--max-iterations` | `CODING_AGENT_MAX_ITERATIONS` | `1000` |
-| Streaming | `--no-stream` | `CODING_AGENT_STREAMING` | enabled |
-| API Endpoint | - | `CODING_AGENT_API_ENDPOINT` | `http://localhost:8080` |
-| API Key | - | `CODING_AGENT_API_KEY` | (none) |
-| Verbose | `--verbose` | `CODING_AGENT_VERBOSE` | disabled |
-| Quiet | `--quiet` | `CODING_AGENT_QUIET` | disabled |
-
-### Available Tools
-
-The agent supports the following tools:
-
-1. **bash** - Execute shell commands
-2. **read_file** - Read file contents
-3. **write_file** - Write content to files
-4. **read_lines** - Read specific line ranges
-5. **insert_lines** - Insert lines at position
-6. **replace_lines** - Replace lines by range
-7. **replace_text** - Find and replace text
-
-### Testing
-
-```bash
-# Run all tests
-go test -v ./...
-
-# Run with coverage
-go test -cover ./...
-
-# Run specific package tests
-go test -v ./agent
-```
-
-### Troubleshooting
-
-#### Connection Errors
+### Connection Errors
 
 ```
 Error: failed to make request: connection refused
@@ -227,7 +223,7 @@ Error: failed to make request: connection refused
 - Check the API endpoint configuration
 - Ensure the port is correct (default: 8080)
 
-#### Context Size Warnings
+### Context Size Warnings
 
 ```
 [Context: 100000 / 128000 (78.1%) ⚠]
@@ -236,7 +232,7 @@ Error: failed to make request: connection refused
 - Context compression will trigger automatically
 - Consider increasing `CODING_AGENT_CONTEXT_SIZE` for complex tasks
 
-#### Max Iterations Exceeded
+### Max Iterations Exceeded
 
 ```
 Error: maximum iterations (1000) exceeded
