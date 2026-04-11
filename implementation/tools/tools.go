@@ -124,9 +124,11 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeBash(tc.Parameters)
 	case "read_file":
 		result = te.executeReadFile(tc.Parameters)
-	case "write_file":
+case "write_file":
 		result = te.executeWriteFile(tc.Parameters)
-	case "read_lines":
+	case "patch":
+		result = te.executePatch(tc.Parameters)
+case "read_lines":
 		result = te.executeReadLines(tc.Parameters)
 	case "insert_lines":
 		result = te.executeInsertLines(tc.Parameters)
@@ -811,3 +813,158 @@ func formatFileError(err error, path string) string {
 	}
 	return fmt.Sprintf("file error: %v", err)
 }
+
+// executePatch applies a unified diff patch to a file.
+func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	diff, ok := params["diff"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: diff",
+		}
+	}
+
+// Validate path to prevent directory traversal
+	cleanPath := filepath.Clean(path)
+
+	// Check for directory traversal attempts that resolve to system directories
+	if strings.Contains(path, "..") {
+		// Block if clean path resolves to system directories
+		if filepath.IsAbs(cleanPath) && (strings.HasPrefix(cleanPath, "/etc") || strings.HasPrefix(cleanPath, "/root") || strings.HasPrefix(cleanPath, "/home") || cleanPath == "/") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+		// Block if clean path still has ".." components
+		if strings.HasPrefix(cleanPath, "..") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("file not found: %s", cleanPath),
+		}
+	}
+
+	// Validate diff format is not empty
+	if strings.TrimSpace(diff) == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "diff content cannot be empty",
+		}
+	}
+
+	// Validate basic diff structure
+	if !strings.Contains(diff, "@@") {
+		return &ToolResult{
+			Success: false,
+			Error:   "invalid diff format: missing hunk headers (@@)",
+		}
+	}
+
+	// Create a temporary file to store the diff
+	tmpFile, err := os.CreateTemp("", "patch-*.diff")
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create temporary file: %v", err),
+		}
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// Write diff to temporary file
+	if _, err := tmpFile.WriteString(diff); err != nil {
+		tmpFile.Close()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write diff to temporary file: %v", err),
+		}
+	}
+	tmpFile.Close()
+
+	// Get original file permissions
+	origInfo, err := os.Stat(cleanPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get file info: %v", err),
+		}
+	}
+	origPerm := origInfo.Mode()
+
+// Create a backup of the original file content for rollback
+	backupContent, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read original file: %v", err),
+		}
+	}
+
+// Apply the patch using the system patch command
+	cmd := exec.Command("patch", "--dry-run", "-o", os.DevNull, cleanPath, tmpFile.Name())
+	dryRunOutput, dryRunErr := cmd.CombinedOutput()
+
+	if dryRunErr != nil {
+		// Restore is not needed since dry-run doesn't modify
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("patch validation failed: %s\nDetails: %s", dryRunErr, string(dryRunOutput)),
+			Extra: map[string]interface{}{
+				"patches_applied": 0,
+			},
+		}
+	}
+
+	// Apply the patch for real (in-place modification)
+	cmd = exec.Command("patch", cleanPath, tmpFile.Name())
+	patchOutput, patchErr := cmd.CombinedOutput()
+
+	if patchErr != nil {
+		// Restore original file content
+		if err := os.WriteFile(cleanPath, backupContent, origPerm); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("patch failed and rollback also failed: %v\nPatch error: %s", err, string(patchOutput)),
+				Extra: map[string]interface{}{
+					"patches_applied": 0,
+				},
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("patch application failed: %s", string(patchOutput)),
+			Extra: map[string]interface{}{
+				"patches_applied": 0,
+			},
+		}
+	}
+
+	// Count number of hunks applied
+	hunkCount := strings.Count(diff, "@@")
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Applied %d hunk(s) to %s", hunkCount, cleanPath),
+		Path:    cleanPath,
+		Extra: map[string]interface{}{
+			"patches_applied": hunkCount,
+		},
+	}
+}
+

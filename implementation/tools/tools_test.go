@@ -639,7 +639,7 @@ func TestExecuteInsertLinesOutput(t *testing.T) {
 		t.Errorf("Expected output to contain file path %s, got: %s", testFile, result.Output)
 	}
 
-	// Verify file was actually modified
+// Verify file was actually modified
 	writtenContent, err := os.ReadFile(testFile)
 	if err != nil {
 		t.Fatalf("Failed to read written file: %v", err)
@@ -650,9 +650,144 @@ func TestExecuteInsertLinesOutput(t *testing.T) {
 	}
 }
 
-func TestExecuteReplaceLines(t *testing.T) {
+func TestExecutePatch(t *testing.T) {
 	te := NewToolExecutor()
 
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name          string
+		setupContent  string
+		diff          string
+		wantSuccess   bool
+		checkResult   func(string) bool
+	}{
+		{
+			name:         "simple single-line change",
+			setupContent: "package main\n\nfunc main() {\n    oldLine()\n}\n",
+			diff:         "--- a/test.go\n+++ b/test.go\n@@ -4,1 +4,1 @@\n-    oldLine()\n+    newLine()\n",
+			wantSuccess:  true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "newLine()") &&
+					!strings.Contains(string(content), "oldLine()")
+			},
+		},
+		{
+			name:         "add new line",
+			setupContent: "package main\n\nfunc main() {\n    fmt.Println(\"hello\")\n}\n",
+			diff:         "--- a/test.go\n+++ b/test.go\n@@ -4,1 +4,2 @@\n     fmt.Println(\"hello\")\n+    fmt.Println(\"world\")\n",
+			wantSuccess:  true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return strings.Contains(string(content), "fmt.Println(\"hello\")") &&
+					strings.Contains(string(content), "fmt.Println(\"world\")")
+			},
+		},
+		{
+			name:         "delete line",
+			setupContent: "package main\n\nfunc main() {\n    // comment\n    oldCode()\n}\n",
+			diff:         "--- a/test.go\n+++ b/test.go\n@@ -4,2 +4,1 @@\n-    // comment\n     oldCode()\n",
+			wantSuccess:  true,
+			checkResult: func(path string) bool {
+				content, _ := os.ReadFile(path)
+				return !strings.Contains(string(content), "// comment") &&
+					strings.Contains(string(content), "oldCode()")
+			},
+		},
+		{
+			name:         "file not found",
+			setupContent: "",
+			diff:         "--- a/nonexistent.go\n+++ b/nonexistent.go\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+			wantSuccess:  false,
+		},
+		{
+			name:         "empty diff",
+			setupContent: "content\n",
+			diff:         "",
+			wantSuccess:  false,
+		},
+		{
+			name:         "invalid diff format",
+			setupContent: "content\n",
+			diff:         "this is not a valid diff\n",
+			wantSuccess:  false,
+		},
+		{
+			name:         "context mismatch",
+			setupContent: "package main\n\nfunc main() {\n    actualCode()\n}\n",
+			diff:         "--- a/test.go\n+++ b/test.go\n@@ -4,1 +4,1 @@\n-    wrongCode()\n+    newCode()\n",
+			wantSuccess:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testFile := filepath.Join(tmpDir, "test.go")
+
+			// Setup file if content provided
+			if tt.setupContent != "" {
+				err := os.WriteFile(testFile, []byte(tt.setupContent), 0644)
+				if err != nil {
+					t.Fatalf("Failed to setup test file: %v", err)
+				}
+			}
+
+			params := map[string]interface{}{
+				"path": testFile,
+				"diff": tt.diff,
+			}
+
+			result := te.executePatch(params)
+
+			if result.Success != tt.wantSuccess {
+				t.Errorf("executePatch() success = %v, want %v, error = %s", result.Success, tt.wantSuccess, result.Error)
+			}
+
+			if tt.wantSuccess && tt.checkResult != nil {
+				if !tt.checkResult(testFile) {
+					content, _ := os.ReadFile(testFile)
+					t.Errorf("executePatch() result check failed: %s", string(content))
+				}
+			}
+
+			// Check for patches_applied in Extra on success
+			if tt.wantSuccess && result.Success {
+				if patchesApplied, ok := result.Extra["patches_applied"]; !ok {
+					t.Error("Expected patches_applied in Extra on success")
+				} else if patchesApplied.(int) < 1 {
+					t.Errorf("Expected at least 1 patch applied, got %d", patchesApplied)
+				}
+			}
+		})
+	}
+}
+
+func TestExecutePatchSecurity(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Test directory traversal prevention - use relative path with ..
+// Test directory traversal prevention - use relative path with ..
+	params := map[string]interface{}{
+		"path": "../../../etc/passwd",
+		"diff": "--- a/passwd\n+++ b/passwd\n@@ -1,1 +1,1 @@\n-old\n+hacked\n",
+	}
+
+	result := te.executePatch(params)
+
+	if result.Success {
+		t.Error("Expected directory traversal to be blocked")
+	}
+
+	if !strings.Contains(result.Error, "directory traversal") {
+		t.Errorf("Expected 'directory traversal' error, got: %s", result.Error)
+	}
+}
+
+
+
+func TestExecuteReplaceLines(t *testing.T) {
+	te := NewToolExecutor()
 	tmpDir := t.TempDir()
 
 	tests := []struct {
