@@ -549,12 +549,6 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			line = int(p)
 		}
 		msg = fmt.Sprintf("\n%s[Inserting] at line %d in: %s%s\n", ColorCyan, line, path, ColorReset)
-	case "replace_lines":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Replacing] in file: %s%s\n", ColorCyan, path, ColorReset)
 	case "replace_text":
 		path := ""
 		search := ""
@@ -633,14 +627,6 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				count = c
 			}
 			return fmt.Sprintf("%s[Success] inserted %d line(s)%s\n", ColorGreen, count, ColorReset)
-		case "replace_lines":
-			count := 0
-			if c, ok := result.Extra["replacementsMade"].(int); ok {
-				count = c
-			} else if c, ok := result.Extra["linesReplaced"].(int); ok {
-				count = c
-			}
-			return fmt.Sprintf("%s[Success] replaced %d line(s)%s\n", ColorGreen, count, ColorReset)
 		case "replace_text":
 			count := 0
 			if c, ok := result.Extra["replacementsMade"].(int); ok {
@@ -756,17 +742,7 @@ AVAILABLE TOOLS:
    Example use case: Adding imports, inserting new functions, adding comments
    Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
-6. replace_lines
-   Description: Replace a range of lines in a file by line numbers
-   Parameters:
-     - path (string, required): The path to the file
-     - start (integer, required): Starting line number (1-indexed)
-     - end (integer, required): Ending line number (1-indexed)
-     - lines (string, required): Replacement lines (use \n for newlines)
-   How to call: Use replace_lines when you know the exact line numbers to replace.
-   Example use case: Replacing lines 10-20 with new content, deleting a range of lines
-
-7. replace_text
+6. replace_text
    Description: Find and replace text in a file by searching for a pattern
    Parameters:
      - path (string, required): The path to the file
@@ -908,35 +884,6 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "line", "lines"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "replace_lines",
-				Description: "Replace content in a file by line numbers (replace lines in a specific range)",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "File path to modify",
-						},
-						"start": {
-							Type:        "integer",
-							Description: "Start line number (1-indexed)",
-						},
-						"end": {
-							Type:        "integer",
-							Description: "End line number (1-indexed)",
-						},
-						"lines": {
-							Type:        "string",
-							Description: "Replacement lines (use \\n for newlines)",
-						},
-					},
-					Required: []string{"path", "start", "end", "lines"},
 				},
 			},
 		},
