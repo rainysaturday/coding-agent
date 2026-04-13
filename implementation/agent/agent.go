@@ -246,6 +246,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				streamResult(tc.Name, result, a.streamCallback)
 				step.StreamMsg = formatToolStatus(tc.Name, result)
 
+				// Add step to the list
+				steps = append(steps, step)
+
 				// Add tool result to context
 				var resultMessage string
 				if result.Success {
