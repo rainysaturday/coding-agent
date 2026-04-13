@@ -125,7 +125,7 @@ func TestParseToolCalls(t *testing.T) {
 			want:    1,
 		},
 		{
-			name:    "multiple tool calls",
+			name: "multiple tool calls",
 			content: `[TOOL:{"name":"bash","parameters":{"command":"echo hello"}}]
 And also: [TOOL:{"name":"read_file","parameters":{"path":"test.txt"}}]`,
 			want: 2,
@@ -356,7 +356,7 @@ And also: [TOOL:{"name":"read_file","parameters":{"path":"test.txt"}}]`
 func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 	// Test realistic streaming format where arguments come in separate chunks
 	// This simulates what llama.cpp server sends
-	
+
 	type APIToolCall struct {
 		ID       string `json:"id"`
 		Type     string `json:"type"`
@@ -365,19 +365,19 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 			Arguments string `json:"arguments"`
 		} `json:"function"`
 	}
-	
+
 	type accumulatedToolCall struct {
 		ID        string
 		Type      string
 		Name      string
 		Arguments string
 	}
-	
+
 	// Simulate streaming chunks
 	type delta struct {
 		ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
 	}
-	
+
 	chunks := []delta{
 		{ToolCalls: []APIToolCall{{ID: "call_1", Function: struct {
 			Name      string `json:"name"`
@@ -392,9 +392,9 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 			Arguments string `json:"arguments"`
 		}{Arguments: ":\"ls -la\"}"}}}},
 	}
-	
+
 	var toolCallsList []*accumulatedToolCall
-	
+
 	for _, deltaTC := range chunks[0].ToolCalls {
 		targetIndex := len(toolCallsList)
 		for len(toolCallsList) <= targetIndex {
@@ -411,12 +411,12 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 			existing.Arguments += deltaTC.Function.Arguments
 		}
 	}
-	
+
 	// Process remaining chunks - they should merge with the last tool call
 	for _, chunk := range chunks[1:] {
 		for _, deltaTC := range chunk.ToolCalls {
 			targetIndex := -1
-			
+
 			// Try to find by ID
 			if deltaTC.ID != "" {
 				for i, tc := range toolCallsList {
@@ -426,22 +426,22 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 					}
 				}
 			}
-			
+
 			// If no ID and no name, merge with last tool call
 			if targetIndex == -1 && (deltaTC.ID == "" && deltaTC.Function.Name == "") && len(toolCallsList) > 0 {
 				if deltaTC.Function.Arguments != "" {
 					targetIndex = len(toolCallsList) - 1
 				}
 			}
-			
+
 			if targetIndex == -1 {
 				targetIndex = len(toolCallsList)
 			}
-			
+
 			for len(toolCallsList) <= targetIndex {
 				toolCallsList = append(toolCallsList, &accumulatedToolCall{})
 			}
-			
+
 			existing := toolCallsList[targetIndex]
 			if deltaTC.ID != "" {
 				existing.ID = deltaTC.ID
@@ -454,12 +454,12 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 			}
 		}
 	}
-	
+
 	// Verify the accumulated tool call
 	if len(toolCallsList) != 1 {
 		t.Fatalf("Expected 1 tool call, got %d", len(toolCallsList))
 	}
-	
+
 	tc := toolCallsList[0]
 	if tc.ID != "call_1" {
 		t.Errorf("Expected ID 'call_1', got '%s'", tc.ID)
@@ -470,13 +470,13 @@ func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 	if tc.Arguments != `{"command":"ls -la"}` {
 		t.Errorf("Expected arguments '{\"command\":\"ls -la\"}', got '%s'", tc.Arguments)
 	}
-	
+
 	// Verify parsing
 	var params map[string]interface{}
 	if err := json.Unmarshal([]byte(tc.Arguments), &params); err != nil {
 		t.Fatalf("Failed to parse arguments: %v", err)
 	}
-	
+
 	cmd, ok := params["command"].(string)
 	if !ok {
 		t.Fatal("Expected command parameter to be string")

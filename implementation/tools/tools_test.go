@@ -54,9 +54,9 @@ func TestParseToolCall(t *testing.T) {
 			want: &ToolCall{
 				Name: "read_lines",
 				Parameters: map[string]interface{}{
-					"path": "file.txt",
+					"path":  "file.txt",
 					"start": 1.0,
-					"end": 10.0,
+					"end":   10.0,
 				},
 			},
 			wantErr: false,
@@ -67,8 +67,8 @@ func TestParseToolCall(t *testing.T) {
 			want: &ToolCall{
 				Name: "insert_lines",
 				Parameters: map[string]interface{}{
-					"path": "file.txt",
-					"line": 5.0,
+					"path":  "file.txt",
+					"line":  5.0,
 					"lines": "new line",
 				},
 			},
@@ -80,9 +80,9 @@ func TestParseToolCall(t *testing.T) {
 			want: &ToolCall{
 				Name: "replace_lines",
 				Parameters: map[string]interface{}{
-					"path": "file.txt",
+					"path":  "file.txt",
 					"start": 1.0,
-					"end": 5.0,
+					"end":   5.0,
 					"lines": "replacement",
 				},
 			},
@@ -139,8 +139,8 @@ func TestExecuteBash(t *testing.T) {
 	te := NewToolExecutor()
 
 	tests := []struct {
-		name       string
-		command    string
+		name        string
+		command     string
 		wantSuccess bool
 		checkOutput func(string) bool
 	}{
@@ -384,8 +384,8 @@ func TestExecuteReadLines(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		params     map[string]interface{}
+		name        string
+		params      map[string]interface{}
 		wantSuccess bool
 		checkOutput func(string) bool
 	}{
@@ -452,8 +452,8 @@ func TestExecuteReadLines(t *testing.T) {
 		{
 			name: "missing start",
 			params: map[string]interface{}{
-				"path":  testFile,
-				"end":   3.0,
+				"path": testFile,
+				"end":  3.0,
 			},
 			wantSuccess: false,
 		},
@@ -488,20 +488,20 @@ func TestExecuteInsertLines(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name       string
-		setupFile  string
+		name         string
+		setupFile    string
 		setupContent string
-		params     map[string]interface{}
-		wantSuccess bool
-		checkResult func(string) bool
+		params       map[string]interface{}
+		wantSuccess  bool
+		checkResult  func(string) bool
 	}{
 		{
-			name: "insert at beginning",
-			setupFile: filepath.Join(tmpDir, "insert1.txt"),
+			name:         "insert at beginning",
+			setupFile:    filepath.Join(tmpDir, "insert1.txt"),
 			setupContent: "original line 1\noriginal line 2\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "insert1.txt"),
-				"line": 1.0,
+				"path":  filepath.Join(tmpDir, "insert1.txt"),
+				"line":  1.0,
 				"lines": "new header",
 			},
 			wantSuccess: true,
@@ -511,12 +511,12 @@ func TestExecuteInsertLines(t *testing.T) {
 			},
 		},
 		{
-			name: "insert in middle",
-			setupFile: filepath.Join(tmpDir, "insert2.txt"),
+			name:         "insert in middle",
+			setupFile:    filepath.Join(tmpDir, "insert2.txt"),
 			setupContent: "line 1\nline 2\nline 3\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "insert2.txt"),
-				"line": 2.0,
+				"path":  filepath.Join(tmpDir, "insert2.txt"),
+				"line":  2.0,
 				"lines": "inserted line",
 			},
 			wantSuccess: true,
@@ -528,12 +528,12 @@ func TestExecuteInsertLines(t *testing.T) {
 			},
 		},
 		{
-			name: "insert multi-line",
-			setupFile: filepath.Join(tmpDir, "insert3.txt"),
+			name:         "insert multi-line",
+			setupFile:    filepath.Join(tmpDir, "insert3.txt"),
 			setupContent: "before\nafter\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "insert3.txt"),
-				"line": 2.0,
+				"path":  filepath.Join(tmpDir, "insert3.txt"),
+				"line":  2.0,
 				"lines": "new1\nnew2\nnew3",
 			},
 			wantSuccess: true,
@@ -545,12 +545,12 @@ func TestExecuteInsertLines(t *testing.T) {
 			},
 		},
 		{
-			name: "insert at end",
-			setupFile: filepath.Join(tmpDir, "insert4.txt"),
+			name:         "insert at end",
+			setupFile:    filepath.Join(tmpDir, "insert4.txt"),
 			setupContent: "existing\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "insert4.txt"),
-				"line": 9999.0,
+				"path":  filepath.Join(tmpDir, "insert4.txt"),
+				"line":  9999.0,
 				"lines": "appended",
 			},
 			wantSuccess: true,
@@ -560,12 +560,12 @@ func TestExecuteInsertLines(t *testing.T) {
 			},
 		},
 		{
-			name: "create new file",
-			setupFile: "",
+			name:         "create new file",
+			setupFile:    "",
 			setupContent: "",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "newfile.txt"),
-				"line": 1.0,
+				"path":  filepath.Join(tmpDir, "newfile.txt"),
+				"line":  1.0,
 				"lines": "first line",
 			},
 			wantSuccess: true,
@@ -615,8 +615,8 @@ func TestExecuteInsertLinesOutput(t *testing.T) {
 	}
 
 	params := map[string]interface{}{
-		"path": testFile,
-		"line": 2.0,
+		"path":  testFile,
+		"line":  2.0,
 		"lines": "inserted line",
 	}
 
@@ -639,7 +639,7 @@ func TestExecuteInsertLinesOutput(t *testing.T) {
 		t.Errorf("Expected output to contain file path %s, got: %s", testFile, result.Output)
 	}
 
-// Verify file was actually modified
+	// Verify file was actually modified
 	writtenContent, err := os.ReadFile(testFile)
 	if err != nil {
 		t.Fatalf("Failed to read written file: %v", err)
@@ -656,11 +656,11 @@ func TestExecutePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name          string
-		setupContent  string
-		diff          string
-		wantSuccess   bool
-		checkResult   func(string) bool
+		name         string
+		setupContent string
+		diff         string
+		wantSuccess  bool
+		checkResult  func(string) bool
 	}{
 		{
 			name:         "simple single-line change",
@@ -767,7 +767,7 @@ func TestExecutePatchSecurity(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Test directory traversal prevention - use relative path with ..
-// Test directory traversal prevention - use relative path with ..
+	// Test directory traversal prevention - use relative path with ..
 	params := map[string]interface{}{
 		"path": "../../../etc/passwd",
 		"diff": "--- a/passwd\n+++ b/passwd\n@@ -1,1 +1,1 @@\n-old\n+hacked\n",
@@ -783,8 +783,6 @@ func TestExecutePatchSecurity(t *testing.T) {
 		t.Errorf("Expected 'directory traversal' error, got: %s", result.Error)
 	}
 }
-
-
 
 func TestExecuteReplaceLines(t *testing.T) {
 	te := NewToolExecutor()
@@ -803,7 +801,7 @@ func TestExecuteReplaceLines(t *testing.T) {
 			mode:         "line-number",
 			setupContent: "line 1\nline 2\nline 3\nline 4\nline 5\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "replace1.txt"),
+				"path":  filepath.Join(tmpDir, "replace1.txt"),
 				"start": 2.0,
 				"end":   3.0,
 				"lines": "replacement 1\nreplacement 2",
@@ -822,7 +820,7 @@ func TestExecuteReplaceLines(t *testing.T) {
 			mode:         "line-number",
 			setupContent: "old content\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "replace2.txt"),
+				"path":  filepath.Join(tmpDir, "replace2.txt"),
 				"start": 1.0,
 				"end":   999.0,
 				"lines": "new complete content",
@@ -838,8 +836,8 @@ func TestExecuteReplaceLines(t *testing.T) {
 			mode:         "search",
 			setupContent: "func oldName() {\n    return \"old\"\n}\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "replace3.txt"),
-				"search": "oldName",
+				"path":    filepath.Join(tmpDir, "replace3.txt"),
+				"search":  "oldName",
 				"replace": "newName",
 			},
 			wantSuccess: true,
@@ -854,10 +852,10 @@ func TestExecuteReplaceLines(t *testing.T) {
 			mode:         "search",
 			setupContent: "TODO: fix this\nTODO: fix that\nTODO: fix another\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "replace4.txt"),
-				"search": "TODO",
+				"path":    filepath.Join(tmpDir, "replace4.txt"),
+				"search":  "TODO",
 				"replace": "IMPLEMENTED",
-				"count": 2.0,
+				"count":   2.0,
 			},
 			wantSuccess: true,
 			checkResult: func(path string) bool {
@@ -871,8 +869,8 @@ func TestExecuteReplaceLines(t *testing.T) {
 			mode:         "search",
 			setupContent: "some content\n",
 			params: map[string]interface{}{
-				"path": filepath.Join(tmpDir, "replace5.txt"),
-				"search": "notfound",
+				"path":    filepath.Join(tmpDir, "replace5.txt"),
+				"search":  "notfound",
 				"replace": "replacement",
 			},
 			wantSuccess: false,
@@ -970,7 +968,7 @@ func TestToolExecutorStats(t *testing.T) {
 	// Make some tool calls
 	// Bash commands should succeed in most environments
 	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "echo test"}})
-	
+
 	// Unknown tool should always fail
 	te.Execute(&ToolCall{Name: "unknown_tool", Parameters: map[string]interface{}{}})
 

@@ -11,28 +11,28 @@ import (
 // Config holds all configuration for the agent.
 type Config struct {
 	// Mode
-	Prompt       string
-	PromptFile   string
-	UseStdin     bool
-	ShowHelp     bool
-	ShowVersion  bool
-	ConfigFile   string
+	Prompt      string
+	PromptFile  string
+	UseStdin    bool
+	ShowHelp    bool
+	ShowVersion bool
+	ConfigFile  string
 
 	// Inference settings
-	Model        string
-	Temperature  float64
-	MaxTokens    int
-	ContextSize  int
-	Streaming    bool
+	Model       string
+	Temperature float64
+	MaxTokens   int
+	ContextSize int
+	Streaming   bool
 
 	// API settings
-	APIEndpoint  string
-	APIKey       string
+	APIEndpoint string
+	APIKey      string
 
 	// Output settings
-	Verbose      bool
-	Quiet        bool
-	OutputFile   string
+	Verbose    bool
+	Quiet      bool
+	OutputFile string
 
 	// Timeout settings (in seconds)
 	InitialTokenTimeout int
@@ -40,11 +40,11 @@ type Config struct {
 	ReadTimeout         int
 
 	// Agent settings
-	MaxIterations     int
+	MaxIterations int
 
 	// Debug settings
-	Debug        bool
-	DebugLog     string
+	Debug    bool
+	DebugLog string
 }
 
 // DefaultConfig returns a config with default values.
@@ -55,11 +55,11 @@ func DefaultConfig() *Config {
 		MaxTokens:           4096,
 		ContextSize:         128000,
 		Streaming:           true,
-		InitialTokenTimeout: 7200, // 2 hours default
-		ConnectionTimeout:   7200, // 2 hours default
-		ReadTimeout:         7200, // 2 hours default
+		InitialTokenTimeout: 7200,                    // 2 hours default
+		ConnectionTimeout:   7200,                    // 2 hours default
+		ReadTimeout:         7200,                    // 2 hours default
 		APIEndpoint:         "http://localhost:8080", // llama.cpp default
-		MaxIterations:       1000, // Default max iterations for loop protection
+		MaxIterations:       1000,                    // Default max iterations for loop protection
 		Debug:               false,
 		DebugLog:            "debug.log",
 	}

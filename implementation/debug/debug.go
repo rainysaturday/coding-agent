@@ -12,26 +12,26 @@ import (
 
 // SessionSummary represents a summary of a debug session.
 type SessionSummary struct {
-	SessionID        string    `json:"session_id"`
-	StartTime        time.Time `json:"start_time"`
-	EndTime          time.Time `json:"end_time"`
-	TotalMessages    int       `json:"total_messages"`
-	TotalInputTokens int       `json:"total_input_tokens"`
-	TotalOutputTokens int      `json:"total_output_tokens"`
-	TotalToolCalls   int       `json:"total_tool_calls"`
-	FailedToolCalls  int       `json:"failed_tool_calls"`
-	DurationSeconds  float64   `json:"duration_seconds"`
-	Version          string    `json:"version"`
+	SessionID         string    `json:"session_id"`
+	StartTime         time.Time `json:"start_time"`
+	EndTime           time.Time `json:"end_time"`
+	TotalMessages     int       `json:"total_messages"`
+	TotalInputTokens  int       `json:"total_input_tokens"`
+	TotalOutputTokens int       `json:"total_output_tokens"`
+	TotalToolCalls    int       `json:"total_tool_calls"`
+	FailedToolCalls   int       `json:"failed_tool_calls"`
+	DurationSeconds   float64   `json:"duration_seconds"`
+	Version           string    `json:"version"`
 }
 
 // DebugLogger handles debug logging for the coding agent.
 type DebugLogger struct {
-	filePath   string
-	file       *os.File
-	enabled    bool
-	mu         sync.Mutex
-	session    *SessionSummary
-	version    string
+	filePath string
+	file     *os.File
+	enabled  bool
+	mu       sync.Mutex
+	session  *SessionSummary
+	version  string
 }
 
 // NewDebugLogger creates a new debug logger.
@@ -56,14 +56,14 @@ func NewDebugLogger(filePath string, version string) (*DebugLogger, error) {
 		enabled:  true,
 		version:  version,
 		session: &SessionSummary{
-			SessionID:   fmt.Sprintf("sess_%d", now.UnixNano()),
-			StartTime:   now,
-			TotalMessages: 0,
-			TotalInputTokens: 0,
+			SessionID:         fmt.Sprintf("sess_%d", now.UnixNano()),
+			StartTime:         now,
+			TotalMessages:     0,
+			TotalInputTokens:  0,
 			TotalOutputTokens: 0,
-			TotalToolCalls: 0,
-			FailedToolCalls: 0,
-			Version:     version,
+			TotalToolCalls:    0,
+			FailedToolCalls:   0,
+			Version:           version,
 		},
 	}
 
@@ -259,7 +259,7 @@ func (d *DebugLogger) Close() error {
 func redactSensitiveData(content string) string {
 	// Redact API keys (various patterns)
 	patterns := []struct {
-		pattern string
+		pattern     string
 		replacement string
 	}{
 		// API key patterns with is/are/was/were

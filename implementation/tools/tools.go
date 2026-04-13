@@ -25,10 +25,10 @@ type ToolResult struct {
 // ToolCall represents a tool call parsed from the LLM response (OpenAI format compatible).
 // Supports both legacy format (name/parameters) and OpenAI format (function/arguments).
 type ToolCall struct {
-	ID         string                 `json:"id,omitempty"`  // OpenAI tool call ID
+	ID         string                 `json:"id,omitempty"` // OpenAI tool call ID
 	Name       string                 `json:"name"`
 	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	Arguments  string                 `json:"arguments,omitempty"`  // OpenAI: raw JSON string of arguments
+	Arguments  string                 `json:"arguments,omitempty"` // OpenAI: raw JSON string of arguments
 	Raw        string                 `json:"-"`
 }
 
@@ -39,8 +39,8 @@ type ToolExecutor struct {
 
 // Stats holds tool execution statistics.
 type Stats struct {
-	TotalCalls    int `json:"total_calls"`
-	FailedCalls   int `json:"failed_calls"`
+	TotalCalls  int `json:"total_calls"`
+	FailedCalls int `json:"failed_calls"`
 }
 
 // NewToolExecutor creates a new tool executor.
@@ -124,11 +124,11 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeBash(tc.Parameters)
 	case "read_file":
 		result = te.executeReadFile(tc.Parameters)
-case "write_file":
+	case "write_file":
 		result = te.executeWriteFile(tc.Parameters)
 	case "patch":
 		result = te.executePatch(tc.Parameters)
-case "read_lines":
+	case "read_lines":
 		result = te.executeReadLines(tc.Parameters)
 	case "insert_lines":
 		result = te.executeInsertLines(tc.Parameters)
@@ -205,12 +205,12 @@ func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResu
 		}
 	}
 
-return &ToolResult{
+	return &ToolResult{
 		Success: true,
 		Output:  string(content),
 		Path:    path,
 		Extra: map[string]interface{}{
-			"linesRead":   len(strings.Split(string(content), "\n")),
+			"linesRead":     len(strings.Split(string(content), "\n")),
 			"contentLength": len(content),
 		},
 	}
@@ -252,13 +252,13 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 		}
 	}
 
-return &ToolResult{
+	return &ToolResult{
 		Success: true,
 		Output:  fmt.Sprintf("File written successfully: %s (%d bytes)", path, len(content)),
 		Path:    path,
 		Extra: map[string]interface{}{
-			"message":        fmt.Sprintf("File written successfully: %s", path),
-			"contentLength":  len(content),
+			"message":       fmt.Sprintf("File written successfully: %s", path),
+			"contentLength": len(content),
 		},
 	}
 }
@@ -323,8 +323,8 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 			Success: true,
 			Output:  "",
 			Extra: map[string]interface{}{
-				"start":  startLine,
-				"end":    endLine,
+				"start":   startLine,
+				"end":     endLine,
 				"message": "start line beyond file length",
 			},
 		}
@@ -439,7 +439,7 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 		Output:  fmt.Sprintf("Inserted %d line(s) at line %d in: %s", len(newLines), insertLine, path),
 		Path:    path,
 		Extra: map[string]interface{}{
-			"line":         insertLine,
+			"line":          insertLine,
 			"linesInserted": len(newLines),
 		},
 	}
@@ -693,8 +693,8 @@ func (te *ToolExecutor) replaceLinesByNumber(path string, params map[string]inte
 		Output:  fmt.Sprintf("Replaced lines %d-%d with %d line(s) in: %s", startLine, endLine, len(newLines), path),
 		Path:    path,
 		Extra: map[string]interface{}{
-			"start":        startLine,
-			"end":          endLine,
+			"start":         startLine,
+			"end":           endLine,
 			"linesReplaced": endLine - startLine + 1,
 			"linesInserted": len(newLines),
 		},
@@ -832,7 +832,7 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		}
 	}
 
-// Validate path to prevent directory traversal
+	// Validate path to prevent directory traversal
 	cleanPath := filepath.Clean(path)
 
 	// Check for directory traversal attempts that resolve to system directories
@@ -907,7 +907,7 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 	}
 	origPerm := origInfo.Mode()
 
-// Create a backup of the original file content for rollback
+	// Create a backup of the original file content for rollback
 	backupContent, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return &ToolResult{
@@ -916,7 +916,7 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		}
 	}
 
-// Apply the patch using the system patch command
+	// Apply the patch using the system patch command
 	cmd := exec.Command("patch", "--dry-run", "-o", os.DevNull, cleanPath, tmpFile.Name())
 	dryRunOutput, dryRunErr := cmd.CombinedOutput()
 
@@ -967,4 +967,3 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		},
 	}
 }
-

@@ -25,38 +25,38 @@ type ContextSizeCallback func(size, max int)
 
 // Agent represents the coding agent.
 type Agent struct {
-	config             *config.Config
-	inference          *inference.InferenceClient
-	toolExecutor       *tools.ToolExecutor
-	context            []*inference.Message
-	systemPrompt       string
-	stats              *Stats
-	maxIterations      int
-	streamCallback     StreamCallback
+	config              *config.Config
+	inference           *inference.InferenceClient
+	toolExecutor        *tools.ToolExecutor
+	context             []*inference.Message
+	systemPrompt        string
+	stats               *Stats
+	maxIterations       int
+	streamCallback      StreamCallback
 	contextSizeCallback ContextSizeCallback
-	maxContextSize     int
-	compressionCount   int
-	debugLogger        *debug.DebugLogger
-	mu                 sync.Mutex
+	maxContextSize      int
+	compressionCount    int
+	debugLogger         *debug.DebugLogger
+	mu                  sync.Mutex
 }
 
 // Stats represents agent statistics.
 type Stats struct {
-	InputTokens      int       `json:"input_tokens"`
-	OutputTokens     int       `json:"output_tokens"`
-	ToolCalls        int       `json:"tool_calls"`
-	FailedToolCalls  int       `json:"failed_tool_calls"`
-	Iterations       int       `json:"iterations"`
-	StartTime        time.Time `json:"start_time"`
-	TokensPerSecond  float64   `json:"tokens_per_second"`
+	InputTokens     int       `json:"input_tokens"`
+	OutputTokens    int       `json:"output_tokens"`
+	ToolCalls       int       `json:"tool_calls"`
+	FailedToolCalls int       `json:"failed_tool_calls"`
+	Iterations      int       `json:"iterations"`
+	StartTime       time.Time `json:"start_time"`
+	TokensPerSecond float64   `json:"tokens_per_second"`
 }
 
 // Step represents an execution step.
 type Step struct {
-	Action      string
-	ToolCall    *tools.ToolCall
-	ToolResult  *tools.ToolResult
-	StreamMsg   string // Status message streamed to user
+	Action     string
+	ToolCall   *tools.ToolCall
+	ToolResult *tools.ToolResult
+	StreamMsg  string // Status message streamed to user
 }
 
 // Result represents the final result of an agent run.
@@ -212,7 +212,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			if response.Content != "" {
 				a.debugLogger.LogAssistantMessage(response.Content, response.TokenUsage/2)
 			}
-			
+
 			// Log tool calls
 			for _, tc := range response.ToolCalls {
 				a.debugLogger.LogToolCall(tc.ID, tc.Name, tc.Parameters)
@@ -321,11 +321,11 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 		a.reportContextSize(contextSizeCallback, maxContextSize)
 		return resp, err
 	}
-	
+
 	resp, err := a.inference.InferenceRequest(ctx, messages, systemPrompt)
 	// Report context size after non-streaming response
 	a.reportContextSize(contextSizeCallback, maxContextSize)
-	
+
 	return resp, err
 }
 
@@ -412,12 +412,12 @@ func (a *Agent) GetContextSize() int {
 func (a *Agent) shouldCompress() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	
+
 	total := 0
 	for _, msg := range a.context {
 		total += inference.EstimateTokens(msg.Content)
 	}
-	
+
 	// Compress when context exceeds 80% of max
 	return total > int(float64(a.maxContextSize)*0.8)
 }
@@ -429,14 +429,14 @@ func (a *Agent) compressContext(ctx context.Context) error {
 		a.mu.Unlock()
 		return nil // Nothing to compress
 	}
-	
+
 	// Keep system prompt and last few messages
 	preserveCount := 3
 	if len(a.context) <= preserveCount {
 		a.mu.Unlock()
 		return nil
 	}
-	
+
 	messages := make([]*inference.Message, len(a.context))
 	copy(messages, a.context)
 	systemPrompt := a.systemPrompt
@@ -444,7 +444,7 @@ func (a *Agent) compressContext(ctx context.Context) error {
 
 	// Create summary request - summarize all but system prompt and last messages
 	summaryMessages := messages[1 : len(messages)-preserveCount] // Skip system prompt, keep last messages
-	
+
 	// Build summary prompt
 	summaryReq := fmt.Sprintf("Summarize the following conversation history concisely, preserving key information, decisions, and results:\n\n")
 	for _, msg := range summaryMessages {
@@ -479,7 +479,7 @@ func formatResult(result *tools.ToolResult) string {
 			return msg
 		}
 	}
-	
+
 	// Truncate output if too long (max 10 lines)
 	output := result.Output
 	lines := strings.Split(output, "\n")
@@ -571,7 +571,7 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
-	
+
 	if callback != nil {
 		callback(msg)
 	} else {
@@ -607,7 +607,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				exitCode = fmt.Sprintf(" (exit code: %d)", result.ExitCode)
 			}
 			return fmt.Sprintf("%s[Success] bash completed%s\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
-	case "read_file":
+		case "read_file":
 			output := result.Output
 			lines := strings.Split(output, "\n")
 			if len(lines) > 10 {
@@ -622,7 +622,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				}
 			}
 			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
-case "write_file":
+		case "write_file":
 			if msg, ok := result.Extra["message"].(string); ok {
 				return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, msg, ColorReset)
 			}

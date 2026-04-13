@@ -15,6 +15,7 @@ import (
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/tools"
 )
+
 // StreamingCallback is a function type for handling streaming chunks.
 type StreamingCallback func(chunk string)
 
@@ -37,18 +38,18 @@ type StreamingCallbackWithType func(chunk StreamingChunk)
 
 // InferenceClient handles communication with the LLM backend.
 type InferenceClient struct {
-	endpoint       string
-	apiKey         string
-	model          string
-	temperature    float64
-	maxTokens      int
-	contextSize    int
-	streaming      bool
-	timeout        time.Duration
-	client         *http.Client
-	maxRetries     int
-	retryDelay     time.Duration
-	tools          []ToolDefinition
+	endpoint    string
+	apiKey      string
+	model       string
+	temperature float64
+	maxTokens   int
+	contextSize int
+	streaming   bool
+	timeout     time.Duration
+	client      *http.Client
+	maxRetries  int
+	retryDelay  time.Duration
+	tools       []ToolDefinition
 }
 
 // Message represents a chat message.
@@ -59,21 +60,21 @@ type Message struct {
 
 // ToolDefinition represents a tool definition for the LLM (OpenAI format).
 type ToolDefinition struct {
-	Type     string              `json:"type"`
-	Function FunctionDefinition  `json:"function"`
+	Type     string             `json:"type"`
+	Function FunctionDefinition `json:"function"`
 }
 
 // FunctionDefinition defines a function tool (OpenAI format).
 type FunctionDefinition struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	Parameters  ParameterSchema  `json:"parameters"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  ParameterSchema `json:"parameters"`
 }
 
 // ParameterSchema defines the schema for tool parameters (OpenAI format).
 type ParameterSchema struct {
-	Type       string            `json:"type"`
-	Required   []string          `json:"required,omitempty"`
+	Type       string              `json:"type"`
+	Required   []string            `json:"required,omitempty"`
 	Properties map[string]Property `json:"properties"`
 }
 
@@ -85,9 +86,9 @@ type Property struct {
 
 // ToolCall represents a tool call from the OpenAI API response.
 type APIToolCall struct {
-	ID       string           `json:"id"`
-	Type     string           `json:"type"`
-	Function FunctionCall     `json:"function"`
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function FunctionCall `json:"function"`
 }
 
 // FunctionCall represents the function part of a tool call.
@@ -98,11 +99,11 @@ type FunctionCall struct {
 
 // Response represents an inference response.
 type Response struct {
-	Content     string
-	ToolCalls   []*tools.ToolCall  // Parsed tool calls compatible with tool executor
+	Content      string
+	ToolCalls    []*tools.ToolCall // Parsed tool calls compatible with tool executor
 	APIToolCalls []*APIToolCall    // Raw tool calls from API for reference
-	TokenUsage  int
-	StreamUsage int
+	TokenUsage   int
+	StreamUsage  int
 }
 
 // NewInferenceClient creates a new inference client.
@@ -111,7 +112,7 @@ func NewInferenceClient(cfg *config.Config) *InferenceClient {
 	if cfg.ReadTimeout > 0 {
 		totalTimeout = time.Duration(cfg.ReadTimeout) * time.Second
 	}
-	
+
 	return &InferenceClient{
 		endpoint:    cfg.APIEndpoint,
 		apiKey:      cfg.APIKey,
@@ -169,7 +170,7 @@ func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, mes
 		Temperature: ic.temperature,
 		MaxTokens:   ic.maxTokens,
 	}
-	
+
 	// Add tools if registered
 	if len(ic.tools) > 0 {
 		reqBody.Tools = ic.tools
@@ -259,9 +260,9 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	var respBody struct {
 		Choices []struct {
 			Message struct {
-				Role      string          `json:"role"`
-				Content   string          `json:"content"`
-				ToolCalls []APIToolCall   `json:"tool_calls,omitempty"`
+				Role      string        `json:"role"`
+				Content   string        `json:"content"`
+				ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -294,7 +295,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		// Convert API tool calls to internal tool calls
 		for _, apiTC := range message.ToolCalls {
 			apiToolCalls = append(apiToolCalls, &apiTC)
-			
+
 			// Parse the arguments JSON string
 			var params map[string]interface{}
 			if apiTC.Function.Arguments != "" {
@@ -339,7 +340,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
-	
+
 	// Use a slice to accumulate tool calls in order
 	// Each entry accumulates partial data from streaming deltas
 	type accumulatedToolCall struct {
@@ -372,9 +373,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content          string          `json:"content"`
-					ReasoningContent string          `json:"reasoning_content"`
-					ToolCalls        []APIToolCall   `json:"tool_calls,omitempty"`
+					Content          string        `json:"content"`
+					ReasoningContent string        `json:"reasoning_content"`
+					ToolCalls        []APIToolCall `json:"tool_calls,omitempty"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -413,9 +414,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					// Determine which tool call this delta belongs to
 					// If the tool call has an ID, look for an existing one with that ID
 					// If no ID or not found, check if we should merge with the last tool call
-					
+
 					targetIndex := -1
-					
+
 					// First, try to find by ID
 					if deltaTC.ID != "" {
 						for i, tc := range toolCallsList {
@@ -425,7 +426,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 							}
 						}
 					}
-					
+
 					// If not found by ID and this chunk has no ID or no name,
 					// it might be a continuation of the last tool call
 					if targetIndex == -1 && (deltaTC.ID == "" && deltaTC.Function.Name == "") && len(toolCallsList) > 0 {
@@ -434,19 +435,19 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 							targetIndex = len(toolCallsList) - 1
 						}
 					}
-					
+
 					if targetIndex == -1 {
 						// New tool call - create a new entry at the next index
 						targetIndex = len(toolCallsList)
 					}
-					
+
 					// Ensure the slice is large enough
 					for len(toolCallsList) <= targetIndex {
 						toolCallsList = append(toolCallsList, &accumulatedToolCall{})
 					}
-					
+
 					existing := toolCallsList[targetIndex]
-					
+
 					// Merge with existing tool call - accumulate fields
 					// ID
 					if deltaTC.ID != "" {
@@ -464,7 +465,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					if deltaTC.Type != "" {
 						existing.Type = deltaTC.Type
 					}
-					
+
 					// Notify about new tool call if callback is available
 					// Only notify once per tool call (when we first see the name)
 					if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
@@ -501,14 +502,14 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	// Convert accumulated API tool calls to internal format
 	var apiToolCalls []*APIToolCall
 	var toolCalls []*tools.ToolCall
-	
+
 	// Process tool calls in order
 	for _, accTC := range toolCallsList {
 		// Skip empty tool calls (those that were only created for merging)
 		if accTC.Name == "" && accTC.Arguments == "" {
 			continue
 		}
-		
+
 		// Create API tool call for reference
 		apiTC := &APIToolCall{
 			ID:   accTC.ID,
@@ -519,7 +520,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			},
 		}
 		apiToolCalls = append(apiToolCalls, apiTC)
-		
+
 		// Parse the accumulated arguments JSON string
 		var params map[string]interface{}
 		if accTC.Arguments != "" {
@@ -531,7 +532,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				}
 			}
 		}
-		
+
 		toolCall := &tools.ToolCall{
 			ID:         accTC.ID,
 			Name:       accTC.Name,
