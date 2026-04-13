@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+"strings"
 	"time"
 
 	"github.com/coding-agent/harness/config"
@@ -104,6 +104,8 @@ type Response struct {
 	APIToolCalls []*APIToolCall    // Raw tool calls from API for reference
 	TokenUsage   int
 	StreamUsage  int
+	InputTokens  int // Prompt tokens from API (actual input to LLM)
+	OutputTokens int // Completion tokens from API (actual output from LLM)
 }
 
 // NewInferenceClient creates a new inference client.
@@ -332,6 +334,8 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		ToolCalls:    toolCalls,
 		APIToolCalls: apiToolCalls,
 		TokenUsage:   tokenUsage,
+		InputTokens:  respBody.Usage.PromptTokens,
+		OutputTokens: respBody.Usage.CompletionTokens,
 	}, nil
 }
 
@@ -340,6 +344,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
+	var inputTokens int
+	var outputTokens int
 
 	// Use a slice to accumulate tool calls in order
 	// Each entry accumulates partial data from streaming deltas
@@ -483,9 +489,11 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				callback(chunkText)
 			}
 
-			// Get token usage
+			// Get token usage - also track input/output separately
 			if chunk.Usage.TotalTokens > 0 {
 				totalTokens = chunk.Usage.TotalTokens
+				inputTokens = chunk.Usage.PromptTokens
+				outputTokens = chunk.Usage.CompletionTokens
 			} else if chunk.Timings.PredictedN > 0 {
 				totalTokens = chunk.Timings.PredictedN
 			}
@@ -552,6 +560,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		ToolCalls:    toolCalls,
 		APIToolCalls: apiToolCalls,
 		TokenUsage:   totalTokens,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
 	}, nil
 }
 
@@ -637,7 +647,66 @@ type RequestBody struct {
 }
 
 // EstimateTokens estimates the number of tokens in text.
+// Uses a more sophisticated heuristic based on content type.
 func EstimateTokens(text string) int {
-	// Rough estimate: 1 token ≈ 4 characters
-	return len(text) / 4
+	if text == "" {
+		return 0
+	}
+
+	// Count words as a better proxy for tokens
+	words := strings.Fields(text)
+	wordCount := len(words)
+
+	// Rough estimate: 1 word ≈ 1.3 tokens (common heuristic)
+	// Add extra for special characters and formatting
+	estimatedTokens := int(float64(wordCount) * 1.3)
+
+	// Adjust for code-like content (more tokens per word due to special chars)
+	if strings.Contains(text, "{") || strings.Contains(text, "}") ||
+		strings.Contains(text, "func") || strings.Contains(text, "import") {
+		estimatedTokens = int(float64(estimatedTokens) * 1.2)
+	}
+
+	// Ensure minimum of 1 token for non-empty text
+	if estimatedTokens < 1 && len(text) > 0 {
+		estimatedTokens = 1
+	}
+
+	return estimatedTokens
+}
+// EstimateContextSize estimates the total context size including messages and tool definitions.
+func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, systemPrompt string) int {
+	total := 0
+
+	// Add system prompt tokens
+	if systemPrompt != "" {
+		total += EstimateTokens(systemPrompt)
+	}
+
+	// Add message tokens
+	for _, msg := range messages {
+		// Add role prefix tokens (system: ~2, user: ~2, assistant: ~3)
+		switch msg.Role {
+		case "system":
+			total += 2
+		case "user":
+			total += 2
+		case "assistant":
+			total += 3
+		}
+		total += EstimateTokens(msg.Content)
+	}
+
+	// Add tool definition tokens (rough estimate)
+	for _, tool := range toolDefinitions {
+		total += EstimateTokens(tool.Function.Name)
+		total += EstimateTokens(tool.Function.Description)
+		// Estimate parameter tokens
+		for _, prop := range tool.Function.Parameters.Properties {
+			total += EstimateTokens(prop.Type)
+			total += EstimateTokens(prop.Description)
+		}
+	}
+
+	return total
 }

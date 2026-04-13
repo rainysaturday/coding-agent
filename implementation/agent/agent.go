@@ -200,10 +200,17 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			return nil, err
 		}
 
-		// Update token stats
+		// Update token stats with accurate values from API
 		a.mu.Lock()
-		a.stats.InputTokens += response.TokenUsage / 2 // Rough estimate
-		a.stats.OutputTokens += response.TokenUsage / 2
+		if response.InputTokens > 0 && response.OutputTokens > 0 {
+			// Use actual API token counts
+			a.stats.InputTokens += response.InputTokens
+			a.stats.OutputTokens += response.OutputTokens
+		} else {
+			// Fallback to rough estimate if API doesn't provide accurate counts
+			a.stats.InputTokens += response.TokenUsage / 2
+			a.stats.OutputTokens += response.TokenUsage / 2
+		}
 		a.mu.Unlock()
 
 		// Log assistant response if debug is enabled
