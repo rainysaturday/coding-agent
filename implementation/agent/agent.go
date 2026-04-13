@@ -273,6 +273,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		}
 
 		// No tool calls - this is the final response
+		// Add assistant response to context for continuity
+		if response.Content != "" {
+			a.mu.Lock()
+			a.context = append(a.context, &inference.Message{
+				Role:    "assistant",
+				Content: response.Content,
+			})
+			a.mu.Unlock()
+		}
 		return &Result{
 			FinalOutput: response.Content,
 			Steps:       steps,
