@@ -472,10 +472,11 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	}
 
 	// Rebuild context: system prompt + summary + preserved messages
+	// Use "system" role for the summary to properly attribute it as context information
 	a.mu.Lock()
-	newContext := make([]*inference.Message, 0, preserveCount+1)
+	newContext := make([]*inference.Message, 0, preserveCount+2)
 	newContext = append(newContext, &inference.Message{Role: "system", Content: systemPrompt})
-	newContext = append(newContext, &inference.Message{Role: "assistant", Content: "Conversation summary: " + response.Content})
+	newContext = append(newContext, &inference.Message{Role: "system", Content: "Conversation summary: " + response.Content})
 	newContext = append(newContext, messages[len(messages)-preserveCount:]...)
 	a.context = newContext
 	a.compressionCount++
