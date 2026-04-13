@@ -129,7 +129,7 @@ func TestGetSystemPrompt(t *testing.T) {
 		"write_file",
 		"read_lines",
 		"insert_lines",
-		"replace_lines",
+		"replace_text",
 	}
 
 	for _, tool := range expectedTools {

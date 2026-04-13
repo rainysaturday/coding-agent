@@ -278,14 +278,14 @@ func runInteractiveMode(cfg *config.Config) error {
 		tuiInstance.SetContextSize(size, max)
 	})
 
-	// Set up cancellation
+	// Set up cancellation (single signal handler outside loop)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle signals
+	// Handle signals - single goroutine
 	go func() {
 		<-sigChan
 		cancel()

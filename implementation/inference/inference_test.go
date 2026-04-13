@@ -256,8 +256,8 @@ func TestParseToolCalls_InsertLinesTool(t *testing.T) {
 	}
 }
 
-func TestParseToolCalls_ReplaceLinesTool(t *testing.T) {
-	content := `[TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]`
+func TestParseToolCalls_ReplaceTextTool(t *testing.T) {
+	content := `[TOOL:{"name":"replace_text","parameters":{"path":"file.txt","search":"old","replace":"new"}}]`
 
 	toolCalls := parseToolCalls(content)
 
@@ -267,8 +267,8 @@ func TestParseToolCalls_ReplaceLinesTool(t *testing.T) {
 
 	tc := toolCalls[0]
 
-	if tc.Name != "replace_lines" {
-		t.Errorf("Expected tool name 'replace_lines', got '%s'", tc.Name)
+	if tc.Name != "replace_text" {
+		t.Errorf("Expected tool name 'replace_text', got '%s'", tc.Name)
 	}
 }
 

@@ -75,15 +75,14 @@ func TestParseToolCall(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:  "valid replace_lines",
-			input: `[TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]`,
+			name:  "valid replace_text",
+			input: `[TOOL:{"name":"replace_text","parameters":{"path":"file.txt","search":"old","replace":"new"}}]`,
 			want: &ToolCall{
-				Name: "replace_lines",
+				Name: "replace_text",
 				Parameters: map[string]interface{}{
 					"path":  "file.txt",
-					"start": 1.0,
-					"end":   5.0,
-					"lines": "replacement",
+					"search": "old",
+					"replace": "new",
 				},
 			},
 			wantErr: false,

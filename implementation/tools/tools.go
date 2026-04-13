@@ -132,8 +132,6 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeReadLines(tc.Parameters)
 	case "insert_lines":
 		result = te.executeInsertLines(tc.Parameters)
-	case "replace_lines":
-		result = te.executeReplaceLines(tc.Parameters)
 	case "replace_text":
 		result = te.executeReplaceText(tc.Parameters)
 	default:
