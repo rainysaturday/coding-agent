@@ -310,16 +310,6 @@ When a tool call fails, the error should be communicated back to the LLM as a to
 }
 ```
 
-## Migration Notes
-
-**From Custom Format to OpenAI Format:**
-
-| Old Format | OpenAI Format |
-|------------|---------------|
-| `[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]` | `{"id":"call_xxx","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls -la\"}"}}` |
-| Custom tool definitions in system prompt | Standardized tool schema in API request `tools` field |
-| Manual parsing of `[TOOL:...]` patterns | Native `response.choices[0].message.tool_calls` parsing |
-
 ## Implementation Guidelines
 
 1. **Tool Registration**: Define all available tools using OpenAI's function schema format

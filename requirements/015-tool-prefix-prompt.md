@@ -2,7 +2,7 @@
 
 ## Description
 
-The list of available tools and their descriptions must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the LLM has consistent knowledge of available tools. When using OpenAI's tool calling API, tools are provided both in the system prompt (for context) and in the API request's `tools` field (for native tool calling).
+The list of available tools and their descriptions must ALWAYS be prefixed to the context as a fixed system prompt. This ensures the LLM has consistent knowledge of available tools. When using OpenAI's tool calling API, tools are provided in the API request's `tools` field for native tool calling.
 
 ## Acceptance Criteria
 
@@ -26,19 +26,6 @@ The list of available tools and their descriptions must ALWAYS be prefixed to th
 
 ```
 You are a helpful coding assistant. You have access to the following tools.
-
-TOOL CALLING FORMAT:
-- When you need to use a tool, the API will present you with the available tools
-- Respond by calling the appropriate tool with the required parameters
-- You do NOT need to construct JSON manually - the tool calling API handles the formatting
-- Simply provide the tool name and parameter values when prompted to call a tool
-- Each tool has specific parameters that must be provided (marked as "required")
-
-EXAMPLE workflow:
-1. User asks you to list files in a directory
-2. You respond by calling the "bash" tool with command="ls -la /path"
-3. The API executes the tool and returns the output
-4. You see the result and can continue your response or call more tools
 
 AVAILABLE TOOLS:
 
