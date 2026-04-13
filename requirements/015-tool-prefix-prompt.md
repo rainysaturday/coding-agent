@@ -71,17 +71,7 @@ AVAILABLE TOOLS:
    Example use case: Adding imports, inserting new functions, adding comments
    Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
 
-6. replace_lines
-   Description: Replace a range of lines in a file by line numbers
-   Parameters:
-     - path (string, required): The path to the file
-     - start (integer, required): Starting line number (1-indexed)
-     - end (integer, required): Ending line number (1-indexed)
-     - lines (string, required): Replacement lines (use \n for newlines)
-   How to call: Use replace_lines when you know the exact line numbers to replace.
-   Example use case: Replacing lines 10-20 with new content, deleting a range of lines
-
-7. replace_text
+6. replace_text
    Description: Find and replace text in a file by searching for a pattern
    Parameters:
      - path (string, required): The path to the file
@@ -122,35 +112,6 @@ In addition to the system prompt, tools must be provided in the API request's `t
             }
           },
           "required": ["command"]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "replace_lines",
-        "description": "Replace content in a file by line numbers (replace lines in a specific range)",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string",
-              "description": "File path to modify"
-            },
-            "start": {
-              "type": "integer",
-              "description": "Start line number (1-indexed)"
-            },
-            "end": {
-              "type": "integer",
-              "description": "End line number (1-indexed)"
-            },
-            "lines": {
-              "type": "string",
-              "description": "Replacement lines (use \\n for newlines)"
-            }
-          },
-          "required": ["path", "start", "end", "lines"]
         }
       }
     },

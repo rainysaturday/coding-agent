@@ -28,7 +28,6 @@ This project implements a coding agent that can:
 3. **write_file** - Write content to files
 4. **read_lines** - Read specific line ranges from files
 5. **insert_lines** - Insert lines at specific positions
-6. **replace_lines** - Replace lines by range or search-and-replace
 
 ### Technical Features
 
@@ -187,17 +186,7 @@ All tool calls use a standardized JSON format:
 [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"new line"}}]
 ```
 
-**Replace lines (by range):**
 
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"file.txt","start":1,"end":5,"lines":"replacement"}}]
-```
-
-**Replace lines (search-and-replace):**
-
-```
-[TOOL:{"name":"replace_lines","parameters":{"path":"main.go","search":"oldName","replace":"newName"}}]
-```
 
 ## Runtime Statistics
 

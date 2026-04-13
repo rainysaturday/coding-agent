@@ -234,44 +234,6 @@ Insert lines at a specific line number.
 }
 ```
 
-### replace_lines
-Replace content in a file (supports two modes).
-
-**Line-number mode Parameters:**
-- `path` (string, required): The path to the file
-- `start` (integer, required): Starting line number (1-indexed)
-- `end` (integer, required): Ending line number (1-indexed)
-- `lines` (string, required): Replacement lines (use \\n for newlines)
-
-**Search-and-replace mode Parameters:**
-- `path` (string, required): The path to the file
-- `search` (string, required): Text to find
-- `replace` (string, required): Replacement text
-- `count` (integer, optional): Number of replacements (default: 1, use -1 for all)
-
-**Example Tool Call (line-number mode):**
-```json
-{
-  "id": "call_pqr678",
-  "type": "function",
-  "function": {
-    "name": "replace_lines",
-    "arguments": "{\"path\":\"/path/to/file.txt\",\"start\":1,\"end\":5,\"lines\":\"new content\"}"
-  }
-}
-```
-
-**Example Tool Call (search-and-replace mode):**
-```json
-{
-  "id": "call_stu901",
-  "type": "function",
-  "function": {
-    "name": "replace_lines",
-    "arguments": "{\"path\":\"./main.go\",\"search\":\"oldVariable\",\"replace\":\"newVariable\"}"
-  }
-}
-```
 
 ## Tool Choice Configuration
 
