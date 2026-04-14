@@ -329,9 +329,6 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			}
 			toolCalls = append(toolCalls, toolCall)
 		}
-	} else {
-		// Fallback: parse tool calls from content (legacy format support)
-		toolCalls = parseToolCalls(content)
 	}
 
 	// Get token usage from either usage or timings
@@ -575,11 +572,6 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		toolCalls = append(toolCalls, toolCall)
 	}
 
-	// Fallback: parse tool calls from content if no API tool calls (legacy format)
-	if len(toolCalls) == 0 {
-		toolCalls = parseToolCalls(content)
-	}
-
 	return &Response{
 		Content:      content,
 		ToolCalls:    toolCalls,
@@ -588,76 +580,6 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 	}, nil
-}
-
-// parseToolCalls parses tool calls from the response content.
-func parseToolCalls(content string) []*tools.ToolCall {
-	var toolCalls []*tools.ToolCall
-
-	// Find all tool call patterns
-	start := 0
-	for {
-		idx := strings.Index(content[start:], "[TOOL:")
-		if idx == -1 {
-			break
-		}
-
-		// Find the closing bracket
-		endIdx := start + idx + 7 // Skip "[TOOL:"
-		bracketCount := 1
-		inString := false
-		escapeNext := false
-
-		for i := endIdx; i < len(content); i++ {
-			char := content[i]
-
-			if escapeNext {
-				escapeNext = false
-				continue
-			}
-
-			if char == '\\' {
-				escapeNext = true
-				continue
-			}
-
-			if char == '"' && !escapeNext {
-				inString = !inString
-				continue
-			}
-
-			if !inString {
-				if char == '{' {
-					bracketCount++
-				} else if char == '}' {
-					bracketCount--
-					if bracketCount == 0 {
-						// Found the end of the JSON object
-						jsonStr := content[start+idx : i+1]
-						fullCall := "[" + jsonStr + "]"
-
-						tc, err := tools.ParseToolCall(fullCall)
-						if err == nil {
-							toolCalls = append(toolCalls, tc)
-						}
-						break
-					}
-				} else if char == ']' && bracketCount == 1 {
-					// Edge case: ] closes the wrapper
-					jsonStr := content[start+idx : i]
-					tc, err := tools.ParseToolCall(jsonStr)
-					if err == nil {
-						toolCalls = append(toolCalls, tc)
-					}
-					break
-				}
-			}
-		}
-
-		start = start + idx + 1
-	}
-
-	return toolCalls
 }
 
 // RequestBody represents the request body for the inference API.
