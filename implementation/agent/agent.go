@@ -17,11 +17,14 @@ import (
 )
 
 // StreamCallback is a function type for handling streaming chunks.
-// Using inference.StreamingCallback for type compatibility.
-type StreamCallback = inference.StreamingCallback
+// Using inference.StreamingCallbackWithType for typed streaming support.
+type StreamCallback = inference.StreamingCallbackWithType
 
 // ContextSizeCallback is a function called when context size changes.
 type ContextSizeCallback func(size, max int)
+
+// StreamCallbackString is a legacy type for backwards compatibility with string callbacks.
+type StreamCallbackString func(chunk string)
 
 // Agent represents the coding agent.
 type Agent struct {
@@ -189,7 +192,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			if err := a.compressContext(ctx); err != nil {
 				// Log compression failure but continue
 				if a.streamCallback != nil {
-					a.streamCallback(fmt.Sprintf("\n[Warning] Context compression failed: %v\n", err))
+					a.streamCallback(inference.StreamingChunk{
+						Text:        fmt.Sprintf("\n[Warning] Context compression failed: %v\n", err),
+						ContentType: inference.StreamingContentTypeNormal,
+					})
 				}
 			}
 		}
@@ -587,7 +593,10 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 	}
 
 	if callback != nil {
-		callback(msg)
+		callback(inference.StreamingChunk{
+			Text:        msg,
+			ContentType: inference.StreamingContentTypeNormal,
+		})
 	} else {
 		fmt.Print(msg)
 	}
@@ -598,7 +607,10 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 func streamResult(toolName string, result *tools.ToolResult, callback StreamCallback) {
 	status := formatToolStatus(toolName, result)
 	if callback != nil {
-		callback(status)
+		callback(inference.StreamingChunk{
+			Text:        status,
+			ContentType: inference.StreamingContentTypeNormal,
+		})
 	} else {
 		fmt.Print(status)
 	}

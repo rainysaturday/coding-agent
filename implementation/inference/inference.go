@@ -158,12 +158,23 @@ func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Mes
 }
 
 // InferenceRequestStream sends a request with a streaming callback.
-func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallback) (*Response, error) {
-	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, callback)
+func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
+	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, callback)
 }
 
-// InferenceRequestWithCallback sends a request with a streaming callback.
+// InferenceRequestWithCallback sends a request with a streaming callback (legacy, converts to typed).
 func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallback) (*Response, error) {
+	// Convert old callback to typed callback for backwards compatibility
+	typedCallback := func(chunk StreamingChunk) {
+		if callback != nil {
+			callback(chunk.Text)
+		}
+	}
+	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, typedCallback)
+}
+
+// InferenceRequestWithCallbackTyped sends a request with a typed streaming callback that supports reasoning content.
+func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
 	// Build the request
 	reqBody := &RequestBody{
 		Model:       ic.model,
@@ -340,7 +351,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 }
 
 // handleStreamResponse handles a streaming response.
-func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback StreamingCallback) (*Response, error) {
+func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback StreamingCallbackWithType) (*Response, error) {
 	var fullContent strings.Builder
 	var reasoningContent strings.Builder
 	var totalTokens int
@@ -478,15 +489,29 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 						toolName := deltaTC.Function.Name
 						// Stream a notification that a tool call is being made
 						notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
-						callback(notification)
+						callback(StreamingChunk{
+							Text:        notification,
+							ContentType: StreamingContentTypeNormal,
+						})
 						notifiedToolCalls[targetIndex] = true
 					}
 				}
 			}
 
-			// Call callback if provided - stream immediately
-			if callback != nil && chunkText != "" {
-				callback(chunkText)
+			// Stream reasoning content with appropriate type
+			if chunk.Choices[0].Delta.ReasoningContent != "" {
+				callback(StreamingChunk{
+					Text:        chunk.Choices[0].Delta.ReasoningContent,
+					ContentType: StreamingContentTypeReasoning,
+				})
+			}
+
+			// Stream normal content with appropriate type
+			if chunk.Choices[0].Delta.Content != "" {
+				callback(StreamingChunk{
+					Text:        chunk.Choices[0].Delta.Content,
+					ContentType: StreamingContentTypeNormal,
+				})
 			}
 
 			// Get token usage - also track input/output separately

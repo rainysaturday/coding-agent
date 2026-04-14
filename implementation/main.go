@@ -19,6 +19,7 @@ import (
 
 	"github.com/coding-agent/harness/agent"
 	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tui"
 )
 
@@ -360,9 +361,14 @@ func runInteractiveMode(cfg *config.Config) error {
 
 			if cfg.Streaming {
 				// Use streaming mode - tokens appear as they arrive
-				result, err = ag.RunStream(ctx, userInput, func(chunk string) {
-					// Stream each chunk immediately through TUI
-					tuiInstance.StreamChunk(chunk)
+				result, err = ag.RunStream(ctx, userInput, func(chunk inference.StreamingChunk) {
+					// Stream each chunk immediately through TUI with appropriate coloring
+					switch chunk.ContentType {
+					case inference.StreamingContentTypeReasoning:
+						tuiInstance.StreamReasoningChunk(chunk.Text)
+					default:
+						tuiInstance.StreamNormalChunk(chunk.Text)
+					}
 				})
 			} else {
 				// Non-streaming mode
