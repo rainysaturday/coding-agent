@@ -1,3 +1,3 @@
-module github.com/coding-agent/harness
+module coding-agent/implementation
 
 go 1.22

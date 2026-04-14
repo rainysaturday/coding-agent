@@ -158,7 +158,7 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **010-streaming-inference.md**: Streaming inference
 - **011-read-lines-tool.md**: Read lines tool
 - **012-insert-lines-tool.md**: Insert lines tool
-- **013-replace-lines-tool.md**: Replace lines tool
+- **013-replace-text-tool.md**: Replace text tool
 - **014-tool-calling-format.md**: Tool calling format
 - **015-tool-prefix-prompt.md**: Tool prefix prompt
 - **016-tool-result-context.md**: Tool result context
@@ -175,6 +175,8 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **027-tui-reasoning-token-coloring.md**: Reasoning token coloring
 - **028-debug-flag.md**: Debug flag
 - **029-system-prompt-environment-info.md**: System prompt environment info
+- **030-patch-tool.md**: Patch tool
+- **031-github-copilot-backend.md**: GitHub Copilot backend support
 
 ## Development
 

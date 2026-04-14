@@ -1,967 +1,279 @@
-// Package tools implements the tool execution system for the coding agent.
 package tools
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
+
+	"coding-agent/implementation/types"
 )
 
-// ToolResult represents the result of a tool execution.
-type ToolResult struct {
-	Success  bool                   `json:"success"`
-	Output   string                 `json:"output,omitempty"`
-	Error    string                 `json:"error,omitempty"`
-	Path     string                 `json:"path,omitempty"`
-	ExitCode int                    `json:"exit_code,omitempty"`
-	Extra    map[string]interface{} `json:"-"`
-}
+type Executor struct{}
 
-// ToolCall represents a tool call parsed from the LLM response (OpenAI format compatible).
-// Supports both legacy format (name/parameters) and OpenAI format (function/arguments).
-type ToolCall struct {
-	ID         string                 `json:"id,omitempty"` // OpenAI tool call ID
-	Name       string                 `json:"name"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	Arguments  string                 `json:"arguments,omitempty"` // OpenAI: raw JSON string of arguments
-	Raw        string                 `json:"-"`
-}
+func NewExecutor() *Executor { return &Executor{} }
 
-// ToolExecutor handles tool execution.
-type ToolExecutor struct {
-	stats *Stats
-}
-
-// Stats holds tool execution statistics.
-type Stats struct {
-	TotalCalls  int `json:"total_calls"`
-	FailedCalls int `json:"failed_calls"`
-}
-
-// NewToolExecutor creates a new tool executor.
-func NewToolExecutor() *ToolExecutor {
-	return &ToolExecutor{
-		stats: &Stats{},
+func Definitions() []types.ToolDefinition {
+	return []types.ToolDefinition{
+		def("bash", "Execute bash commands", map[string]any{"command": map[string]any{"type": "string"}}),
+		def("read_file", "Read file contents", map[string]any{"path": map[string]any{"type": "string"}}),
+		def("write_file", "Write file contents", map[string]any{"path": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"}}),
+		def("read_lines", "Read a line range from a file", map[string]any{"path": map[string]any{"type": "string"}, "start": map[string]any{"type": "integer"}, "end": map[string]any{"type": "integer"}}),
+		def("insert_lines", "Insert lines into file before a 1-indexed line", map[string]any{"path": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "text": map[string]any{"type": "string"}}),
+		def("replace_text", "Replace text in file", map[string]any{"path": map[string]any{"type": "string"}, "find": map[string]any{"type": "string"}, "replace": map[string]any{"type": "string"}, "count": map[string]any{"type": "integer"}}),
+		def("patch", "Apply a unified diff patch", map[string]any{"patch": map[string]any{"type": "string"}}),
 	}
 }
 
-// Stats returns the current statistics.
-func (te *ToolExecutor) Stats() *Stats {
-	return te.stats
+func def(name, desc string, props map[string]any) types.ToolDefinition {
+	return types.ToolDefinition{Type: "function", Function: map[string]any{
+		"name":        name,
+		"description": desc,
+		"parameters": map[string]any{
+			"type":       "object",
+			"properties": props,
+		},
+	}}
 }
 
-// ParseToolCall parses a tool call from the raw string.
-// Supports both OpenAI JSON format and legacy [TOOL:...] format.
-func ParseToolCall(raw string) (*ToolCall, error) {
-	// Try OpenAI format first: {"id":"...","type":"function","function":{"name":"...","arguments":"..."}}
-	// Use a wrapper struct to properly handle the nested function object
-	var wrapper struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Function struct {
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-		} `json:"function"`
-	}
-
-	if err := json.Unmarshal([]byte(raw), &wrapper); err == nil && wrapper.Function.Name != "" {
-		// Successfully parsed as OpenAI format
-		// Parse arguments JSON string into parameters
-		var params map[string]interface{}
-		if wrapper.Function.Arguments != "" {
-			if err := json.Unmarshal([]byte(wrapper.Function.Arguments), &params); err != nil {
-				// If arguments parsing fails, keep raw arguments
-				params = map[string]interface{}{
-					"_raw_arguments": wrapper.Function.Arguments,
-				}
-			}
-		}
-
-		tc := &ToolCall{
-			ID:         wrapper.ID,
-			Name:       wrapper.Function.Name,
-			Parameters: params,
-			Arguments:  wrapper.Function.Arguments,
-			Raw:        raw,
-		}
-		return tc, nil
-	}
-
-	// Try legacy format: [TOOL:{"name":"...","parameters":{...}}]
-	pattern := regexp.MustCompile(`\[TOOL:(\{.*\})\]`)
-	matches := pattern.FindStringSubmatch(raw)
-	if len(matches) < 2 {
-		return nil, fmt.Errorf("invalid tool call format: expected JSON or [TOOL:{...}]")
-	}
-
-	jsonStr := matches[1]
-	var tc ToolCall
-	if err := json.Unmarshal([]byte(jsonStr), &tc); err != nil {
-		return nil, fmt.Errorf("invalid JSON in tool call: %v", err)
-	}
-
-	if tc.Name == "" {
-		return nil, fmt.Errorf("missing tool name")
-	}
-
-	tc.Raw = raw
-	return &tc, nil
-}
-
-// Execute executes a tool call and returns the result.
-func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
-	te.stats.TotalCalls++
-
-	var result *ToolResult
-
-	switch tc.Name {
+func (e *Executor) Execute(ctx context.Context, call types.ToolCall) (string, error) {
+	_ = ctx
+	switch call.Function.Name {
 	case "bash":
-		result = te.executeBash(tc.Parameters)
+		var p struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		cmd := exec.Command("bash", "-lc", p.Command)
+		var buf bytes.Buffer
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+		err := cmd.Run()
+		if err != nil {
+			if ee := (&exec.ExitError{}); errors.As(err, &ee) {
+				return fmt.Sprintf("exit code %d\n%s", ee.ExitCode(), buf.String()), nil
+			}
+			return "", err
+		}
+		return buf.String(), nil
 	case "read_file":
-		result = te.executeReadFile(tc.Parameters)
+		var p struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		b, err := os.ReadFile(p.Path)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	case "write_file":
-		result = te.executeWriteFile(tc.Parameters)
-	case "patch":
-		result = te.executePatch(tc.Parameters)
+		var p struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(p.Path), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(p.Path, []byte(p.Content), 0o644); err != nil {
+			return "", err
+		}
+		return "ok", nil
 	case "read_lines":
-		result = te.executeReadLines(tc.Parameters)
+		var p struct {
+			Path  string `json:"path"`
+			Start int    `json:"start"`
+			End   int    `json:"end"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		if p.Start <= 0 || p.End < p.Start {
+			return "", fmt.Errorf("invalid range")
+		}
+		b, err := os.ReadFile(p.Path)
+		if err != nil {
+			return "", err
+		}
+		lines := splitLines(string(b))
+		if p.Start > len(lines) {
+			return "", nil
+		}
+		if p.End > len(lines) {
+			p.End = len(lines)
+		}
+		return strings.Join(lines[p.Start-1:p.End], "\n"), nil
 	case "insert_lines":
-		result = te.executeInsertLines(tc.Parameters)
+		var p struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		if p.Line <= 0 {
+			return "", fmt.Errorf("line must be >= 1")
+		}
+		b, _ := os.ReadFile(p.Path)
+		lines := splitLines(string(b))
+		idx := p.Line - 1
+		if idx > len(lines) {
+			idx = len(lines)
+		}
+		insert := splitLines(p.Text)
+		out := append([]string{}, lines[:idx]...)
+		out = append(out, insert...)
+		out = append(out, lines[idx:]...)
+		if err := os.MkdirAll(filepath.Dir(p.Path), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(p.Path, []byte(strings.Join(out, "\n")), 0o644); err != nil {
+			return "", err
+		}
+		return "ok", nil
 	case "replace_text":
-		result = te.executeReplaceText(tc.Parameters)
+		var p struct {
+			Path    string `json:"path"`
+			Find    string `json:"find"`
+			Replace string `json:"replace"`
+			Count   int    `json:"count"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		if p.Count == 0 {
+			p.Count = -1
+		}
+		b, err := os.ReadFile(p.Path)
+		if err != nil {
+			return "", err
+		}
+		orig := string(b)
+		newText := strings.Replace(orig, p.Find, p.Replace, p.Count)
+		if err := os.WriteFile(p.Path, []byte(newText), 0o644); err != nil {
+			return "", err
+		}
+		replaced := strings.Count(orig, p.Find)
+		if p.Count > 0 && replaced > p.Count {
+			replaced = p.Count
+		}
+		return fmt.Sprintf("replaced=%d", replaced), nil
+	case "patch":
+		var p struct {
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &p); err != nil {
+			return "", err
+		}
+		return applyUnifiedPatch(p.Patch)
 	default:
-		te.stats.FailedCalls++
-		result = &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("unknown tool: %s", tc.Name),
-		}
-	}
-
-	if !result.Success {
-		te.stats.FailedCalls++
-	}
-
-	return result
-}
-
-// executeBash executes a bash command.
-func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
-	command, ok := params["command"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: command",
-		}
-	}
-
-	cmd := exec.Command("bash", "-c", command)
-	output, err := cmd.CombinedOutput()
-
-	// Extract exit code
-	exitCode := 0
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode = exitError.ExitCode()
-		}
-	}
-
-	result := &ToolResult{
-		ExitCode: exitCode,
-	}
-
-	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", err, string(output))
-	} else {
-		result.Success = true
-		result.Output = string(output)
-	}
-
-	return result
-}
-
-// executeReadFile reads a file.
-func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  string(content),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"linesRead":     len(strings.Split(string(content), "\n")),
-			"contentLength": len(content),
-		},
+		return "", fmt.Errorf("unknown tool: %s", call.Function.Name)
 	}
 }
 
-// executeWriteFile writes to a file.
-func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+func splitLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return []string{}
 	}
-	content, ok := params["content"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: content",
-		}
-	}
-
-	// Create parent directories if needed
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("cannot create directory: %v", err),
-			}
-		}
-	}
-
-	err := os.WriteFile(path, []byte(content), 0644)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("File written successfully: %s (%d bytes)", path, len(content)),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"message":       fmt.Sprintf("File written successfully: %s", path),
-			"contentLength": len(content),
-		},
-	}
+	return strings.Split(s, "\n")
 }
 
-// executeReadLines reads specific lines from a file.
-func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+func applyUnifiedPatch(patch string) (string, error) {
+	lines := splitLines(patch)
+	if len(lines) == 0 {
+		return "", fmt.Errorf("empty patch")
 	}
-
-	start, ok := params["start"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: start",
-		}
-	}
-
-	end, ok := params["end"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: end",
-		}
-	}
-
-	startLine := int(start)
-	endLine := int(end)
-
-	if startLine > endLine {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("start line (%d) must be <= end line (%d)", startLine, endLine),
-		}
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	lines := strings.Split(string(content), "\n")
-	// Handle trailing newline
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-
-	// Adjust to 0-indexed
-	startIdx := startLine - 1
-	endIdx := endLine
-
-	// Handle edge cases
-	if startIdx >= len(lines) {
-		return &ToolResult{
-			Success: true,
-			Output:  "",
-			Extra: map[string]interface{}{
-				"start":   startLine,
-				"end":     endLine,
-				"message": "start line beyond file length",
-			},
-		}
-	}
-
-	if endIdx > len(lines) {
-		endIdx = len(lines)
-	}
-
-	selectedLines := lines[startIdx:endIdx]
-
-	// Format output with line numbers
-	var output strings.Builder
-	for i, line := range selectedLines {
-		lineNum := startIdx + i + 1
-		output.WriteString(fmt.Sprintf("%d: %s\n", lineNum, line))
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  strings.TrimSuffix(output.String(), "\n"),
-		Extra: map[string]interface{}{
-			"start": startLine,
-			"end":   endLine,
-		},
-	}
-}
-
-// executeInsertLines inserts lines at a specific position.
-func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	lineNum, ok := params["line"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: line",
-		}
-	}
-
-	insertLines, ok := params["lines"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: lines",
-		}
-	}
-
-	insertLine := int(lineNum)
-	newLines := strings.Split(insertLines, "\n")
-
-	// Read existing content or create empty
-	var existingLines []string
-	content, err := os.ReadFile(path)
-	if err == nil {
-		existingLines = strings.Split(string(content), "\n")
-		// Handle trailing newline
-		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
-			existingLines = existingLines[:len(existingLines)-1]
-		}
-	}
-
-	// Adjust to 0-indexed
-	insertIdx := insertLine - 1
-
-	// Handle edge cases
-	if insertIdx < 0 {
-		insertIdx = 0
-	}
-	if insertIdx > len(existingLines) {
-		insertIdx = len(existingLines)
-	}
-
-	// Insert lines
-	resultLines := make([]string, 0, len(existingLines)+len(newLines))
-	resultLines = append(resultLines, existingLines[:insertIdx]...)
-	resultLines = append(resultLines, newLines...)
-	resultLines = append(resultLines, existingLines[insertIdx:]...)
-
-	// Write back
-	output := strings.Join(resultLines, "\n")
-	if len(resultLines) > 0 {
-		output += "\n"
-	}
-
-	// Create parent directories if needed
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("cannot create directory: %v", err),
-			}
-		}
-	}
-
-	if err := os.WriteFile(path, []byte(output), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Inserted %d line(s) at line %d in: %s", len(newLines), insertLine, path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"line":          insertLine,
-			"linesInserted": len(newLines),
-		},
-	}
-}
-
-// executeReplaceText replaces text in a file by searching for a pattern.
-func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	searchText, ok := params["search"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: search",
-		}
-	}
-
-	replaceText, ok := params["replace"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: replace",
-		}
-	}
-
-	countParam, hasCount := params["count"]
-	count := 1 // Default to 1 replacement
-	if hasCount {
-		switch v := countParam.(type) {
-		case float64:
-			count = int(v)
-		case int:
-			count = v
-		case string:
-			if v == "all" || v == "-1" {
-				count = -1 // Replace all
-			} else if c, err := strconv.Atoi(v); err == nil {
-				count = c
-			}
-		}
-	}
-
-	// Read existing content
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("file not found: %s", path),
-			}
-		}
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	originalContent := string(content)
-
-	// Count total occurrences
-	totalOccurrences := strings.Count(originalContent, searchText)
-
-	if totalOccurrences == 0 {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("search text not found: %s", searchText),
-		}
-	}
-
-	// Perform replacement
-	var newContent string
-	var replacementsMade int
-	if count < 0 || count > totalOccurrences {
-		// Replace all
-		newContent = strings.ReplaceAll(originalContent, searchText, replaceText)
-		replacementsMade = totalOccurrences
-	} else {
-		// Replace only count occurrences
-		newContent = originalContent
-		for i := 0; i < count; i++ {
-			idx := strings.Index(newContent, searchText)
-			if idx == -1 {
+	var file string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "+++ ") {
+			parts := strings.Fields(l)
+			if len(parts) >= 2 {
+				file = strings.TrimPrefix(parts[1], "b/")
 				break
 			}
-			newContent = newContent[:idx] + replaceText + newContent[idx+len(searchText):]
-		}
-		replacementsMade = count
-	}
-
-	// Write back
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
 		}
 	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"search":           searchText,
-			"replacementsMade": replacementsMade,
-			"totalOccurrences": totalOccurrences,
-		},
+	if file == "" {
+		return "", fmt.Errorf("missing target file in patch")
 	}
-}
-
-// executeReplaceLines replaces lines in a file.
-func (te *ToolExecutor) executeReplaceLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	// Check if using line-number mode or search-and-replace mode
-	_, hasStart := params["start"]
-	_, hasEnd := params["end"]
-	_, hasSearch := params["search"]
-
-	if hasStart && hasEnd {
-		// Line-number mode
-		return te.replaceLinesByNumber(path, params)
-	} else if hasSearch {
-		// Search-and-replace mode
-		return te.replaceLinesBySearch(path, params)
-	} else {
-		return &ToolResult{
-			Success: false,
-			Error:   "must provide either start/end (line-number mode) or search (search-and-replace mode)",
-		}
-	}
-}
-
-// replaceLinesByNumber replaces lines by line numbers.
-func (te *ToolExecutor) replaceLinesByNumber(path string, params map[string]interface{}) *ToolResult {
-	start, ok := params["start"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: start",
-		}
-	}
-
-	end, ok := params["end"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: end",
-		}
-	}
-
-	replacementLines, ok := params["lines"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: lines",
-		}
-	}
-
-	startLine := int(start)
-	endLine := int(end)
-	newLines := strings.Split(replacementLines, "\n")
-
-	if startLine > endLine {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("start line (%d) must be <= end line (%d)", startLine, endLine),
-		}
-	}
-
-	// Read existing content
-	var existingLines []string
-	content, err := os.ReadFile(path)
+	origBytes, err := os.ReadFile(file)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return &ToolResult{
-				Success: false,
-				Error:   formatFileError(err, path),
-			}
+		return "", err
+	}
+	orig := splitLines(string(origBytes))
+	result := make([]string, 0, len(orig)+16)
+	i := 0
+
+	for idx := 0; idx < len(lines); idx++ {
+		line := lines[idx]
+		if !strings.HasPrefix(line, "@@") {
+			continue
 		}
-		// File doesn't exist, start fresh
-		existingLines = []string{}
-	} else {
-		existingLines = strings.Split(string(content), "\n")
-		// Handle trailing newline
-		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
-			existingLines = existingLines[:len(existingLines)-1]
-		}
-	}
-
-	// Adjust to 0-indexed
-	startIdx := startLine - 1
-	endIdx := endLine
-
-	// Handle edge cases
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if startIdx > len(existingLines) {
-		// Append at end
-		existingLines = append(existingLines, newLines...)
-	} else {
-		if endIdx > len(existingLines) {
-			endIdx = len(existingLines)
-		}
-		// Replace the range
-		resultLines := make([]string, 0, len(existingLines)-endIdx+startIdx+len(newLines))
-		resultLines = append(resultLines, existingLines[:startIdx]...)
-		resultLines = append(resultLines, newLines...)
-		resultLines = append(resultLines, existingLines[endIdx:]...)
-		existingLines = resultLines
-	}
-
-	// Write back
-	output := strings.Join(existingLines, "\n")
-	if len(existingLines) > 0 {
-		output += "\n"
-	}
-
-	// Create parent directories if needed
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("cannot create directory: %v", err),
-			}
-		}
-	}
-
-	if err := os.WriteFile(path, []byte(output), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Replaced lines %d-%d with %d line(s) in: %s", startLine, endLine, len(newLines), path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"start":         startLine,
-			"end":           endLine,
-			"linesReplaced": endLine - startLine + 1,
-			"linesInserted": len(newLines),
-		},
-	}
-}
-
-// replaceLinesBySearch replaces content by searching for text.
-func (te *ToolExecutor) replaceLinesBySearch(path string, params map[string]interface{}) *ToolResult {
-	searchText, ok := params["search"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: search",
-		}
-	}
-
-	replaceText, ok := params["replace"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: replace",
-		}
-	}
-
-	countParam, hasCount := params["count"]
-	count := 1 // Default to 1 replacement
-	if hasCount {
-		switch v := countParam.(type) {
-		case float64:
-			count = int(v)
-		case int:
-			count = v
-		case string:
-			if v == "all" || v == "-1" {
-				count = -1 // Replace all
-			} else if c, err := strconv.Atoi(v); err == nil {
-				count = c
-			}
-		}
-	}
-
-	// Read existing content
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("file not found: %s", path),
-			}
-		}
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	originalContent := string(content)
-
-	// Count total occurrences
-	totalOccurrences := strings.Count(originalContent, searchText)
-
-	if totalOccurrences == 0 {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("search text not found: %s", searchText),
-		}
-	}
-
-	// Perform replacement
-	var newContent string
-	var replacementsMade int
-	if count < 0 || count > totalOccurrences {
-		// Replace all
-		newContent = strings.ReplaceAll(originalContent, searchText, replaceText)
-		replacementsMade = totalOccurrences
-	} else {
-		// Replace only count occurrences
-		newContent = originalContent
-		for i := 0; i < count; i++ {
-			idx := strings.Index(newContent, searchText)
-			if idx == -1 {
+		for idx+1 < len(lines) {
+			next := lines[idx+1]
+			if strings.HasPrefix(next, "@@") {
 				break
 			}
-			newContent = newContent[:idx] + replaceText + newContent[idx+len(searchText):]
+			if strings.HasPrefix(next, "--- ") || strings.HasPrefix(next, "+++ ") {
+				idx++
+				continue
+			}
+			idx++
+			switch {
+			case strings.HasPrefix(next, " "):
+				want := strings.TrimPrefix(next, " ")
+				if i >= len(orig) || orig[i] != want {
+					return "", fmt.Errorf("context mismatch at line %d", i+1)
+				}
+				result = append(result, orig[i])
+				i++
+			case strings.HasPrefix(next, "-"):
+				want := strings.TrimPrefix(next, "-")
+				if i >= len(orig) || orig[i] != want {
+					return "", fmt.Errorf("delete mismatch at line %d", i+1)
+				}
+				i++
+			case strings.HasPrefix(next, "+"):
+				result = append(result, strings.TrimPrefix(next, "+"))
+			case strings.HasPrefix(next, "\\"):
+				// no-op metadata line
+			default:
+				break
+			}
 		}
-		replacementsMade = count
 	}
-
-	// Write back
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
+	result = append(result, orig[i:]...)
+	if err := os.WriteFile(file, []byte(strings.Join(result, "\n")), 0o644); err != nil {
+		return "", err
 	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"search":           searchText,
-			"replacementsMade": replacementsMade,
-			"totalOccurrences": totalOccurrences,
-		},
-	}
+	return "patch applied", nil
 }
 
-// formatFileError formats a file error into a user-friendly message.
-func formatFileError(err error, path string) string {
-	if os.IsNotExist(err) {
-		return fmt.Sprintf("file not found: %s", path)
-	}
-	if os.IsPermission(err) {
-		return fmt.Sprintf("permission denied: %s", path)
-	}
-	return fmt.Sprintf("file error: %v", err)
-}
-
-// executePatch applies a unified diff patch to a file.
-func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	diff, ok := params["diff"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: diff",
-		}
-	}
-
-	// Validate path to prevent directory traversal
-	cleanPath := filepath.Clean(path)
-
-	// Check for directory traversal attempts that resolve to system directories
-	if strings.Contains(path, "..") {
-		// Block if clean path resolves to system directories
-		if filepath.IsAbs(cleanPath) && (strings.HasPrefix(cleanPath, "/etc") || strings.HasPrefix(cleanPath, "/root") || strings.HasPrefix(cleanPath, "/home") || cleanPath == "/") {
-			return &ToolResult{
-				Success: false,
-				Error:   "invalid path: directory traversal not allowed",
-			}
-		}
-		// Block if clean path still has ".." components
-		if strings.HasPrefix(cleanPath, "..") {
-			return &ToolResult{
-				Success: false,
-				Error:   "invalid path: directory traversal not allowed",
-			}
-		}
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("file not found: %s", cleanPath),
-		}
-	}
-
-	// Validate diff format is not empty
-	if strings.TrimSpace(diff) == "" {
-		return &ToolResult{
-			Success: false,
-			Error:   "diff content cannot be empty",
-		}
-	}
-
-	// Validate basic diff structure
-	if !strings.Contains(diff, "@@") {
-		return &ToolResult{
-			Success: false,
-			Error:   "invalid diff format: missing hunk headers (@@)",
-		}
-	}
-
-	// Create a temporary file to store the diff
-	tmpFile, err := os.CreateTemp("", "patch-*.diff")
+func readFileLines(path string) ([]string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to create temporary file: %v", err),
-		}
+		return nil, err
 	}
-	defer os.Remove(tmpFile.Name())
-
-	// Write diff to temporary file
-	if _, err := tmpFile.WriteString(diff); err != nil {
-		tmpFile.Close()
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to write diff to temporary file: %v", err),
-		}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	var lines []string
+	for s.Scan() {
+		lines = append(lines, s.Text())
 	}
-	tmpFile.Close()
-
-	// Get original file permissions
-	origInfo, err := os.Stat(cleanPath)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to get file info: %v", err),
-		}
-	}
-	origPerm := origInfo.Mode()
-
-	// Create a backup of the original file content for rollback
-	backupContent, err := os.ReadFile(cleanPath)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to read original file: %v", err),
-		}
-	}
-
-	// Apply the patch using the system patch command
-	cmd := exec.Command("patch", "--dry-run", "-o", os.DevNull, cleanPath, tmpFile.Name())
-	dryRunOutput, dryRunErr := cmd.CombinedOutput()
-
-	if dryRunErr != nil {
-		// Restore is not needed since dry-run doesn't modify
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("patch validation failed: %s\nDetails: %s", dryRunErr, string(dryRunOutput)),
-			Extra: map[string]interface{}{
-				"patches_applied": 0,
-			},
-		}
-	}
-
-	// Apply the patch for real (in-place modification)
-	cmd = exec.Command("patch", cleanPath, tmpFile.Name())
-	patchOutput, patchErr := cmd.CombinedOutput()
-
-	if patchErr != nil {
-		// Restore original file content
-		if err := os.WriteFile(cleanPath, backupContent, origPerm); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("patch failed and rollback also failed: %v\nPatch error: %s", err, string(patchOutput)),
-				Extra: map[string]interface{}{
-					"patches_applied": 0,
-				},
-			}
-		}
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("patch application failed: %s", string(patchOutput)),
-			Extra: map[string]interface{}{
-				"patches_applied": 0,
-			},
-		}
-	}
-
-	// Count number of hunks applied
-	hunkCount := strings.Count(diff, "@@")
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Applied %d hunk(s) to %s", hunkCount, cleanPath),
-		Path:    cleanPath,
-		Extra: map[string]interface{}{
-			"patches_applied": hunkCount,
-		},
-	}
+	return lines, s.Err()
 }

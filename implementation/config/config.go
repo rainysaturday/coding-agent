@@ -1,377 +1,222 @@
-// Package config handles configuration for the coding agent.
 package config
 
 import (
+	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// Config holds all configuration for the agent.
 type Config struct {
-	// Mode
-	Prompt      string
-	PromptFile  string
-	UseStdin    bool
-	ShowHelp    bool
-	ShowVersion bool
-	ConfigFile  string
-
-	// Inference settings
-	Model       string
-	Temperature float64
-	MaxTokens   int
-	ContextSize int
-	Streaming   bool
-
-	// API settings
-	APIEndpoint string
-	APIKey      string
-
-	// Output settings
-	Verbose    bool
-	Quiet      bool
-	OutputFile string
-
-	// Timeout settings (in seconds)
-	InitialTokenTimeout int
-	ConnectionTimeout   int
-	ReadTimeout         int
-
-	// Agent settings
+	APIEndpoint   string
+	APIKey        string
+	Model         string
+	ContextSize   int
 	MaxIterations int
-
-	// Debug settings
-	Debug    bool
-	DebugLog string
+	HistorySize   int
+	Temperature   float64
+	MaxTokens     int
+	NoStream      bool
+	Prompt        string
+	UseStdin      bool
+	PromptFile    string
+	Verbose       bool
+	Quiet         bool
+	OutputFile    string
+	Debug         bool
+	DebugLog      string
+	Version       bool
+	ConfigFile    string
 }
 
-// DefaultConfig returns a config with default values.
-func DefaultConfig() *Config {
-	return &Config{
-		Model:               "llama3",
-		Temperature:         0.7,
-		MaxTokens:           4096,
-		ContextSize:         128000,
-		Streaming:           true,
-		InitialTokenTimeout: 7200,                    // 2 hours default
-		ConnectionTimeout:   7200,                    // 2 hours default
-		ReadTimeout:         7200,                    // 2 hours default
-		APIEndpoint:         "http://localhost:8080", // llama.cpp default
-		MaxIterations:       1000,                    // Default max iterations for loop protection
-		Debug:               false,
-		DebugLog:            "debug.log",
+func Load(version string) (Config, error) {
+	cfg := Config{}
+
+	prompt := flag.String("prompt", "", "Prompt for one-shot mode")
+	flag.StringVar(prompt, "p", "", "Prompt for one-shot mode")
+	stdin := flag.Bool("stdin", false, "Read prompt from stdin")
+	promptFile := flag.String("prompt-file", "", "Read prompt from file")
+	debug := flag.Bool("debug", false, "Enable debug logging")
+	debugLog := flag.String("debug-log", "", "Path to debug log file")
+	model := flag.String("model", "", "Model to use")
+	temperature := flag.Float64("temperature", -1, "Inference temperature")
+	maxTokens := flag.Int("max-tokens", -1, "Maximum tokens to generate")
+	verbose := flag.Bool("verbose", false, "Enable verbose output")
+	quiet := flag.Bool("quiet", false, "Suppress non-essential output")
+	output := flag.String("output", "", "Write results to file")
+	noStream := flag.Bool("no-stream", false, "Disable streaming output")
+	maxIterations := flag.Int("max-iterations", -1, "Maximum iterations")
+	historySize := flag.Int("history-size", -1, "Maximum prompt history entries")
+	contextSize := flag.Int("context-size", -1, "Context window size")
+	apiEndpoint := flag.String("api-endpoint", "", "OpenAI-compatible endpoint")
+	apiKey := flag.String("api-key", "", "API key")
+	configFile := flag.String("config", "", "Path to config file")
+	versionFlag := flag.Bool("version", false, "Show version")
+	flag.BoolVar(versionFlag, "v", false, "Show version")
+
+	flag.Usage = func() {
+		fmt.Println("Minimal Coding Agent Harness")
+		fmt.Println("\nUsage:")
+		fmt.Println("  coding-agent [OPTIONS]")
+		fmt.Println("\nOptions:")
+		flag.PrintDefaults()
+		fmt.Println("\nGitHub Copilot setup:")
+		fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://api.githubcopilot.com\"")
+		fmt.Println("  export GITHUB_TOKEN=\"ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"")
+		fmt.Println("  coding-agent --model gpt-4o")
+		fmt.Println("\nGitHub Models setup (official API):")
+		fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://models.github.ai\"")
+		fmt.Println("  export CODING_AGENT_API_KEY=\"github_pat_xxxxxxxxxxxxxxxxxxxx\"")
+		fmt.Println("  coding-agent --model openai/gpt-4.1")
+		fmt.Printf("\nVersion: %s\n", version)
 	}
-}
 
-// ParseArgs parses command-line arguments and returns a Config.
-func ParseArgs(args []string) (*Config, error) {
-	cfg := DefaultConfig()
+	flag.Parse()
 
-	// First pass: check for config file flag
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--config" && i+1 < len(args) {
-			cfg.ConfigFile = args[i+1]
-			break
-		}
-	}
-
-	// Load config file if specified
+	cfg.ConfigFile = firstNonEmpty(*configFile, os.Getenv("CODING_AGENT_CONFIG"))
+	kv := map[string]string{}
 	if cfg.ConfigFile != "" {
-		if err := loadConfigFile(cfg.ConfigFile, cfg); err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
+		loaded, err := parseConfigFile(cfg.ConfigFile)
+		if err != nil {
+			return cfg, err
 		}
+		kv = loaded
 	}
 
-	// Load from environment variables (overrides config file)
-	loadEnv(cfg)
+	cfg.APIEndpoint = firstNonEmpty(*apiEndpoint, os.Getenv("CODING_AGENT_API_ENDPOINT"), kv["api_endpoint"], "http://localhost:8080")
+	cfg.APIKey = firstNonEmpty(*apiKey, os.Getenv("CODING_AGENT_API_KEY"), os.Getenv("GITHUB_TOKEN"), kv["api_key"])
+	cfg.Model = firstNonEmpty(*model, os.Getenv("CODING_AGENT_MODEL"), kv["model"], "llama3")
+	cfg.ContextSize = firstNonEmptyInt(*contextSize, atoiEnv("CODING_AGENT_CONTEXT_SIZE"), atoiSafe(kv["context_size"]), 128000)
+	cfg.MaxIterations = firstNonEmptyInt(*maxIterations, atoiEnv("CODING_AGENT_MAX_ITERATIONS"), atoiSafe(kv["max_iterations"]), 1000)
+	cfg.HistorySize = firstNonEmptyInt(*historySize, atoiEnv("CODING_AGENT_HISTORY_SIZE"), atoiSafe(kv["history_size"]), 100)
+	cfg.Temperature = firstNonEmptyFloat(*temperature, atofEnv("CODING_AGENT_TEMPERATURE"), atofSafe(kv["temperature"]), 0.7)
+	cfg.MaxTokens = firstNonEmptyInt(*maxTokens, atoiEnv("CODING_AGENT_MAX_TOKENS"), atoiSafe(kv["max_tokens"]), 4096)
+	cfg.Debug = *debug || strings.EqualFold(os.Getenv("CODING_AGENT_DEBUG"), "true")
+	cfg.DebugLog = firstNonEmpty(*debugLog, os.Getenv("CODING_AGENT_DEBUG_LOG"), kv["debug_log"], "debug.log")
+	cfg.NoStream = *noStream
+	cfg.Prompt = *prompt
+	cfg.UseStdin = *stdin
+	cfg.PromptFile = *promptFile
+	cfg.Verbose = *verbose
+	cfg.Quiet = *quiet
+	cfg.OutputFile = *output
+	cfg.Version = *versionFlag
 
-	// Parse command-line arguments (overrides env and config file)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-
-		switch arg {
-		case "-h", "--help":
-			cfg.ShowHelp = true
-		case "-v", "--version":
-			cfg.ShowVersion = true
-		case "-p", "--prompt":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--prompt requires an argument")
-			}
-			i++
-			cfg.Prompt = args[i]
-		case "--stdin":
-			cfg.UseStdin = true
-		case "--prompt-file":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--prompt-file requires an argument")
-			}
-			i++
-			cfg.PromptFile = args[i]
-		case "--config":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--config requires an argument")
-			}
-			i++
-			cfg.ConfigFile = args[i]
-		case "--model":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--model requires an argument")
-			}
-			i++
-			cfg.Model = args[i]
-		case "--temperature":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--temperature requires an argument")
-			}
-			i++
-			temp, err := strconv.ParseFloat(args[i], 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid temperature: %v", err)
-			}
-			cfg.Temperature = temp
-		case "--max-tokens":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--max-tokens requires an argument")
-			}
-			i++
-			maxTokens, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid max-tokens: %v", err)
-			}
-			cfg.MaxTokens = maxTokens
-		case "--max-iterations":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--max-iterations requires an argument")
-			}
-			i++
-			maxIterations, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid max-iterations: %v", err)
-			}
-			cfg.MaxIterations = maxIterations
-		case "--context-size":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--context-size requires an argument")
-			}
-			i++
-			ctxSize, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid context-size: %v", err)
-			}
-			cfg.ContextSize = ctxSize
-		case "--no-stream":
-			cfg.Streaming = false
-		case "--connection-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--connection-timeout requires an argument")
-			}
-			i++
-			connTimeout, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid connection-timeout: %v", err)
-			}
-			cfg.ConnectionTimeout = connTimeout
-		case "--read-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--read-timeout requires an argument")
-			}
-			i++
-			readTimeout, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid read-timeout: %v", err)
-			}
-			cfg.ReadTimeout = readTimeout
-		case "--verbose":
-			cfg.Verbose = true
-		case "--quiet":
-			cfg.Quiet = true
-		case "--output":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--output requires an argument")
-			}
-			i++
-			cfg.OutputFile = args[i]
-		case "--debug":
-			cfg.Debug = true
-		case "--debug-log":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--debug-log requires an argument")
-			}
-			i++
-			cfg.DebugLog = args[i]
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return nil, fmt.Errorf("unknown flag: %s", arg)
-			}
-		}
+	if cfg.ContextSize <= 0 {
+		return cfg, fmt.Errorf("context-size must be positive")
 	}
-
-	// Validate config
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	if cfg.MaxIterations <= 0 {
+		return cfg, fmt.Errorf("max-iterations must be positive")
+	}
+	if cfg.HistorySize <= 0 {
+		return cfg, fmt.Errorf("history-size must be positive")
 	}
 
 	return cfg, nil
 }
 
-// loadConfigFile loads configuration from a config file.
-// Supports simple KEY=VALUE format (one per line, # for comments).
-func loadConfigFile(path string, cfg *Config) error {
-	content, err := os.ReadFile(path)
+func parseConfigFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	defer f.Close()
 
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	out := map[string]string{}
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove quotes if present
-		value = strings.Trim(value, "\"'")
-
-		switch key {
-		case "model":
-			cfg.Model = value
-		case "temperature":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				cfg.Temperature = v
-			}
-		case "max_tokens":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxTokens = v
-			}
-		case "max_iterations":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxIterations = v
-			}
-		case "context_size":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ContextSize = v
-			}
-		case "streaming":
-			cfg.Streaming = value != "false" && value != "0"
-		case "api_endpoint":
-			cfg.APIEndpoint = value
-		case "api_key":
-			cfg.APIKey = value
-		case "initial_token_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.InitialTokenTimeout = v
-			}
-		case "connection_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ConnectionTimeout = v
-			}
-		case "read_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ReadTimeout = v
-			}
-		case "verbose":
-			cfg.Verbose = value == "true" || value == "1"
-		case "quiet":
-			cfg.Quiet = value == "true" || value == "1"
-		case "debug":
-			cfg.Debug = value == "true" || value == "1"
-		case "debug_log":
-			cfg.DebugLog = value
-		}
+		out[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 	}
-
-	return nil
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
-// loadEnv loads configuration from environment variables.
-func loadEnv(cfg *Config) {
-	if val := os.Getenv("CODING_AGENT_MODEL"); val != "" {
-		cfg.Model = val
-	}
-	if val := os.Getenv("CODING_AGENT_TEMPERATURE"); val != "" {
-		if temp, err := strconv.ParseFloat(val, 64); err == nil {
-			cfg.Temperature = temp
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
 		}
 	}
-	if val := os.Getenv("CODING_AGENT_MAX_TOKENS"); val != "" {
-		if maxTokens, err := strconv.Atoi(val); err == nil {
-			cfg.MaxTokens = maxTokens
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_MAX_ITERATIONS"); val != "" {
-		if maxIterations, err := strconv.Atoi(val); err == nil {
-			cfg.MaxIterations = maxIterations
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); val != "" {
-		if ctxSize, err := strconv.Atoi(val); err == nil {
-			cfg.ContextSize = ctxSize
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_API_ENDPOINT"); val != "" {
-		cfg.APIEndpoint = val
-	}
-	if val := os.Getenv("CODING_AGENT_API_KEY"); val != "" {
-		cfg.APIKey = val
-	}
-	if val := os.Getenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.InitialTokenTimeout = timeout
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_CONNECTION_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ConnectionTimeout = timeout
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_READ_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ReadTimeout = timeout
-		}
-	}
-	// Streaming can be disabled via env var
-	if val := os.Getenv("CODING_AGENT_STREAMING"); val != "" {
-		if val == "false" || val == "0" {
-			cfg.Streaming = false
-		}
-	}
-	// Debug settings
-	if val := os.Getenv("CODING_AGENT_DEBUG"); val != "" {
-		cfg.Debug = val == "true" || val == "1"
-	}
-	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
-		cfg.DebugLog = val
-	}
+	return ""
 }
 
-// Validate validates the configuration.
-func (c *Config) Validate() error {
-	if c.ContextSize <= 0 {
-		return fmt.Errorf("context size must be positive")
+func firstNonEmptyInt(values ...int) int {
+	for _, v := range values {
+		if v > 0 {
+			return v
+		}
 	}
-	if c.MaxIterations <= 0 {
-		return fmt.Errorf("max iterations must be positive")
+	return 0
+}
+
+func firstNonEmptyFloat(values ...float64) float64 {
+	for _, v := range values {
+		if v >= 0 {
+			return v
+		}
 	}
-	if c.InitialTokenTimeout < 10 {
-		return fmt.Errorf("initial token timeout must be at least 10 seconds")
+	return 0
+}
+
+func atoiEnv(key string) int {
+	return atoiSafe(os.Getenv(key))
+}
+
+func atoiSafe(v string) int {
+	i, _ := strconv.Atoi(strings.TrimSpace(v))
+	return i
+}
+
+func atofEnv(key string) float64 {
+	return atofSafe(os.Getenv(key))
+}
+
+func atofSafe(v string) float64 {
+	f, _ := strconv.ParseFloat(strings.TrimSpace(v), 64)
+	return f
+}
+
+func ReadPrompt(cfg Config) (string, bool, error) {
+	if strings.TrimSpace(cfg.Prompt) != "" {
+		return cfg.Prompt, true, nil
 	}
-	// ConnectionTimeout and ReadTimeout have defaults, only validate if explicitly set (non-zero)
-	if c.ConnectionTimeout != 0 && c.ConnectionTimeout < 5 {
-		return fmt.Errorf("connection timeout must be at least 5 seconds")
+	if cfg.PromptFile != "" {
+		b, err := os.ReadFile(cfg.PromptFile)
+		return string(b), true, err
 	}
-	if c.ReadTimeout != 0 && c.ReadTimeout < 10 {
-		return fmt.Errorf("read timeout must be at least 10 seconds")
+	if cfg.UseStdin {
+		b, err := ioReadAll(os.Stdin)
+		return string(b), true, err
 	}
-	return nil
+	return "", false, nil
+}
+
+func ioReadAll(f *os.File) ([]byte, error) {
+	buf := new(strings.Builder)
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		buf.WriteString(s.Text())
+		buf.WriteString("\n")
+	}
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
+}
+
+func DefaultHTTPTimeout() time.Duration {
+	return 120 * time.Second
 }
