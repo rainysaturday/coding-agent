@@ -270,7 +270,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Add step to the list
 				steps = append(steps, step)
 
-				// Add tool result to context
+				// Add tool result to context with tool_call_id (OpenAI format)
 				var resultMessage string
 				if result.Success {
 					// Use full output for LLM context (not truncated)
@@ -281,8 +281,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 
 				a.mu.Lock()
 				a.context = append(a.context, &inference.Message{
-					Role:    "user",
-					Content: resultMessage,
+					Role:       "tool",
+					Content:    resultMessage,
+					ToolCallId: tc.ID, // Preserve the original tool call ID
 				})
 				a.mu.Unlock()
 				// Update context size after adding tool result (outside lock)

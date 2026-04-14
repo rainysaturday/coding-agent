@@ -54,8 +54,9 @@ type InferenceClient struct {
 
 // Message represents a chat message.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCallId string `json:"tool_call_id,omitempty"` // For tool call output messages
 }
 
 // ToolDefinition represents a tool definition for the LLM (OpenAI format).
