@@ -206,6 +206,14 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			return nil, err
 		}
 
+		// Add assistant response to context for continuity
+		a.mu.Lock()
+		a.context = append(a.context, &inference.Message{
+			Role:    "assistant",
+			Content: response.Content,
+		})
+		a.mu.Unlock()
+
 		// Update token stats with accurate values from API
 		a.mu.Lock()
 		if response.InputTokens > 0 && response.OutputTokens > 0 {
@@ -286,15 +294,6 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		}
 
 		// No tool calls - this is the final response
-		// Add assistant response to context for continuity
-		if response.Content != "" {
-			a.mu.Lock()
-			a.context = append(a.context, &inference.Message{
-				Role:    "assistant",
-				Content: response.Content,
-			})
-			a.mu.Unlock()
-		}
 		return &Result{
 			FinalOutput: response.Content,
 			Steps:       steps,
