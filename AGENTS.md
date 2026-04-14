@@ -78,7 +78,7 @@ The system prompt (built in `agent/agent.go`) contains:
 
 2. **Tool Calling Format**: How to use tools
 
-3. **Available Tools**: Description of 6 tools (bash, read_file, write_file, read_lines, insert_lines, replace_text)
+3. **Available Tools**: Description of 7 tools (bash, read_file, write_file, read_lines, insert_lines, replace_text, patch)
 
 4. **Best Practices**: Verification requirements, tool calling guidelines
 
