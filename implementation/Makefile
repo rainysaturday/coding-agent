@@ -51,8 +51,8 @@ build-macos:
 build-all: build-windows build-linux build-macos
 
 test:
-	@echo "Running tests..."
-	go test -v ./...
+	@echo "Running tests with coverage..."
+	go test -v -cover ./...
 
 test-cover:
 	@echo "Running tests with coverage..."
