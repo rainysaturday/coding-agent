@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-"strings"
+	"strings"
 	"time"
 
 	"github.com/coding-agent/harness/config"
@@ -699,6 +699,7 @@ func EstimateTokens(text string) int {
 
 	return estimatedTokens
 }
+
 // EstimateContextSize estimates the total context size including messages and tool definitions.
 func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, systemPrompt string) int {
 	total := 0

@@ -80,8 +80,8 @@ func TestParseToolCall(t *testing.T) {
 			want: &ToolCall{
 				Name: "replace_text",
 				Parameters: map[string]interface{}{
-					"path":  "file.txt",
-					"search": "old",
+					"path":    "file.txt",
+					"search":  "old",
 					"replace": "new",
 				},
 			},

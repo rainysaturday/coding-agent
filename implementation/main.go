@@ -309,8 +309,10 @@ func runInteractiveMode(cfg *config.Config) error {
 			if err.Error() == "EOF" {
 				// End of input (Ctrl+D), exit gracefully
 				fmt.Println("\nGoodbye!")
+				cancel()
 				return nil
 			}
+			cancel()
 			return err
 		}
 
