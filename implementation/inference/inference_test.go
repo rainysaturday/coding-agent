@@ -146,7 +146,7 @@ func TestRequestBody_JSON(t *testing.T) {
 	}
 }
 
-func TestStreamingToolCallAccumulation(t *testing.T) {
+func TestStreamingToolCallAccumulationRealistic(t *testing.T) {
 	// Test realistic streaming format where arguments come in separate chunks
 	// This simulates what llama.cpp server sends
 

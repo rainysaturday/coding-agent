@@ -163,7 +163,9 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 
 	// Check tool format documentation
-	// Tool definitions are documented in buildTools()
+	if !contains(prompt, "[TOOL:{") {
+		t.Error("buildSystemPrompt() does not document tool format")
+	}
 }
 
 func TestStats(t *testing.T) {
