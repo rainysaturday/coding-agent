@@ -211,6 +211,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		a.context = append(a.context, &inference.Message{
 			Role:    "assistant",
 			Content: response.Content,
+			ToolCalls:  response.APIToolCalls,
 		})
 		a.mu.Unlock()
 
