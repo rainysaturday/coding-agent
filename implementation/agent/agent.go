@@ -589,6 +589,12 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
+	case "patch":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Patching] file: %s%s\n", ColorCyan, path, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -673,6 +679,12 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				}
 			}
 			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
+		case "patch":
+			hunks := 0
+			if h, ok := result.Extra["patches_applied"].(int); ok {
+				hunks = h
+			}
+			return fmt.Sprintf("%s[Success] applied %d hunk(s)%s\n", ColorGreen, hunks, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -784,6 +796,14 @@ AVAILABLE TOOLS:
      - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
+7. patch
+   Description: Apply a unified diff patch to a file
+   Parameters:
+     - path (string, required): The path to the file to patch
+     - diff (string, required): Unified diff content to apply
+   How to call: Use the patch tool when you need to apply a unified diff to a file.
+   Example use case: Applying code changes, fixing bugs, updating file content
+
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -946,6 +966,27 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "patch",
+				Description: "Apply a unified diff patch to a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to patch",
+						},
+						"diff": {
+							Type:        "string",
+							Description: "Unified diff content to apply",
+						},
+					},
+					Required: []string{"path", "diff"},
 				},
 			},
 		},
