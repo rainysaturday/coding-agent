@@ -209,9 +209,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// Add assistant response to context for continuity
 		a.mu.Lock()
 		a.context = append(a.context, &inference.Message{
-			Role:    "assistant",
-			Content: response.Content,
-			ToolCalls:  response.APIToolCalls,
+			Role:      "assistant",
+			Content:   response.Content,
+			ToolCalls: response.APIToolCalls,
 		})
 		a.mu.Unlock()
 
@@ -797,6 +797,7 @@ AVAILABLE TOOLS:
      - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
+
 7. patch
    Description: Apply a unified diff patch to a file
    Parameters:

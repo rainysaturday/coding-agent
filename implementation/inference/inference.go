@@ -54,10 +54,10 @@ type InferenceClient struct {
 
 // Message represents a chat message.
 type Message struct {
-	Role       string        `json:"role"`
-	Content    string        `json:"content"`
-	ToolCallId string        `json:"tool_call_id,omitempty"` // For tool call output messages
-	ToolCalls  []*APIToolCall `json:"tool_calls,omitempty"`    // For assistant messages with tool calls
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCallId string         `json:"tool_call_id,omitempty"` // For tool call output messages
+	ToolCalls  []*APIToolCall `json:"tool_calls,omitempty"`   // For assistant messages with tool calls
 }
 
 // ToolDefinition represents a tool definition for the LLM (OpenAI format).
