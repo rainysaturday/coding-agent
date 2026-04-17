@@ -287,7 +287,8 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Timings struct {
-			PredictedN int `json:"predicted_n"`
+			PromptN      int `json:"prompt_n"`
+			PredictedN   int `json:"predicted_n"`
 		} `json:"timings"`
 	}
 
@@ -333,10 +334,18 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		}
 	}
 
-	// Get token usage from either usage or timings
+	// Get token usage from API - prefer OpenAI-style fields, fall back to timings
+	inputTokens := respBody.Usage.PromptTokens
+	outputTokens := respBody.Usage.CompletionTokens
 	tokenUsage := respBody.Usage.TotalTokens
-	if tokenUsage == 0 {
-		tokenUsage = respBody.Timings.PredictedN
+
+	if inputTokens == 0 && outputTokens == 0 && tokenUsage == 0 {
+		// Fall back to llama.cpp timings format
+		inputTokens = respBody.Timings.PromptN
+		outputTokens = respBody.Timings.PredictedN
+		if outputTokens > 0 {
+			tokenUsage = inputTokens + outputTokens
+		}
 	}
 
 	return &Response{
@@ -344,8 +353,8 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		ToolCalls:    toolCalls,
 		APIToolCalls: apiToolCalls,
 		TokenUsage:   tokenUsage,
-		InputTokens:  respBody.Usage.PromptTokens,
-		OutputTokens: respBody.Usage.CompletionTokens,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
 	}, nil
 }
 
@@ -401,6 +410,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				TotalTokens      int `json:"total_tokens"`
 			} `json:"usage"`
 			Timings struct {
+				PromptN    int `json:"prompt_n"`
 				PredictedN int `json:"predicted_n"`
 			} `json:"timings"`
 		}
@@ -519,7 +529,10 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				inputTokens = chunk.Usage.PromptTokens
 				outputTokens = chunk.Usage.CompletionTokens
 			} else if chunk.Timings.PredictedN > 0 {
-				totalTokens = chunk.Timings.PredictedN
+				// llama.cpp timings format
+				inputTokens = chunk.Timings.PromptN
+				outputTokens = chunk.Timings.PredictedN
+				totalTokens = inputTokens + outputTokens
 			}
 		}
 	}

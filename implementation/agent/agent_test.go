@@ -259,17 +259,19 @@ func TestGetContextSize(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	// Empty context should return 0
+	// Before any API call, context size is 0 (no real token data yet)
 	size := agent.GetContextSize()
 	if size != 0 {
-		t.Errorf("Expected empty context size 0, got %d", size)
+		t.Errorf("Expected 0 context size before API call, got %d", size)
 	}
 
-	// Add messages and check size
+	// Simulate API response with token counts
 	agent.AddUserMessage("test message")
-	size = agent.GetContextSize()
-	if size == 0 {
-		t.Error("Expected non-zero context size after adding message")
+	agent.stats.InputTokens = 100
+	agent.stats.OutputTokens = 50
+	size2 := agent.GetContextSize()
+	if size2 != 150 {
+		t.Errorf("Expected context size 150, got %d", size2)
 	}
 }
 

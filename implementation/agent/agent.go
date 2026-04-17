@@ -162,14 +162,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		Role:    "user",
 		Content: prompt,
 	})
-	// Update context size after adding initial message
-	if a.contextSizeCallback != nil {
-		total := 0
-		for _, msg := range a.context {
-			total += inference.EstimateTokens(msg.Content)
-		}
-		a.contextSizeCallback(total, a.maxContextSize)
-	}
+	// Context size not available until first API response, TUI will show 0 until then
 	a.mu.Unlock()
 
 	// Track steps
@@ -218,15 +211,19 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// Update token stats with accurate values from API
 		a.mu.Lock()
 		if response.InputTokens > 0 && response.OutputTokens > 0 {
-			// Use actual API token counts
+			// Use actual API input/output token counts
 			a.stats.InputTokens += response.InputTokens
 			a.stats.OutputTokens += response.OutputTokens
-		} else {
-			// Fallback to rough estimate if API doesn't provide accurate counts
+		} else if response.TokenUsage > 0 {
+			// API didn't split input/output — use total token count from API
+			// TokenUsage comes from total_tokens or predicted_n (both from the API)
 			a.stats.InputTokens += response.TokenUsage / 2
-			a.stats.OutputTokens += response.TokenUsage / 2
+			a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
 		}
 		a.mu.Unlock()
+
+		// Report context size to TUI with real token count
+		a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
 
 		// Log assistant response if debug is enabled
 		if a.debugLogger != nil {
@@ -287,10 +284,6 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					ToolCallId: tc.ID, // Preserve the original tool call ID
 				})
 				a.mu.Unlock()
-				// Update context size after adding tool result (outside lock)
-				if a.contextSizeCallback != nil {
-					a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
-				}
 			}
 			continue // Loop for next iteration
 		}
@@ -336,33 +329,21 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	copy(messages, a.context)
 	systemPrompt := a.systemPrompt
 	streamCallback := a.streamCallback
-	contextSizeCallback := a.contextSizeCallback
-	maxContextSize := a.maxContextSize
 	a.mu.Unlock()
 
 	// Use streaming version if callback is set
 	if streamCallback != nil {
-		resp, err := a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
-		// Report context size after streaming response
-		a.reportContextSize(contextSizeCallback, maxContextSize)
-		return resp, err
+		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
 	}
 
-	resp, err := a.inference.InferenceRequest(ctx, messages, systemPrompt)
-	// Report context size after non-streaming response
-	a.reportContextSize(contextSizeCallback, maxContextSize)
-
-	return resp, err
+	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
 }
 
-// reportContextSize calculates and reports the current context size.
+// reportContextSize calculates and reports the current context size using real API token counts.
 func (a *Agent) reportContextSize(callback ContextSizeCallback, maxContextSize int) {
 	if callback != nil {
 		a.mu.Lock()
-		total := 0
-		for _, msg := range a.context {
-			total += inference.EstimateTokens(msg.Content)
-		}
+		total := a.stats.InputTokens + a.stats.OutputTokens
 		a.mu.Unlock()
 		callback(total, maxContextSize)
 	}
@@ -422,29 +403,18 @@ func (a *Agent) AddAssistantMessage(message string) {
 	})
 }
 
-// GetContextSize returns the current context size in estimated tokens.
+// GetContextSize returns the current context size using real API token counts.
 func (a *Agent) GetContextSize() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	total := 0
-	for _, msg := range a.context {
-		total += inference.EstimateTokens(msg.Content)
-	}
-	return total
+	return a.stats.InputTokens + a.stats.OutputTokens
 }
 
-// shouldCompress checks if context compression is needed.
+// shouldCompress checks if context compression is needed based on real API token counts.
 func (a *Agent) shouldCompress() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	total := 0
-	for _, msg := range a.context {
-		total += inference.EstimateTokens(msg.Content)
-	}
-
-	// Compress when context exceeds 80% of max
+	total := a.stats.InputTokens + a.stats.OutputTokens
 	return total > int(float64(a.maxContextSize)*0.8)
 }
 
