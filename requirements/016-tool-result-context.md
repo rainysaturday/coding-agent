@@ -18,6 +18,9 @@ When a tool is called and executed, the result of the tool call must be added ba
 - [ ] **Streaming mode**: Tool execution waits until all tool call data is received
 - [ ] **Non-streaming mode**: Tool call feedback is displayed to the user (stdout)
 - [ ] **Streaming mode**: Tool call feedback is streamed to the callback
+- [ ] The Message struct has a `ToolCalls` field to store tool calls from the API
+- [ ] Assistant messages containing tool calls include the `tool_calls` field when serialized and sent to the API
+- [ ] Assistant messages added to context preserve the `tool_calls` from the API response
 
 ## Tool Result Format (OpenAI)
 
@@ -143,18 +146,27 @@ The tool result message should:
 
 ## OpenAI API Integration
 
-### Sending Tool Results
+### Sending Messages to API
 
-After executing a tool, send the result back to continue the conversation:
+After executing a tool, send the results back to continue the conversation. Both assistant messages (with tool calls) and tool result messages must be included in the context:
 
 ```go
+// Build assistant message with tool calls for context
+assistantMessage := &Message{
+    Role:       "assistant",
+    Content:    response.Content,
+    ToolCalls:  response.APIToolCalls,  // Include tool calls from API
+}
+
 // Build tool message for context
 toolMessage := &Message{
-    Role:    "tool",
-    Content: resultMessage,
+    Role:       "tool",
+    Content:    resultMessage,
+    ToolCallId: tc.ID,  // Include tool_call_id for matching
 }
-// Note: tool_call_id is used for API requests, stored in context for reference
 ```
+
+**Important:** The `Message` struct must include a `ToolCalls` field to store tool calls. When serializing messages to send to the API, assistant messages containing tool calls must include the `tool_calls` JSON field. This ensures the LLM can see which tool calls were made in previous turns.
 
 ### API Request Format with Tool Results
 

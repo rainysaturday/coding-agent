@@ -11,6 +11,9 @@ The coding agent harness must use the OpenAI API's native tool calling format fo
 - [ ] Invalid tool calls are detected and reported as errors
 - [ ] Tool calling format is included in system prompt/prefix
 - [ ] Tool choice can be specified (auto/required/none)
+- [ ] The Message struct has a `ToolCalls` field to store tool calls from the API
+- [ ] Assistant messages containing tool calls include the `tool_calls` field when serialized and sent to the API
+- [ ] Assistant messages added to context preserve the `tool_calls` from the API response
 
 ## OpenAI Tool Calling Format Specification
 
