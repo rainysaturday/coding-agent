@@ -165,9 +165,13 @@ func runOneShotMode(cfg *config.Config) error {
 		cancel()
 	}()
 
-	// Run agent
+	// Run agent with streaming to show LLM responses in real-time
 	startTime := time.Now()
-	result, err := ag.Run(ctx, prompt)
+	result, err := ag.RunStream(ctx, prompt, func(chunk inference.StreamingChunk) {
+		// Stream LLM responses to stdout for visibility in one-shot mode
+		// This ensures LLM responses are visible in one-shot mode, same as in interactive mode
+		fmt.Print(chunk.Text)
+	})
 	duration := time.Since(startTime)
 
 	// Close debug logger at the end of one-shot mode
