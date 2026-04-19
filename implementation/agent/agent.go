@@ -339,13 +339,11 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
 }
 
-// reportContextSize calculates and reports the current context size using real API token counts.
+// reportContextSize calculates and reports the current actual context size using message-level token estimation.
 func (a *Agent) reportContextSize(callback ContextSizeCallback, maxContextSize int) {
 	if callback != nil {
-		a.mu.Lock()
-		total := a.stats.InputTokens + a.stats.OutputTokens
-		a.mu.Unlock()
-		callback(total, maxContextSize)
+		actualSize := a.GetActualContextSize()
+		callback(actualSize, maxContextSize)
 	}
 }
 
@@ -403,19 +401,40 @@ func (a *Agent) AddAssistantMessage(message string) {
 	})
 }
 
-// GetContextSize returns the current context size using real API token counts.
+// GetContextSize returns the current actual context size using message-level token estimation.
+// This reflects the real context window usage, suitable for display to users and compression checks.
 func (a *Agent) GetContextSize() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.stats.InputTokens + a.stats.OutputTokens
+	return a.GetActualContextSize()
 }
 
-// shouldCompress checks if context compression is needed based on real API token counts.
-func (a *Agent) shouldCompress() bool {
+// GetActualContextSize calculates the current context size by summing token estimates
+// of all messages in the context. This reflects the actual context window usage,
+// not cumulative API token counts.
+func (a *Agent) GetActualContextSize() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	total := a.stats.InputTokens + a.stats.OutputTokens
-	return total > int(float64(a.maxContextSize)*0.8)
+	return a.getActualContextSizeUnlocked()
+}
+
+// getActualContextSizeUnlocked is the internal, unlocked version.
+// Must be called while holding a.mu.
+func (a *Agent) getActualContextSizeUnlocked() int {
+	total := 0
+	for _, msg := range a.context {
+		total += inference.EstimateTokens(msg.Content)
+	}
+	// Add estimated system prompt tokens (it's prepended by buildMessages on every API call)
+	total += inference.EstimateTokens(a.systemPrompt)
+	return total
+}
+
+// shouldCompress checks if context compression is needed based on actual context window usage.
+func (a *Agent) shouldCompress() bool {
+	a.mu.Lock()
+	total := a.getActualContextSizeUnlocked()
+	maxSize := a.maxContextSize
+	a.mu.Unlock()
+	return total > int(float64(maxSize)*0.8)
 }
 
 // compressContext compresses the conversation history while preserving system prompt.
@@ -455,16 +474,29 @@ func (a *Agent) compressContext(ctx context.Context) error {
 		return fmt.Errorf("failed to compress context: %w", err)
 	}
 
-	// Rebuild context: system prompt + summary + preserved messages
-	// Use "user" role for the summary so it doesn't conflict with the system prompt
-	// prepended by buildMessages in the inference client (avoids multiple system messages)
+	// Rebuild context: summary + preserved messages
+	// Note: we do NOT add the system prompt here because buildMessages() in the
+	// inference client prepends it on every API call. Adding it here would cause
+	// duplicate system prompts.
 	a.mu.Lock()
-	newContext := make([]*inference.Message, 0, preserveCount+2)
-	newContext = append(newContext, &inference.Message{Role: "system", Content: systemPrompt})
+	newContext := make([]*inference.Message, 0, preserveCount+1)
 	newContext = append(newContext, &inference.Message{Role: "user", Content: "Conversation summary: " + response.Content})
 	newContext = append(newContext, messages[len(messages)-preserveCount:]...)
 	a.context = newContext
 	a.compressionCount++
+
+	// Update token stats to reflect the compressed context size.
+	// This prevents the infinite compression loop: the cumulative stats would
+	// otherwise still be high even though the actual context is now small.
+	// We set InputTokens to the estimated size of the compressed context,
+	// which is approximately what the next API request will consume.
+	compressedTokens := 0
+	for _, msg := range newContext {
+		compressedTokens += inference.EstimateTokens(msg.Content)
+	}
+	compressedTokens += inference.EstimateTokens(systemPrompt) // system prompt is prepended by buildMessages
+	a.stats.InputTokens = compressedTokens
+	a.stats.OutputTokens = 0 // reset output tokens; they'll accumulate from new API calls
 	a.mu.Unlock()
 
 	return nil

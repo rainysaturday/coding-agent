@@ -259,20 +259,20 @@ func TestGetContextSize(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	// Before any API call, context size is 0 (no real token data yet)
+	// Before any API call, context size is the system prompt estimate (non-zero)
 	size := agent.GetContextSize()
-	if size != 0 {
-		t.Errorf("Expected 0 context size before API call, got %d", size)
+	if size <= 0 {
+		t.Errorf("Expected positive context size (system prompt), got %d", size)
 	}
 
-	// Simulate API response with token counts
+	// Simulate adding a user message and verify context size increases
 	agent.AddUserMessage("test message")
-	agent.stats.InputTokens = 100
-	agent.stats.OutputTokens = 50
 	size2 := agent.GetContextSize()
-	if size2 != 150 {
-		t.Errorf("Expected context size 150, got %d", size2)
+	if size2 <= size {
+		t.Errorf("Expected context size to increase after adding message, was %d, now %d", size, size2)
 	}
+	// Context size should be system prompt + "test message" (no stats manipulation needed)
+	_ = size2
 }
 
 func TestSetAPIEndpoint(t *testing.T) {
