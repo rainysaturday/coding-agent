@@ -59,7 +59,7 @@ Options:
       --debug-log path     Path to debug log file (default: debug.log)
       --model string       Model to use (default: "llama3")
       --temperature float  Inference temperature (omitted when not set, uses model default)
-      --max-tokens int     Maximum tokens to generate (default: 4096)
+      --max-tokens int     Maximum tokens to generate (default: 64000)
       --verbose            Enable verbose output
       --quiet              Suppress non-essential output
       --output file        Write results to file
