@@ -128,6 +128,49 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+func TestEstimateContextSize(t *testing.T) {
+	systemPrompt := "You are a helpful assistant"
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there!"},
+	}
+
+	tools := []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionDefinition{
+				Name:        "bash",
+				Description: "Execute a bash command",
+				Parameters: ParameterSchema{
+					Type: "object",
+					Properties: map[string]Property{
+						"command": {Type: "string", Description: "The command to run"},
+					},
+					Required: []string{"command"},
+				},
+			},
+		},
+	}
+
+	total := EstimateContextSize(messages, tools, systemPrompt)
+
+	// Total should be positive and include all components
+	if total <= 0 {
+		t.Errorf("EstimateContextSize returned non-positive value: %d", total)
+	}
+
+	// Total should increase with more messages
+	messages2 := []*Message{
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there!"},
+		{Role: "user", Content: "How are you?"},
+	}
+	total2 := EstimateContextSize(messages2, tools, systemPrompt)
+	if total2 <= total {
+		t.Errorf("Expected total2 (%d) > total (%d)", total2, total)
+	}
+}
+
 func TestRequestBody_JSON(t *testing.T) {
 	req := &RequestBody{
 		Model:       "llama3",

@@ -419,13 +419,8 @@ func (a *Agent) GetActualContextSize() int {
 // getActualContextSizeUnlocked is the internal, unlocked version.
 // Must be called while holding a.mu.
 func (a *Agent) getActualContextSizeUnlocked() int {
-	total := 0
-	for _, msg := range a.context {
-		total += inference.EstimateTokens(msg.Content)
-	}
-	// Add estimated system prompt tokens (it's prepended by buildMessages on every API call)
-	total += inference.EstimateTokens(a.systemPrompt)
-	return total
+	// Include tool definitions in the count since they are sent with every API request
+	return inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
 }
 
 // shouldCompress checks if context compression is needed based on actual context window usage.
@@ -490,11 +485,7 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	// otherwise still be high even though the actual context is now small.
 	// We set InputTokens to the estimated size of the compressed context,
 	// which is approximately what the next API request will consume.
-	compressedTokens := 0
-	for _, msg := range newContext {
-		compressedTokens += inference.EstimateTokens(msg.Content)
-	}
-	compressedTokens += inference.EstimateTokens(systemPrompt) // system prompt is prepended by buildMessages
+	compressedTokens := inference.EstimateContextSize(newContext, a.inference.GetTools(), systemPrompt)
 	a.stats.InputTokens = compressedTokens
 	a.stats.OutputTokens = 0 // reset output tokens; they'll accumulate from new API calls
 	a.mu.Unlock()
@@ -734,17 +725,16 @@ func buildSystemPrompt() string {
 %s
 
 TOOL CALLING FORMAT:
-- When you need to use a tool, the API will present you with the available tools
-- Respond by calling the appropriate tool with the required parameters
+- When you need to use a tool, the API will return a response containing tool calls
+- Execute each tool call and report the result back as a tool message
 - You do NOT need to construct JSON manually - the tool calling API handles the formatting
-- Simply provide the tool name and parameter values when prompted to call a tool
 - Each tool has specific parameters that must be provided (marked as "required")
 
 EXAMPLE workflow:
 1. User asks you to list files in a directory
-2. You respond by calling the "bash" tool with command="ls -la /path"
-3. The API executes the tool and returns the output
-4. You see the result and can continue your response or call more tools
+2. The API returns a tool call: {"name": "bash", "arguments": {"command": "ls -la /path"}}
+3. Execute the tool and report the result back as a tool message with the matching tool_call_id
+4. The API processes the result and may return another tool call or your final answer
 
 AVAILABLE TOOLS:
 

@@ -130,6 +130,7 @@ func TestGetSystemPrompt(t *testing.T) {
 		"read_lines",
 		"insert_lines",
 		"replace_text",
+		"patch",
 	}
 
 	for _, tool := range expectedTools {
@@ -150,21 +151,23 @@ func TestBuildSystemPrompt(t *testing.T) {
 	// Check for required sections
 	requiredSections := []string{
 		"AVAILABLE TOOLS:",
-		"TOOL CALLING RULES:",
-		"Instructions:",
+		"TOOL CALLING FORMAT:",
 		"VERIFICATION REQUIREMENTS:",
 		"Verification Checklist:",
 	}
 
 	for _, section := range requiredSections {
-		if !contains(prompt, section) {
+		if !strings.Contains(prompt, section) {
 			t.Errorf("buildSystemPrompt() missing section: %s", section)
 		}
 	}
 
-	// Check tool format documentation
-	if !contains(prompt, "[TOOL:{") {
-		t.Error("buildSystemPrompt() does not document tool format")
+	// Check all tools are documented in the system prompt
+	tools := buildTools()
+	for _, tool := range tools {
+		if !strings.Contains(prompt, tool.Function.Name) {
+			t.Errorf("buildSystemPrompt() missing documented tool: %s", tool.Function.Name)
+		}
 	}
 }
 
@@ -297,6 +300,62 @@ func TestSetAPIKey(t *testing.T) {
 	// Verify method exists and doesn't panic
 }
 
+func TestBuildTools(t *testing.T) {
+	tools := buildTools()
+
+	if len(tools) != 7 {
+		t.Errorf("Expected 7 tools, got %d", len(tools))
+	}
+
+	expectedTools := map[string]bool{
+		"bash":         false,
+		"read_file":    false,
+		"write_file":   false,
+		"read_lines":   false,
+		"insert_lines": false,
+		"replace_text": false,
+		"patch":        false,
+	}
+
+	for _, tool := range tools {
+		if _, exists := expectedTools[tool.Function.Name]; exists {
+			expectedTools[tool.Function.Name] = true
+		} else {
+			t.Errorf("Unexpected tool: %s", tool.Function.Name)
+		}
+		if tool.Type != "function" {
+			t.Errorf("Tool %s: expected type 'function', got '%s'", tool.Function.Name, tool.Type)
+		}
+		if tool.Function.Parameters.Type != "object" {
+			t.Errorf("Tool %s: expected parameters type 'object', got '%s'", tool.Function.Name, tool.Function.Parameters.Type)
+		}
+		if len(tool.Function.Parameters.Properties) == 0 {
+			t.Errorf("Tool %s: has no parameters defined", tool.Function.Name)
+		}
+		if len(tool.Function.Parameters.Required) == 0 {
+			t.Errorf("Tool %s: has no required parameters", tool.Function.Name)
+		}
+	}
+
+	for name, found := range expectedTools {
+		if !found {
+			t.Errorf("Tool %s not found in buildTools()", name)
+		}
+	}
+}
+
+func TestToolDefinitionsMatchSystemPrompt(t *testing.T) {
+	// Verify that every tool registered with the API is also documented in the system prompt
+	tools := buildTools()
+	systemPrompt := buildSystemPrompt()
+
+	for _, tool := range tools {
+		if !strings.Contains(systemPrompt, tool.Function.Name) {
+			t.Errorf("Tool '%s' is registered with the API but not documented in system prompt", tool.Function.Name)
+		}
+	}
+}
+
 func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr))
+	return strings.Contains(s, substr)
 }
