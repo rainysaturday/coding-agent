@@ -12,3 +12,5 @@ The coding agent harness must connect to an inference backend running llama.cpp 
 - [ ] Implements retry logic for failed API calls
 - [ ] Streaming responses supported for better UX
 - [ ] Token usage information parsed from responses
+- [ ] Temperature parameter is only sent to the inference backend when explicitly set by the user
+- [ ] When temperature is not set, the inference engine uses the model-specific default value

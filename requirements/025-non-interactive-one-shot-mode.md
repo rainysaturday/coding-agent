@@ -55,7 +55,7 @@ Options:
       --stdin              Read prompt from stdin
       --prompt-file path   Read prompt from file
       --model string       Model to use (default: "llama3")
-      --temperature float  Inference temperature (default: 0.7)
+      --temperature float  Inference temperature (omitted when not set, uses model default)
       --max-tokens int     Maximum tokens to generate (default: 4096)
       --verbose            Enable verbose output
       --quiet              Suppress non-essential output

@@ -58,7 +58,7 @@ Options:
       --debug              Enable debug logging (saves conversation to file)
       --debug-log path     Path to debug log file (default: debug.log)
       --model string       Model to use (default: "llama3")
-      --temperature float  Inference temperature (default: 0.7)
+      --temperature float  Inference temperature (omitted when not set, uses model default)
       --max-tokens int     Maximum tokens to generate (default: 4096)
       --verbose            Enable verbose output
       --quiet              Suppress non-essential output
