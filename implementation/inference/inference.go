@@ -511,7 +511,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			}
 
 			// Stream reasoning content with appropriate type
-			if chunk.Choices[0].Delta.Reasoning != "" {
+			if chunk.Choices[0].Delta.Reasoning != "" && callback != nil {
 				callback(StreamingChunk{
 					Text:        chunk.Choices[0].Delta.Reasoning,
 					ContentType: StreamingContentTypeReasoning,
@@ -519,7 +519,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			}
 
 			// Stream normal content with appropriate type
-			if chunk.Choices[0].Delta.Content != "" {
+			if chunk.Choices[0].Delta.Content != "" && callback != nil {
 				callback(StreamingChunk{
 					Text:        chunk.Choices[0].Delta.Content,
 					ContentType: StreamingContentTypeNormal,

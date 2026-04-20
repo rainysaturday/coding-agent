@@ -322,7 +322,7 @@ func (t *TUI) addToHistory(prompt string) {
 	t.history = append([]string{prompt}, t.history...)
 
 	// Trim if exceeds max
-	if len(t.history) > t.maxHistory {
+	if t.maxHistory > 0 && len(t.history) > t.maxHistory {
 		t.history = t.history[:t.maxHistory]
 	}
 
