@@ -117,7 +117,7 @@ func displayHelp() {
 	fmt.Println("      --debug-log path     Path to debug log file (default: debug.log)")
 	fmt.Println("      --model string       Model to use (default: \"llama3\")")
 	fmt.Println("      --temperature float  Inference temperature (default: 0.7)")
-	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 4096)")
+	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 64000)")
 	fmt.Println("      --context-size int   Context window size (default: 128000)")
 	fmt.Println("      --max-iterations int Maximum iterations for loop protection (default: 1000)")
 	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 30)")

@@ -52,7 +52,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Model:               "llama3",
 		Temperature:         nil,
-		MaxTokens:           4096,
+		MaxTokens:           64000,
 		ContextSize:         128000,
 		Streaming:           true,
 		InitialTokenTimeout: 7200,                    // 2 hours default

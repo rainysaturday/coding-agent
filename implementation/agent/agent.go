@@ -654,6 +654,17 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, msg, ColorReset)
 			}
 			return fmt.Sprintf("%s[Success] file written%s\n", ColorGreen, ColorReset)
+		case "read_lines":
+			// Show the lines that were read, truncated if too long
+			output := result.Output
+			lines := strings.Split(output, "\n")
+			linesRead := len(lines)
+			if linesRead > 10 {
+				lines = lines[:10]
+				output = strings.Join(lines, "\n") + "\n... [output truncated]"
+				linesRead = len(lines)
+			}
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
 		case "insert_lines":
 			count := 0
 			if c, ok := result.Extra["linesInserted"].(int); ok {

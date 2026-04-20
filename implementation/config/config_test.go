@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Temperature != nil {
 		t.Errorf("Expected default temperature nil (not set), got %f", *cfg.Temperature)
 	}
-	if cfg.MaxTokens != 4096 {
-		t.Errorf("Expected default max tokens 4096, got %d", cfg.MaxTokens)
+	if cfg.MaxTokens != 64000 {
+		t.Errorf("Expected default max tokens 64000, got %d", cfg.MaxTokens)
 	}
 	if cfg.ContextSize != 128000 {
 		t.Errorf("Expected default context size 128000, got %d", cfg.ContextSize)

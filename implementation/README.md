@@ -123,7 +123,7 @@ echo "Refactor utils.go" | ./coding-agent --stdin
 | `--prompt-file`  | Read prompt from file         | -       |
 | `--model`        | Model to use                  | llama3  |
 | `--temperature`  | Inference temperature         | 0.7     |
-| `--max-tokens`   | Maximum tokens to generate    | 4096    |
+| `--max-tokens`   | Maximum tokens to generate    | 64000   |
 | `--context-size` | Context window size           | 128000  |
 | `--no-stream`    | Disable streaming             | false   |
 | `--verbose`      | Enable verbose output         | false   |

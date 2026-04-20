@@ -23,8 +23,8 @@ func TestNewInferenceClient(t *testing.T) {
 		t.Errorf("Expected temperature nil (not set), got %f", *client.temperature)
 	}
 
-	if client.maxTokens != 4096 {
-		t.Errorf("Expected max tokens 4096, got %d", client.maxTokens)
+	if client.maxTokens != 64000 {
+		t.Errorf("Expected max tokens 64000, got %d", client.maxTokens)
 	}
 
 	if client.contextSize != 128000 {
