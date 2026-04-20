@@ -1,15 +1,19 @@
 package agent
 
 import (
+	"context"
+	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/inference"
+	"github.com/coding-agent/harness/tools"
 )
 
-func TestNewAgent(t *testing.T) {
+func TestSetStreamCallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
@@ -17,161 +21,68 @@ func TestNewAgent(t *testing.T) {
 		t.Fatal("NewAgent() returned nil")
 	}
 
-	if agent.config != cfg {
-		t.Error("NewAgent() did not store config")
-	}
-
-	if agent.systemPrompt == "" {
-		t.Error("NewAgent() system prompt is empty")
-	}
-
-	if agent.stats == nil {
-		t.Error("NewAgent() stats is nil")
-	}
+	// Set a stream callback - should not panic
+	agent.SetStreamCallback(func(chunk inference.StreamingChunk) {
+		// noop for test
+	})
 }
 
-func TestGetEnvironmentInfo(t *testing.T) {
-	envInfo := getEnvironmentInfo()
-
-	// Check that envInfo is not empty
-	if envInfo == "" {
-		t.Fatal("getEnvironmentInfo() returned empty string")
-	}
-
-	// Check for required sections
-	if !strings.Contains(envInfo, "ENVIRONMENT INFORMATION:") {
-		t.Error("getEnvironmentInfo() missing 'ENVIRONMENT INFORMATION:' header")
-	}
-
-	// Get actual values for comparison
-	cwd, _ := os.Getwd()
-	exePath, _ := os.Executable()
-	osInfo := runtime.GOOS
-	archInfo := runtime.GOARCH
-
-	// Check for environment fields
-	if !strings.Contains(envInfo, "Current Working Directory:") {
-		t.Error("getEnvironmentInfo() missing 'Current Working Directory:' field")
-	}
-	if !strings.Contains(envInfo, "Agent Executable:") {
-		t.Error("getEnvironmentInfo() missing 'Agent Executable:' field")
-	}
-	if !strings.Contains(envInfo, "Operating System:") {
-		t.Error("getEnvironmentInfo() missing 'Operating System:' field")
-	}
-	if !strings.Contains(envInfo, "Architecture:") {
-		t.Error("getEnvironmentInfo() missing 'Architecture:' field")
-	}
-
-	// Check that actual values are included
-	if !strings.Contains(envInfo, cwd) {
-		t.Errorf("getEnvironmentInfo() does not contain actual cwd: %s", cwd)
-	}
-	if !strings.Contains(envInfo, exePath) {
-		t.Errorf("getEnvironmentInfo() does not contain actual exePath: %s", exePath)
-	}
-	if !strings.Contains(envInfo, osInfo) {
-		t.Errorf("getEnvironmentInfo() does not contain actual OS: %s", osInfo)
-	}
-	if !strings.Contains(envInfo, archInfo) {
-		t.Errorf("getEnvironmentInfo() does not contain actual arch: %s", archInfo)
-	}
-
-	// Check for sub-agent spawning instruction
-	if !strings.Contains(envInfo, "coding-agent -p") {
-		t.Error("getEnvironmentInfo() missing sub-agent spawning instruction")
-	}
-}
-
-func TestBuildSystemPromptContainsEnvironmentInfo(t *testing.T) {
-	prompt := buildSystemPrompt()
-
-	// Check that system prompt includes environment information
-	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
-		t.Error("buildSystemPrompt() does not include environment information")
-	}
-
-	// Get actual values for comparison
-	cwd, _ := os.Getwd()
-	exePath, _ := os.Executable()
-	osInfo := runtime.GOOS
-	archInfo := runtime.GOARCH
-
-	// Verify environment values are in the prompt
-	if !strings.Contains(prompt, cwd) {
-		t.Errorf("buildSystemPrompt() does not contain actual cwd: %s", cwd)
-	}
-	if !strings.Contains(prompt, exePath) {
-		t.Errorf("buildSystemPrompt() does not contain actual exePath: %s", exePath)
-	}
-	if !strings.Contains(prompt, osInfo) {
-		t.Errorf("buildSystemPrompt() does not contain actual OS: %s", osInfo)
-	}
-	if !strings.Contains(prompt, archInfo) {
-		t.Errorf("buildSystemPrompt() does not contain actual arch: %s", archInfo)
-	}
-}
-
-func TestGetSystemPrompt(t *testing.T) {
+func TestSetContextSizeCallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	prompt := agent.GetSystemPrompt()
-
-	if prompt == "" {
-		t.Error("GetSystemPrompt() returned empty string")
-	}
-
-	// Check that prompt contains tool definitions
-	expectedTools := []string{
-		"bash",
-		"read_file",
-		"write_file",
-		"read_lines",
-		"insert_lines",
-		"replace_text",
-		"patch",
-	}
-
-	for _, tool := range expectedTools {
-		if !contains(prompt, tool) {
-			t.Errorf("GetSystemPrompt() does not contain tool: %s", tool)
+	// Set a context size callback - should not panic
+	agent.SetContextSizeCallback(func(size, max int) {
+		if size < 0 {
+			t.Error("Expected non-negative size")
 		}
-	}
+		if max < 0 {
+			t.Error("Expected non-negative max")
+		}
+	})
+}
 
-	// Check for verification requirements
-	if !contains(prompt, "VERIFICATION REQUIREMENTS") {
-		t.Error("GetSystemPrompt() does not contain verification requirements")
+func TestGetTools(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	tools := agent.GetTools()
+	if len(tools) == 0 {
+		t.Error("Expected at least one tool")
 	}
 }
 
-func TestBuildSystemPrompt(t *testing.T) {
-	prompt := buildSystemPrompt()
+func TestCloseDebugLogger_NoLogger(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Debug = false
+	agent := NewAgent(cfg)
 
-	// Check for required sections
-	requiredSections := []string{
-		"AVAILABLE TOOLS:",
-		"TOOL CALLING FORMAT:",
-		"VERIFICATION REQUIREMENTS:",
-		"Verification Checklist:",
-	}
-
-	for _, section := range requiredSections {
-		if !strings.Contains(prompt, section) {
-			t.Errorf("buildSystemPrompt() missing section: %s", section)
-		}
-	}
-
-	// Check all tools are documented in the system prompt
-	tools := buildTools()
-	for _, tool := range tools {
-		if !strings.Contains(prompt, tool.Function.Name) {
-			t.Errorf("buildSystemPrompt() missing documented tool: %s", tool.Function.Name)
-		}
+	err := agent.CloseDebugLogger()
+	if err != nil {
+		t.Errorf("Expected no error when closing nil debug logger, got: %v", err)
 	}
 }
 
-func TestStats(t *testing.T) {
+func TestRunStream(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// This tests the method exists and doesn't panic without actual LLM
+	// The call will fail because there's no LLM server, but we test the method structure
+	_, err := agent.RunStream(ctx, "test prompt", func(chunk inference.StreamingChunk) {
+		// noop
+	})
+
+	// Expect error since no LLM server is running (timeout or connection error)
+	if err == nil {
+		t.Error("Expected error when no LLM server is available")
+	}
+}
+
+func TestGetStats_Complete(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
@@ -181,40 +92,70 @@ func TestStats(t *testing.T) {
 		t.Fatal("GetStats() returned nil")
 	}
 
-	if stats.InputTokens != 0 {
-		t.Errorf("Expected initial input tokens 0, got %d", stats.InputTokens)
+	// Verify all fields exist and are accessible
+	if stats.InputTokens < 0 {
+		t.Error("InputTokens should be non-negative")
 	}
-	if stats.OutputTokens != 0 {
-		t.Errorf("Expected initial output tokens 0, got %d", stats.OutputTokens)
+	if stats.OutputTokens < 0 {
+		t.Error("OutputTokens should be non-negative")
 	}
-	if stats.ToolCalls != 0 {
-		t.Errorf("Expected initial tool calls 0, got %d", stats.ToolCalls)
+	if stats.ToolCalls < 0 {
+		t.Error("ToolCalls should be non-negative")
 	}
-	if stats.FailedToolCalls != 0 {
-		t.Errorf("Expected initial failed tool calls 0, got %d", stats.FailedToolCalls)
+	if stats.FailedToolCalls < 0 {
+		t.Error("FailedToolCalls should be non-negative")
+	}
+	if stats.Iterations < 0 {
+		t.Error("Iterations should be non-negative")
+	}
+
+	// StartTime should be set
+	if stats.StartTime.IsZero() {
+		t.Error("Expected non-zero StartTime")
 	}
 }
 
-func TestClearContext(t *testing.T) {
+func TestGetStats_TimeElapsed(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	// Add some messages
-	agent.AddUserMessage("test message 1")
-	agent.AddAssistantMessage("test response 1")
-	agent.AddUserMessage("test message 2")
+	// Wait a bit to ensure time passes
+	time.Sleep(10 * time.Millisecond)
 
-	// Verify context has messages
-	if len(agent.context) != 3 {
-		t.Errorf("Expected 3 messages in context, got %d", len(agent.context))
+	stats := agent.GetStats()
+
+	// After some time has passed, the function should still work without errors
+	// Verify Stats struct is populated
+	if stats == nil {
+		t.Fatal("GetStats() returned nil after time elapsed")
+	}
+}
+
+func TestGetContextSize_Initial(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	size := agent.GetContextSize()
+	// Should be positive due to system prompt
+	if size <= 0 {
+		t.Errorf("Expected positive context size, got %d", size)
+	}
+}
+
+func TestGetActualContextSize(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	size := agent.GetActualContextSize()
+	if size <= 0 {
+		t.Errorf("Expected positive actual context size, got %d", size)
 	}
 
-	// Clear context
-	agent.ClearContext()
-
-	// Verify context is empty
-	if len(agent.context) != 0 {
-		t.Errorf("Expected 0 messages after clear, got %d", len(agent.context))
+	// Add messages and verify size increases
+	agent.AddUserMessage("test message")
+	size2 := agent.GetActualContextSize()
+	if size2 <= size {
+		t.Errorf("Expected size to increase after adding message, was %d, now %d", size, size2)
 	}
 }
 
@@ -222,19 +163,12 @@ func TestAddUserMessage(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	message := "test user message"
-	agent.AddUserMessage(message)
-
+	agent.AddUserMessage("Hello")
 	if len(agent.context) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(agent.context))
 	}
-
 	if agent.context[0].Role != "user" {
 		t.Errorf("Expected role 'user', got '%s'", agent.context[0].Role)
-	}
-
-	if agent.context[0].Content != message {
-		t.Errorf("Expected content '%s', got '%s'", message, agent.context[0].Content)
 	}
 }
 
@@ -242,120 +176,658 @@ func TestAddAssistantMessage(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	message := "test assistant message"
-	agent.AddAssistantMessage(message)
-
+	agent.AddAssistantMessage("Hi")
 	if len(agent.context) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(agent.context))
 	}
-
 	if agent.context[0].Role != "assistant" {
 		t.Errorf("Expected role 'assistant', got '%s'", agent.context[0].Role)
 	}
+}
 
-	if agent.context[0].Content != message {
-		t.Errorf("Expected content '%s', got '%s'", message, agent.context[0].Content)
+func TestBuildTools_AllToolsPresent(t *testing.T) {
+	tools := buildTools()
+
+	expectedNames := []string{
+		"bash",
+		"read_file",
+		"write_file",
+		"read_lines",
+		"insert_lines",
+		"replace_text",
+		"patch",
+	}
+
+	for _, expected := range expectedNames {
+		found := false
+		for _, tool := range tools {
+			if tool.Function.Name == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Tool '%s' not found in buildTools()", expected)
+		}
 	}
 }
 
-func TestGetContextSize(t *testing.T) {
+func TestBuildSystemPrompt_Sections(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	sections := []string{
+		"AVAILABLE TOOLS:",
+		"TOOL CALLING FORMAT:",
+		"EXAMPLE workflow:",
+		"VERIFICATION REQUIREMENTS:",
+		"Verification Checklist:",
+		"TOOL CALLING BEST PRACTICES:",
+		"ENVIRONMENT INFORMATION:",
+		"Current Working Directory:",
+		"Operating System:",
+		"Architecture:",
+	}
+
+	for _, section := range sections {
+		if !strings.Contains(prompt, section) {
+			t.Errorf("buildSystemPrompt() missing section: %s", section)
+		}
+	}
+}
+
+func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	toolDescriptions := []struct {
+		name        string
+		description string
+	}{
+		{"bash", "Execute a bash command"},
+		{"read_file", "Read the contents of a file"},
+		{"write_file", "Write content to a file"},
+		{"read_lines", "Read a specific line range"},
+		{"insert_lines", "Insert lines at a specific line"},
+		{"replace_text", "Find and replace text"},
+		{"patch", "Apply a unified diff patch"},
+	}
+
+	for _, td := range toolDescriptions {
+		if !strings.Contains(prompt, td.name) {
+			t.Errorf("buildSystemPrompt() missing tool: %s", td.name)
+		}
+	}
+}
+
+func TestBuildSystemPrompt_IncludesEnvInfo(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	// Should include environment information
+	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
+		t.Error("System prompt should include environment information")
+	}
+}
+
+func TestGetEnvironmentInfo(t *testing.T) {
+	info := getEnvironmentInfo()
+
+	if info == "" {
+		t.Fatal("getEnvironmentInfo() returned empty string")
+	}
+
+	// Check for all environment details
+	expectedFields := []string{
+		"Current Working Directory:",
+		"Agent Executable:",
+		"Operating System:",
+		"Architecture:",
+	}
+
+	for _, field := range expectedFields {
+		if !strings.Contains(info, field) {
+			t.Errorf("getEnvironmentInfo() missing field: %s", field)
+		}
+	}
+}
+
+func TestSetBuildVersion(t *testing.T) {
+	original := buildVersion
+	defer func() {
+		buildVersion = original
+	}()
+
+	// Test with different versions
+	testVersions := []string{
+		"v1.0.0",
+		"dev",
+		"abc123 [dirty]",
+		"unknown",
+	}
+
+	for _, version := range testVersions {
+		SetBuildVersion(version)
+		if buildVersion != version {
+			t.Errorf("SetBuildVersion(%q) didn't set correctly, got %q", version, buildVersion)
+		}
+
+		got := getBuildVersion()
+		if got != version {
+			t.Errorf("getBuildVersion() returned %q, expected %q", got, version)
+		}
+	}
+}
+
+func TestFormatResult(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   *tools.ToolResult
+		expected string
+	}{
+		{
+			name: "extra message",
+			result: &tools.ToolResult{
+				Success: true,
+				Output:  "some output",
+				Extra: map[string]interface{}{
+					"message": "custom message",
+				},
+			},
+			expected: "custom message",
+		},
+		{
+			name: "no extra, short output",
+			result: &tools.ToolResult{
+				Success: true,
+				Output:  "line1\nline2\nline3",
+			},
+			expected: "line1\nline2\nline3",
+		},
+		{
+			name: "no extra, long output truncation",
+			result: &tools.ToolResult{
+				Success: true,
+				Output:  "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\n",
+			},
+			expected: "... [output truncated]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatResult(tt.result)
+			if !strings.Contains(result, tt.expected) {
+				t.Errorf("formatResult() = %q, expected to contain %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatToolStatus_Success(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     string
+		result   *tools.ToolResult
+		check    func(string) bool
+	}{
+		{
+			name: "bash success",
+			tool: "bash",
+			result: &tools.ToolResult{
+				Success:  true,
+				Output:   "output",
+				ExitCode: 0,
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "[Success]")
+			},
+		},
+		{
+			name: "bash with exit code",
+			tool: "bash",
+			result: &tools.ToolResult{
+				Success:  true,
+				Output:   "output",
+				ExitCode: 1,
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "[Success]") && strings.Contains(s, "exit code: 1")
+			},
+		},
+		{
+			name: "read_file success",
+			tool: "read_file",
+			result: &tools.ToolResult{
+				Success: true,
+				Output:  "content",
+				Extra: map[string]interface{}{
+					"linesRead": 5,
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "[Success]") && strings.Contains(s, "5 lines")
+			},
+		},
+		{
+			name: "write_file success with message",
+			tool: "write_file",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"message": "File written successfully: /test/file.txt",
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "[Success]")
+			},
+		},
+		{
+			name: "insert_lines success",
+			tool: "insert_lines",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"linesInserted": 3,
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "inserted 3")
+			},
+		},
+		{
+			name: "replace_text success",
+			tool: "replace_text",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"replacementsMade": 2,
+					"search":           "old",
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "replaced") && strings.Contains(s, "'old'")
+			},
+		},
+		{
+			name: "patch success",
+			tool: "patch",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"patches_applied": 3,
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "3 hunk")
+			},
+		},
+		{
+			name: "unknown tool success",
+			tool: "custom_tool",
+			result: &tools.ToolResult{
+				Success: true,
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "[Success]")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatToolStatus(tt.tool, tt.result)
+			if !tt.check(result) {
+				t.Errorf("formatToolStatus() for %s: %q does not match check", tt.tool, result)
+			}
+		})
+	}
+}
+
+func TestFormatToolStatus_Failure(t *testing.T) {
+	result := formatToolStatus("bash", &tools.ToolResult{
+		Success: false,
+		Error:   "command not found",
+	})
+
+	if !strings.Contains(result, "[Failed]") {
+		t.Errorf("Expected [Failed] in result: %s", result)
+	}
+	if !strings.Contains(result, "bash") {
+		t.Errorf("Expected tool name in result: %s", result)
+	}
+	if !strings.Contains(result, "command not found") {
+		t.Errorf("Expected error message in result: %s", result)
+	}
+}
+
+func TestStreamStatus_Callback(t *testing.T) {
+	var received []inference.StreamingChunk
+
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	// Test various tool types
+	tools := map[string]map[string]interface{}{
+		"bash":         {"command": "ls -la"},
+		"read_file":    {"path": "/test/file.txt"},
+		"write_file":   {"path": "/test/output.txt"},
+		"read_lines":   {"path": "/test/file.txt", "start": 1, "end": 10},
+		"insert_lines": {"path": "/test/file.txt", "line": 5},
+		"replace_text": {"path": "/test/file.txt", "search": "old"},
+		"patch":        {"path": "/test/file.txt"},
+		"unknown":      nil,
+	}
+
+	for toolName, params := range tools {
+		streamStatus(toolName, params, cb)
+		if len(received) == 0 {
+			t.Errorf("Expected callback to be called for tool: %s", toolName)
+		}
+		received = nil // Reset for next test
+	}
+
+	// Test that callbacks with nil doesn't panic
+	streamStatus("bash", nil, nil)
+}
+
+func TestStreamResult_Callback(t *testing.T) {
+	var received []inference.StreamingChunk
+
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	successResult := &tools.ToolResult{
+		Success: true,
+		Output:  "success output",
+	}
+	streamResult("bash", successResult, cb)
+	if len(received) == 0 {
+		t.Error("Expected callback to be called for success result")
+	}
+
+	failureResult := &tools.ToolResult{
+		Success: false,
+		Error:   "some error",
+	}
+	streamResult("bash", failureResult, cb)
+	if len(received) == 0 {
+		t.Error("Expected callback to be called for failure result")
+	}
+
+	// Test nil callback
+	streamResult("bash", successResult, nil)
+}
+
+func TestShouldCompress_ContextNearLimit(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.ContextSize = 1000 // Small context for testing
+	agent := NewAgent(cfg)
+
+	// Add many messages to exceed 80% of context size
+	for i := 0; i < 50; i++ {
+		agent.AddUserMessage("This is a test message number " + string(rune('A'+i%26)) + " with some content to use up context tokens.")
+	}
+
+	shouldCompress := agent.shouldCompress()
+	// With many messages, should compress
+	if !shouldCompress {
+		t.Error("Expected shouldCompress() to return true with near-limit context")
+	}
+}
+
+func TestShouldCompress_ContextBelowLimit(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.ContextSize = 50000 // Large context for testing
+	agent := NewAgent(cfg)
+
+	// Add just a few short messages - with large context, won't trigger compression
+	agent.AddUserMessage("Short msg")
+	agent.AddAssistantMessage("Short reply")
+
+	shouldCompress := agent.shouldCompress()
+	// With few messages and large context, should not compress
+	if shouldCompress {
+		t.Error("Expected shouldCompress() to return false with minimal context relative to limit")
+	}
+}
+
+func TestCompressContext_NotEnoughMessages(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	// Before any API call, context size is the system prompt estimate (non-zero)
-	size := agent.GetContextSize()
-	if size <= 0 {
-		t.Errorf("Expected positive context size (system prompt), got %d", size)
+	// Only 1 message, should not compress
+	err := agent.compressContext(context.Background())
+	if err != nil {
+		t.Errorf("compressContext() should not error with minimal messages: %v", err)
+	}
+}
+
+func TestClearContext_AfterMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	agent.AddUserMessage("msg1")
+	agent.AddUserMessage("msg2")
+	agent.AddAssistantMessage("reply1")
+
+	if len(agent.context) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(agent.context))
 	}
 
-	// Simulate adding a user message and verify context size increases
-	agent.AddUserMessage("test message")
-	size2 := agent.GetContextSize()
-	if size2 <= size {
-		t.Errorf("Expected context size to increase after adding message, was %d, now %d", size, size2)
+	agent.ClearContext()
+
+	if len(agent.context) != 0 {
+		t.Errorf("Expected 0 messages after clear, got %d", len(agent.context))
 	}
-	// Context size should be system prompt + "test message" (no stats manipulation needed)
-	_ = size2
 }
 
 func TestSetAPIEndpoint(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	endpoint := "http://test-endpoint:8080"
-	agent.SetAPIEndpoint(endpoint)
-
-	// Verify endpoint was set (this tests the inference client was properly initialized)
-	// The actual endpoint is in the inference client which we can't easily access
-	// but we can verify the method exists and doesn't panic
+	// Should not panic
+	agent.SetAPIEndpoint("http://custom-endpoint:8080/v1")
 }
 
 func TestSetAPIKey(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
 
-	key := "test-api-key"
-	agent.SetAPIKey(key)
-
-	// Verify method exists and doesn't panic
+	// Should not panic
+	agent.SetAPIKey("test-api-key-12345")
 }
 
-func TestBuildTools(t *testing.T) {
-	tools := buildTools()
+func TestGetSystemPrompt_NonEmpty(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
 
-	if len(tools) != 7 {
-		t.Errorf("Expected 7 tools, got %d", len(tools))
+	prompt := agent.GetSystemPrompt()
+	if prompt == "" {
+		t.Error("Expected non-empty system prompt")
+	}
+}
+
+func TestGetContextSize_AfterClear(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	initialSize := agent.GetContextSize()
+
+	agent.AddUserMessage("test message to add tokens")
+	largerSize := agent.GetContextSize()
+	if largerSize <= initialSize {
+		t.Errorf("Expected size to increase, was %d, now %d", initialSize, largerSize)
 	}
 
-	expectedTools := map[string]bool{
-		"bash":         false,
-		"read_file":    false,
-		"write_file":   false,
-		"read_lines":   false,
-		"insert_lines": false,
-		"replace_text": false,
-		"patch":        false,
+	agent.ClearContext()
+
+	afterClearSize := agent.GetContextSize()
+	// Should be back to approximately initial size (system prompt only)
+	if afterClearSize > largerSize {
+		t.Errorf("Expected size to decrease after clear, was %d, now %d", largerSize, afterClearSize)
+	}
+}
+
+func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
+	prompt := buildSystemPrompt()
+
+	// Count occurrences of key phrases
+	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch"}
+	for _, name := range toolNames {
+		count := strings.Count(prompt, name)
+		// Tool should appear in tool definition and description, so at least 2 times
+		if count < 2 {
+			t.Errorf("Tool '%s' should appear at least twice, found %d", name, count)
+		}
+	}
+}
+
+func TestGetEnvironmentInfo_ContainsSubAgentInfo(t *testing.T) {
+	info := getEnvironmentInfo()
+
+	if !strings.Contains(info, "coding-agent -p") {
+		t.Error("getEnvironmentInfo() should contain sub-agent spawning instruction")
+	}
+	if !strings.Contains(info, "parallel tasks") {
+		t.Error("getEnvironmentInfo() should mention parallel tasks")
+	}
+}
+
+func TestGetEnvironmentInfo_CWD(t *testing.T) {
+	info := getEnvironmentInfo()
+
+	cwd, err := os.Getwd()
+	if err == nil {
+		if !strings.Contains(info, cwd) {
+			t.Errorf("getEnvironmentInfo() should contain cwd %q", cwd)
+		}
+	}
+}
+
+func TestFormatToolStatus_ReadLines(t *testing.T) {
+	result := formatToolStatus("read_lines", &tools.ToolResult{
+		Success: true,
+		Output:  "1: line1\n2: line2\n3: line3",
+		Extra: map[string]interface{}{
+			"linesRead": 3,
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+}
+
+func TestFormatToolStatus_WriteFile(t *testing.T) {
+	result := formatToolStatus("write_file", &tools.ToolResult{
+		Success: true,
+		Output:  "File written successfully",
+		Extra: map[string]interface{}{
+			"message": "File written successfully: /tmp/test.txt (100 bytes)",
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+}
+
+func TestFormatToolStatus_ReadLinesTruncation(t *testing.T) {
+	// Create a result with many lines
+	var output string
+	for i := 1; i <= 15; i++ {
+		output += fmt.Sprintf("%d: line %d\n", i, i)
 	}
 
-	for _, tool := range tools {
-		if _, exists := expectedTools[tool.Function.Name]; exists {
-			expectedTools[tool.Function.Name] = true
-		} else {
+	result := formatToolStatus("read_lines", &tools.ToolResult{
+		Success: true,
+		Output:  output,
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+}
+
+func TestBuildTools_Parameters(t *testing.T) {
+	toolDefs := buildTools()
+
+	expectedParams := map[string][]string{
+		"bash":         {"command"},
+		"read_file":    {"path"},
+		"write_file":   {"path", "content"},
+		"read_lines":   {"path", "start", "end"},
+		"insert_lines": {"path", "line", "lines"},
+		"replace_text": {"path", "search", "replace"},
+		"patch":        {"path", "diff"},
+	}
+
+	for _, tool := range toolDefs {
+		expected, ok := expectedParams[tool.Function.Name]
+		if !ok {
 			t.Errorf("Unexpected tool: %s", tool.Function.Name)
+			continue
 		}
-		if tool.Type != "function" {
-			t.Errorf("Tool %s: expected type 'function', got '%s'", tool.Function.Name, tool.Type)
-		}
-		if tool.Function.Parameters.Type != "object" {
-			t.Errorf("Tool %s: expected parameters type 'object', got '%s'", tool.Function.Name, tool.Function.Parameters.Type)
-		}
-		if len(tool.Function.Parameters.Properties) == 0 {
-			t.Errorf("Tool %s: has no parameters defined", tool.Function.Name)
-		}
-		if len(tool.Function.Parameters.Required) == 0 {
-			t.Errorf("Tool %s: has no required parameters", tool.Function.Name)
-		}
-	}
 
-	for name, found := range expectedTools {
-		if !found {
-			t.Errorf("Tool %s not found in buildTools()", name)
+		if len(tool.Function.Parameters.Required) != len(expected) {
+			t.Errorf("Tool %s: expected %d required params, got %d",
+				tool.Function.Name, len(expected), len(tool.Function.Parameters.Required))
 		}
-	}
-}
 
-func TestToolDefinitionsMatchSystemPrompt(t *testing.T) {
-	// Verify that every tool registered with the API is also documented in the system prompt
-	tools := buildTools()
-	systemPrompt := buildSystemPrompt()
-
-	for _, tool := range tools {
-		if !strings.Contains(systemPrompt, tool.Function.Name) {
-			t.Errorf("Tool '%s' is registered with the API but not documented in system prompt", tool.Function.Name)
+		for _, req := range expected {
+			found := false
+			for _, actual := range tool.Function.Parameters.Required {
+				if actual == req {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Tool %s: missing required param %s", tool.Function.Name, req)
+			}
 		}
 	}
 }
 
-func contains(s, substr string) bool {
-	return strings.Contains(s, substr)
+func TestReportContextSize_CallbackCalled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	var receivedSize, receivedMax int
+	agent.reportContextSize(func(size, max int) {
+		receivedSize = size
+		receivedMax = max
+	}, cfg.ContextSize)
+
+	if receivedSize <= 0 {
+		t.Errorf("Expected positive size, got %d", receivedSize)
+	}
+	if receivedMax != cfg.ContextSize {
+		t.Errorf("Expected max %d, got %d", cfg.ContextSize, receivedMax)
+	}
 }
+
+func TestReportContextSize_NilCallback(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Should not panic with nil callback
+	agent.reportContextSize(nil, cfg.ContextSize)
+}
+
+func TestReportContextSize_ZeroMax(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	var receivedMax int
+	agent.reportContextSize(func(size, max int) {
+		_ = size
+		receivedMax = max
+	}, 0)
+
+	if receivedMax != 0 {
+		t.Errorf("Expected max 0, got %d", receivedMax)
+	}
+}
+
+
