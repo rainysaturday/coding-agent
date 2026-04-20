@@ -102,6 +102,7 @@ type FunctionCall struct {
 // Response represents an inference response.
 type Response struct {
 	Content      string
+	Reasoning    string            // Reasoning content from the model (OpenAI standard "reasoning" field)
 	ToolCalls    []*tools.ToolCall // Parsed tool calls compatible with tool executor
 	APIToolCalls []*APIToolCall    // Raw tool calls from API for reference
 	TokenUsage   int
@@ -277,6 +278,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			Message struct {
 				Role      string        `json:"role"`
 				Content   string        `json:"content"`
+				Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
 				ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
@@ -350,6 +352,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 
 	return &Response{
 		Content:      content,
+		Reasoning:    message.Reasoning, // OpenAI standard "reasoning" field
 		ToolCalls:    toolCalls,
 		APIToolCalls: apiToolCalls,
 		TokenUsage:   tokenUsage,
@@ -398,9 +401,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content          string        `json:"content"`
-					ReasoningContent string        `json:"reasoning_content"`
-					ToolCalls        []APIToolCall `json:"tool_calls,omitempty"`
+					Content   string        `json:"content"`
+					Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
+					ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -426,10 +429,10 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				chunkText = chunk.Choices[0].Delta.Content
 				fullContent.WriteString(chunkText)
 			}
-			if chunk.Choices[0].Delta.ReasoningContent != "" {
-				reasoningContent.WriteString(chunk.Choices[0].Delta.ReasoningContent)
+			if chunk.Choices[0].Delta.Reasoning != "" {
+				reasoningContent.WriteString(chunk.Choices[0].Delta.Reasoning)
 				if chunkText == "" {
-					chunkText = chunk.Choices[0].Delta.ReasoningContent
+					chunkText = chunk.Choices[0].Delta.Reasoning
 				}
 			}
 
@@ -508,9 +511,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			}
 
 			// Stream reasoning content with appropriate type
-			if chunk.Choices[0].Delta.ReasoningContent != "" {
+			if chunk.Choices[0].Delta.Reasoning != "" {
 				callback(StreamingChunk{
-					Text:        chunk.Choices[0].Delta.ReasoningContent,
+					Text:        chunk.Choices[0].Delta.Reasoning,
 					ContentType: StreamingContentTypeReasoning,
 				})
 			}
@@ -589,6 +592,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 
 	return &Response{
 		Content:      content,
+		Reasoning:    reasoningContent.String(), // OpenAI standard "reasoning" field
 		ToolCalls:    toolCalls,
 		APIToolCalls: apiToolCalls,
 		TokenUsage:   totalTokens,
