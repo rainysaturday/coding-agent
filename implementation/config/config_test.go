@@ -11,8 +11,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Model != "llama3" {
 		t.Errorf("Expected default model 'llama3', got '%s'", cfg.Model)
 	}
-	if cfg.Temperature != 0.7 {
-		t.Errorf("Expected default temperature 0.7, got %f", cfg.Temperature)
+	if cfg.Temperature != nil {
+		t.Errorf("Expected default temperature nil (not set), got %f", *cfg.Temperature)
 	}
 	if cfg.MaxTokens != 4096 {
 		t.Errorf("Expected default max tokens 4096, got %d", cfg.MaxTokens)
@@ -84,7 +84,12 @@ func TestParseArgs(t *testing.T) {
 			name:    "temperature flag",
 			args:    []string{"--temperature", "0.9"},
 			wantErr: false,
-			check:   func(c *Config) bool { return c.Temperature == 0.9 },
+			check: func(c *Config) bool {
+				if c.Temperature == nil {
+					return false
+				}
+				return *c.Temperature == 0.9
+			},
 		},
 		{
 			name:    "max-tokens flag",
@@ -194,8 +199,8 @@ func TestLoadEnv(t *testing.T) {
 	if cfg.Model != "env-model" {
 		t.Errorf("Expected model 'env-model', got '%s'", cfg.Model)
 	}
-	if cfg.Temperature != 0.8 {
-		t.Errorf("Expected temperature 0.8, got %f", cfg.Temperature)
+	if cfg.Temperature == nil || *cfg.Temperature != 0.8 {
+		t.Errorf("Expected temperature 0.8, got %v", cfg.Temperature)
 	}
 	if cfg.MaxTokens != 2048 {
 		t.Errorf("Expected max tokens 2048, got %d", cfg.MaxTokens)

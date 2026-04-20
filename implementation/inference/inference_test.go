@@ -19,8 +19,8 @@ func TestNewInferenceClient(t *testing.T) {
 		t.Errorf("Expected model 'llama3', got '%s'", client.model)
 	}
 
-	if client.temperature != 0.7 {
-		t.Errorf("Expected temperature 0.7, got %f", client.temperature)
+	if client.temperature != nil {
+		t.Errorf("Expected temperature nil (not set), got %f", *client.temperature)
 	}
 
 	if client.maxTokens != 4096 {
@@ -172,11 +172,12 @@ func TestEstimateContextSize(t *testing.T) {
 }
 
 func TestRequestBody_JSON(t *testing.T) {
+	temp := 0.7
 	req := &RequestBody{
 		Model:       "llama3",
 		Messages:    []*Message{{Role: "user", Content: "test"}},
 		Stream:      true,
-		Temperature: 0.7,
+		Temperature: &temp,
 		MaxTokens:   4096,
 	}
 

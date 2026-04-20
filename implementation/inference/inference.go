@@ -41,7 +41,7 @@ type InferenceClient struct {
 	endpoint    string
 	apiKey      string
 	model       string
-	temperature float64
+	temperature *float64
 	maxTokens   int
 	contextSize int
 	streaming   bool
@@ -606,7 +606,7 @@ type RequestBody struct {
 	Model       string           `json:"model"`
 	Messages    []*Message       `json:"messages"`
 	Stream      bool             `json:"stream"`
-	Temperature float64          `json:"temperature"`
+	Temperature *float64         `json:"temperature,omitempty"`
 	MaxTokens   int              `json:"max_tokens"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
 	ToolChoice  string           `json:"tool_choice,omitempty"`

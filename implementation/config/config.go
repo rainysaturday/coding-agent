@@ -20,7 +20,7 @@ type Config struct {
 
 	// Inference settings
 	Model       string
-	Temperature float64
+	Temperature *float64
 	MaxTokens   int
 	ContextSize int
 	Streaming   bool
@@ -51,7 +51,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Model:               "llama3",
-		Temperature:         0.7,
+		Temperature:         nil,
 		MaxTokens:           4096,
 		ContextSize:         128000,
 		Streaming:           true,
@@ -127,11 +127,11 @@ func ParseArgs(args []string) (*Config, error) {
 				return nil, fmt.Errorf("--temperature requires an argument")
 			}
 			i++
-			temp, err := strconv.ParseFloat(args[i], 64)
+			tempVal, err := strconv.ParseFloat(args[i], 64)
 			if err != nil {
 				return nil, fmt.Errorf("invalid temperature: %v", err)
 			}
-			cfg.Temperature = temp
+			cfg.Temperature = &tempVal
 		case "--max-tokens":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--max-tokens requires an argument")
@@ -248,7 +248,8 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Model = value
 		case "temperature":
 			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				cfg.Temperature = v
+				tempVal := v
+				cfg.Temperature = &tempVal
 			}
 		case "max_tokens":
 			if v, err := strconv.Atoi(value); err == nil {
@@ -300,8 +301,8 @@ func loadEnv(cfg *Config) {
 		cfg.Model = val
 	}
 	if val := os.Getenv("CODING_AGENT_TEMPERATURE"); val != "" {
-		if temp, err := strconv.ParseFloat(val, 64); err == nil {
-			cfg.Temperature = temp
+		if tempVal, err := strconv.ParseFloat(val, 64); err == nil {
+			cfg.Temperature = &tempVal
 		}
 	}
 	if val := os.Getenv("CODING_AGENT_MAX_TOKENS"); val != "" {
