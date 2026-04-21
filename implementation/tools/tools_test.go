@@ -442,7 +442,7 @@ func TestExecute_ReplaceLines_MissingStart(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
 			"end":   2.0,
@@ -461,7 +461,7 @@ func TestExecute_ReplaceLines_MissingEnd(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
 			"start": 1.0,
@@ -480,7 +480,7 @@ func TestExecute_ReplaceLines_MissingLines(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
 			"start": 1.0,
@@ -499,7 +499,7 @@ func TestExecute_ReplaceLines_Search(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
 			"search":  "oldName",
@@ -522,7 +522,7 @@ func TestExecute_ReplaceLines_SearchCount(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
 			"search":  "TODO",
@@ -546,7 +546,7 @@ func TestExecute_ReplaceLines_SearchNotFound(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
 			"search":  "notfound",
@@ -566,7 +566,7 @@ func TestExecute_ReplaceLinesByNumber_StartGreaterThanEnd(t *testing.T) {
 
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
-		Name: "replace_text",
+		Name: "replace_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
 			"start": 5.0,
@@ -576,6 +576,359 @@ func TestExecute_ReplaceLinesByNumber_StartGreaterThanEnd(t *testing.T) {
 	})
 	if result.Success {
 		t.Error("Expected failure when start > end")
+	}
+}
+func TestExecute_ReplaceLines_MissingPath(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"start": 1.0,
+			"end":   2.0,
+			"lines": "replacement",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for missing path parameter")
+	}
+}
+
+func TestExecute_ReplaceLines_SearchMissingPath(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"search":  "old",
+			"replace": "new",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for missing path parameter")
+	}
+}
+
+func TestExecute_ReplaceLines_SearchMissingReplace(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("content\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":   testFile,
+			"search": "old",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for missing replace parameter")
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberReplace(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line1\nline2\nline3\nline4\nline5\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 2.0,
+			"end":   3.0,
+			"lines": "replaced_line",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "line1\nreplaced_line\nline4\nline5\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberReplaceMultipleLines(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line1\nline2\nline3\nline4\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 2.0,
+			"end":   3.0,
+			"lines": "new_line_a\nnew_line_b\nnew_line_c",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "line1\nnew_line_a\nnew_line_b\nnew_line_c\nline4\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberReplaceAll(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("old1\nold2\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 1.0,
+			"end":   2.0,
+			"lines": "new_content",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "new_content\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberEmptyReplacement(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line1\nline2\nline3\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 2.0,
+			"end":   2.0,
+			"lines": "",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "line1\n\nline3\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_SearchReplace(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\nhello go\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":    testFile,
+			"search":  "hello",
+			"replace": "goodbye",
+			"count":   "all",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "goodbye world\ngoodbye go\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_SearchReplaceAll(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello hello hello\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":    testFile,
+			"search":  "hello",
+			"replace": "hi",
+			"count":   "all",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "hi hi hi\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_SearchReplacePartial(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("foo bar foo baz foo\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":    testFile,
+			"search":  "foo",
+			"replace": "qux",
+			"count":   2.0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "qux bar qux baz foo\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_SearchReplaceNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":    testFile,
+			"search":  "notfound",
+			"replace": "replacement",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure when search text not found")
+	}
+}
+
+func TestExecute_ReplaceLines_NoModeSpecified(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("content\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path": testFile,
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure when no mode specified (no start/end or search)")
+	}
+	if !strings.Contains(result.Error, "must provide either start/end") {
+		t.Errorf("Expected mode error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_ReplaceLines_StartGreaterThanEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 5.0,
+			"end":   2.0,
+			"lines": "replacement",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure when start > end")
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberAtEndOfLine(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("first\nlast\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 2.0,
+			"end":   2.0,
+			"lines": "updated_last",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "first\nupdated_last\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberBeyondEnd(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("existing\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 999.0,
+			"end":   999.0,
+			"lines": "appended",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	if !strings.Contains(string(content), "appended") {
+		t.Errorf("Expected content to contain 'appended', got: %s", string(content))
+	}
+}
+
+func TestExecute_ReplaceLines_LineNumberCreatesFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "newfile.txt")
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "replace_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 1.0,
+			"end":   1.0,
+			"lines": "new content",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success for creating new file, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	expected := "new content\n"
+	if string(content) != expected {
+		t.Errorf("Expected %q, got %q", expected, string(content))
 	}
 }
 

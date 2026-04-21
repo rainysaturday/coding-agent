@@ -583,6 +583,12 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
+case "replace_lines":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Replacing lines] in: %s%s\n", ColorCyan, path, ColorReset)
 	case "patch":
 		path := ""
 		if p, ok := params["path"].(string); ok {
@@ -682,6 +688,30 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				if len(search) > 20 {
 					search = search[:20] + "..."
 				}
+			}
+			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
+case "replace_lines":
+			start := 0
+			end := 0
+			if s, ok := result.Extra["start"].(int); ok {
+				start = s
+			}
+			if e, ok := result.Extra["end"].(int); ok {
+				end = e
+			}
+			search := ""
+			if s, ok := result.Extra["search"].(string); ok {
+				search = s
+				if len(search) > 20 {
+					search = search[:20] + "..."
+				}
+			}
+			if start > 0 {
+				return fmt.Sprintf("%s[Success] replaced lines %d-%d%s\n", ColorGreen, start, end, ColorReset)
+			}
+			count := 0
+			if c, ok := result.Extra["replacementsMade"].(int); ok {
+				count = c
 			}
 			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
 		case "patch":
@@ -800,6 +830,22 @@ AVAILABLE TOOLS:
      - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
+ 7. replace_lines
+    Description: Replace lines in a file. Supports two modes:
+      - Line-number mode: Provide start and end line numbers with replacement content
+      - Search-and-replace mode: Provide search text and replacement text (like replace_text)
+    Parameters:
+      - path (string, required): The path to the file
+      - start (integer, required for line-number mode): Starting line number (1-indexed)
+      - end (integer, required for line-number mode): Ending line number (1-indexed)
+      - lines (string, required for line-number mode): Replacement lines (use \n for newlines)
+      - search (string, required for search mode): Text pattern to find (exact match)
+      - replace (string, required for search mode): Replacement text
+      - count (integer, optional, search mode only): Number of occurrences to replace (default: 1, -1 for all)
+    How to call: Use replace_lines for bulk line replacements by number, or for search-and-replace. Prefer replace_text for simple search-and-replace since it supports the "count" parameter.
+    Example use case: Replacing a multi-line block of code with new content, or replacing all occurrences of a pattern across a file.
+    Note: When using line-number mode, if start > end, the tool returns an error. If lines is empty, it effectively deletes those lines.
+
 
 7. patch
    Description: Apply a unified diff patch to a file
@@ -971,6 +1017,47 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "replace_lines",
+				Description: "Replace lines in a file. Supports two modes: line-number mode (start/end) or search-and-replace mode (search/replace)",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to modify",
+						},
+						"start": {
+							Type:        "integer",
+							Description: "Starting line number (1-indexed) for line-number mode",
+						},
+						"end": {
+							Type:        "integer",
+							Description: "Ending line number (1-indexed) for line-number mode",
+						},
+						"lines": {
+							Type:        "string",
+							Description: "Replacement lines for line-number mode (use \\n for newlines). Empty string effectively deletes the lines.",
+						},
+						"search": {
+							Type:        "string",
+							Description: "Text pattern to find (exact match, not regex) for search-and-replace mode",
+						},
+						"replace": {
+							Type:        "string",
+							Description: "Replacement text for search-and-replace mode",
+						},
+						"count": {
+							Type:        "integer",
+							Description: "Number of occurrences to replace in search-and-replace mode (default: 1, -1 for all)",
+						},
+					},
+					Required: []string{"path"},
 				},
 			},
 		},

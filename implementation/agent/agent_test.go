@@ -196,6 +196,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 		"insert_lines",
 		"replace_text",
 		"patch",
+		"replace_lines",
 	}
 
 	for _, expected := range expectedNames {
@@ -249,6 +250,7 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 		{"insert_lines", "Insert lines at a specific line"},
 		{"replace_text", "Find and replace text"},
 		{"patch", "Apply a unified diff patch"},
+		{"replace_lines", "Replace lines in a file"},
 	}
 
 	for _, td := range toolDescriptions {
@@ -457,6 +459,34 @@ func TestFormatToolStatus_Success(t *testing.T) {
 			},
 			check: func(s string) bool {
 				return strings.Contains(s, "3 hunk")
+			},
+		},
+		{
+			name: "replace_lines success (line-number mode)",
+			tool: "replace_lines",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"start": 2,
+					"end":   5,
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "replaced lines") && strings.Contains(s, "2-5")
+			},
+		},
+		{
+			name: "replace_lines success (search mode)",
+			tool: "replace_lines",
+			result: &tools.ToolResult{
+				Success: true,
+				Extra: map[string]interface{}{
+					"replacementsMade": 3,
+					"search":           "foo",
+				},
+			},
+			check: func(s string) bool {
+				return strings.Contains(s, "replaced") && strings.Contains(s, "'foo'") && strings.Contains(s, "3 time(s)")
 			},
 		},
 		{
@@ -672,7 +702,7 @@ func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
 	prompt := buildSystemPrompt()
 
 	// Count occurrences of key phrases
-	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch"}
+	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch", "replace_lines"}
 	for _, name := range toolNames {
 		count := strings.Count(prompt, name)
 		// Tool should appear in tool definition and description, so at least 2 times
@@ -760,6 +790,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
 		"patch":        {"path", "diff"},
+	"replace_lines":  {"path"},
 	}
 
 	for _, tool := range toolDefs {
