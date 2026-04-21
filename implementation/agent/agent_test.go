@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -618,6 +619,219 @@ func TestShouldCompress_ContextBelowLimit(t *testing.T) {
 	// With few messages and large context, should not compress
 	if shouldCompress {
 		t.Error("Expected shouldCompress() to return false with minimal context relative to limit")
+	}
+}
+
+func TestSaveSession_SavesCorrectly(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Add some messages
+	agent.AddUserMessage("Hello, assistant!")
+	agent.AddAssistantMessage("Hi there! How can I help you today?")
+	agent.AddUserMessage("Tell me about Go.")
+
+	// Create temp file
+	tmpFile, err := os.CreateTemp("", "session-*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	// Save session
+	err = agent.SaveSession(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("SaveSession() error: %v", err)
+	}
+
+	// Verify file exists and is not empty
+	info, err := os.Stat(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to stat saved session file: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("Saved session file is empty")
+	}
+
+	// Verify JSON is valid
+	data, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to read saved session: %v", err)
+	}
+
+	var session SessionData
+	if err := json.Unmarshal(data, &session); err != nil {
+		t.Fatalf("Session file is not valid JSON: %v", err)
+	}
+
+	// Verify session data
+	if session.SystemPrompt == "" {
+		t.Error("Expected non-empty system prompt in saved session")
+	}
+	if len(session.Messages) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(session.Messages))
+	}
+	if session.Messages[0].Content != "Hello, assistant!" {
+		t.Errorf("Expected first message 'Hello, assistant!', got '%s'", session.Messages[0].Content)
+	}
+	if session.Timestamp == "" {
+		t.Error("Expected non-empty timestamp")
+	}
+	if len(session.ToolDefs) == 0 {
+		t.Error("Expected tool definitions to be saved")
+	}
+}
+
+func TestLoadSession_LoadsCorrectly(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Create and save a session
+	tmpFile, _ := os.CreateTemp("", "session-*.json")
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	agent.AddUserMessage("Original message")
+	agent.AddAssistantMessage("Original response")
+
+	err := agent.SaveSession(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to save session: %v", err)
+	}
+
+	// Create a new agent and load the session
+	cfg2 := config.DefaultConfig()
+	agent2 := NewAgent(cfg2)
+
+	// Verify context is empty initially
+	if len(agent2.context) != 0 {
+		t.Errorf("Expected empty context, got %d messages", len(agent2.context))
+	}
+
+	// Load session
+	err = agent2.LoadSession(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadSession() error: %v", err)
+	}
+
+	// Verify messages are restored
+	if len(agent2.context) != 2 { // 2 saved messages (system is stored separately)
+		t.Errorf("Expected 2 messages, got %d", len(agent2.context))
+	}
+	if agent2.context[0].Content != "Original message" {
+		t.Errorf("Expected first saved message 'Original message', got '%s'", agent2.context[0].Content)
+	}
+	if agent2.context[1].Content != "Original response" {
+		t.Errorf("Expected second saved message 'Original response', got '%s'", agent2.context[1].Content)
+	}
+
+	// Verify tool definitions are restored
+	tools := agent2.GetTools()
+	if len(tools) == 0 {
+		t.Error("Expected tool definitions to be restored")
+	}
+}
+
+func TestLoadSession_FileNotFound(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	err := agent.LoadSession("/nonexistent/path/session.json")
+	if err == nil {
+		t.Error("Expected error when loading non-existent file")
+	}
+}
+
+func TestLoadSession_InvalidJSON(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Create a temp file with invalid JSON
+	tmpFile, _ := os.CreateTemp("", "session-*.json")
+	tmpFile.WriteString("not valid json {{{")
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	err := agent.LoadSession(tmpFile.Name())
+	if err == nil {
+		t.Error("Expected error when loading invalid JSON file")
+	}
+}
+
+func TestSaveLoadRoundTrip(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent1 := NewAgent(cfg)
+
+	// Add messages with different roles
+	agent1.AddUserMessage("First question")
+	agent1.AddAssistantMessage("First answer")
+	agent1.AddUserMessage("Second question")
+	agent1.AddAssistantMessage("Second answer")
+
+	tmpFile, _ := os.CreateTemp("", "session-*.json")
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	// Save
+	err := agent1.SaveSession(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("SaveSession error: %v", err)
+	}
+
+	// Load into new agent
+	cfg2 := config.DefaultConfig()
+	agent2 := NewAgent(cfg2)
+
+	err = agent2.LoadSession(tmpFile.Name())
+	if err != nil {
+		t.Fatalf("LoadSession error: %v", err)
+	}
+
+	// Verify all messages match
+	if len(agent2.context) != 4 { // 4 saved messages (system is stored separately)
+		t.Errorf("Expected 4 messages, got %d", len(agent2.context))
+	}
+
+	// Verify message content
+	expectedContents := []string{
+		"First question",
+		"First answer",
+		"Second question",
+		"Second answer",
+	}
+	for i, expected := range expectedContents {
+		if agent2.context[i].Content != expected {
+			t.Errorf("Message %d: expected '%s', got '%s'", i+1, expected, agent2.context[i].Content)
+		}
+	}
+
+	// Verify system prompt is also restored
+	if agent2.GetSystemPrompt() == "" {
+		t.Error("Expected system prompt to be restored")
+	}
+}
+
+func TestSaveSession_DefaultFilename(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Use the default filename
+	tmpDir, err := os.MkdirTemp("", "session-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	defaultPath := tmpDir + "/session.json"
+	err = agent.SaveSession(defaultPath)
+	if err != nil {
+		t.Fatalf("SaveSession with default filename error: %v", err)
+	}
+
+	// Verify file was created at the expected path
+	if _, err := os.Stat(defaultPath); os.IsNotExist(err) {
+		t.Error("Expected session.json to be created at specified path")
 	}
 }
 

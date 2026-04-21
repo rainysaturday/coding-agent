@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
@@ -379,6 +380,91 @@ func (a *Agent) ClearContext() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.context = make([]*inference.Message, 0)
+}
+
+// SessionData represents a saved conversation session.
+type SessionData struct {
+	SystemPrompt string              `json:"system_prompt"`
+	Messages     []*inference.Message `json:"messages"`
+	Stats        *Stats              `json:"stats"`
+	Timestamp    string              `json:"timestamp"`
+	ToolDefs     []inference.ToolDefinition `json:"tool_definitions,omitempty"`
+}
+
+// SaveSession saves the current conversation session to a file.
+func (a *Agent) SaveSession(filepath string) error {
+	a.mu.Lock()
+	messages := make([]*inference.Message, len(a.context))
+	for i, msg := range a.context {
+		msgCopy := *msg
+		messages[i] = &msgCopy
+	}
+	systemPrompt := a.systemPrompt
+	statsCopy := *a.stats
+	toolsCopy := make([]inference.ToolDefinition, len(a.inference.GetTools()))
+	for i, t := range a.inference.GetTools() {
+		toolsCopy[i] = t
+	}
+	a.mu.Unlock()
+
+	session := &SessionData{
+		SystemPrompt: systemPrompt,
+		Messages:     messages,
+		Stats:        &statsCopy,
+		Timestamp:    time.Now().Format(time.RFC3339),
+		ToolDefs:     toolsCopy,
+	}
+
+	jsonData, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal session: %w", err)
+	}
+
+	if err := os.WriteFile(filepath, jsonData, 0644); err != nil {
+		return fmt.Errorf("failed to write session file: %w", err)
+	}
+
+	return nil
+}
+
+// LoadSession loads a conversation session from a file.
+func (a *Agent) LoadSession(filepath string) error {
+	jsonData, err := os.ReadFile(filepath)
+	if err != nil {
+		return fmt.Errorf("failed to read session file: %w", err)
+	}
+
+	var session SessionData
+	if err := json.Unmarshal(jsonData, &session); err != nil {
+		return fmt.Errorf("failed to parse session file: %w", err)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Restore system prompt
+	a.systemPrompt = session.SystemPrompt
+
+	// Restore messages
+	a.context = make([]*inference.Message, len(session.Messages))
+	copy(a.context, session.Messages)
+
+	// Restore stats
+	a.stats = session.Stats
+	if a.stats == nil {
+		a.stats = &Stats{}
+	}
+
+	// Restore tool definitions
+	if len(session.ToolDefs) > 0 {
+		a.inference.SetTools(session.ToolDefs)
+	}
+
+	// Recalculate input tokens from the restored context
+	a.stats.InputTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
+	a.stats.OutputTokens = 0
+
+	return nil
 }
 
 // AddUserMessage adds a user message to the context.
@@ -783,6 +869,11 @@ func buildSystemPrompt() string {
 	return fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
 
 %s
+
+## Session Management
+In interactive mode, you can use these commands:
+- '/save [filename]' - Save the current conversation session (default: session.json)
+- '/load <filename>' - Load a previous conversation session to continue where you left off
 
 TOOL CALLING FORMAT:
 - When you need to use a tool, the API will return a response containing tool calls

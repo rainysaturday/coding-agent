@@ -274,7 +274,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Commands start with '/': /stats, /clear, /clear-history")
+	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /save, /load")
 	fmt.Println()
 
 	// Initialize TUI
@@ -351,10 +351,41 @@ func runInteractiveMode(cfg *config.Config) error {
 			case "clear-history":
 				tuiInstance.ClearHistory()
 				continue
+			case "save":
+				// Parse optional filename argument
+				filename := "session.json"
+				if parts := strings.SplitN(command, " ", 2); len(parts) > 1 {
+					filename = strings.TrimSpace(parts[1])
+				}
+				err = ag.SaveSession(filename)
+				if err != nil {
+					fmt.Printf("Error saving session: %v\n", err)
+				} else {
+					stats := ag.GetStats()
+					fmt.Printf("Session saved to %s (%d steps, %d tokens)\n", filename, stats.Iterations, stats.InputTokens+stats.OutputTokens)
+				}
+				continue
+			case "load":
+				// Parse filename argument
+				parts := strings.SplitN(command, " ", 2)
+				if len(parts) < 2 {
+					fmt.Println("Usage: /load <filename>")
+					fmt.Println("Example: /load session.json")
+					continue
+				}
+				filename := strings.TrimSpace(parts[1])
+				err = ag.LoadSession(filename)
+				if err != nil {
+					fmt.Printf("Error loading session: %v\n", err)
+				} else {
+					stats := ag.GetStats()
+					fmt.Printf("Session loaded from %s (%d steps, context size: %d tokens)\n", filename, stats.Iterations, stats.InputTokens)
+				}
+				continue
 			default:
 				// Unknown command - show error
 				fmt.Printf("Unknown command: /%s\n", command)
-				fmt.Println("Available commands: /stats, /clear, /clear-history")
+				fmt.Println("Available commands: /stats, /clear, /clear-history, /save, /load")
 				continue
 			}
 		}

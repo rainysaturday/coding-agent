@@ -32,6 +32,7 @@ All requirements are in the `requirements/` folder, numbered sequentially:
 - **001-010**: Core features (Go runtime, TUI, statistics, tools, inference)
 - **011-020**: Tool implementations (read_lines, insert_lines, etc.)
 - **021-029**: Advanced features (versioning, one-shot mode, debug, environment info)
+- **030-034**: Extended features (patch tool, GitHub Copilot, glob search, replace_lines, conversation save/load)
 
 To find requirements for a feature:
 1. List requirements: `ls requirements/`

@@ -8,6 +8,9 @@
 - **#024: Zero External Dependencies** - No external Go modules, stdlib only
 - **#023: Versioning** - Git commit hash, dirty status, build time embedding
 
+### Session Management
+- **#034: Conversation Save/Load** - Save and restore conversation sessions with /save and /load commands, JSON format
+
 ### File System Tools
 - **#033: File Search Tool** - Glob pattern file discovery with recursive ** support, metadata output
 
@@ -65,4 +68,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**33 / 33 features implemented**
+**34 / 34 features implemented**
