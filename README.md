@@ -125,6 +125,113 @@ else
     exit 1
 fi
 ```
+## GitHub Copilot Setup
+
+The coding agent harness supports GitHub Copilot as an inference backend via the `https://api.githubcopilot.com` endpoint. This requires a Copilot user token (starting with `ghu_`).
+
+### Quick Start with Copilot
+
+```bash
+# Set up environment variables
+export CODING_AGENT_API_ENDPOINT="https://api.githubcopilot.com"
+export GITHUB_TOKEN="ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+export CODING_AGENT_MODEL="gpt-4o"
+
+# Start interactive mode
+coding-agent
+```
+
+### Alternative: GitHub Models API
+
+If you have a GitHub Personal Access Token (PAT) instead of a Copilot token, use the GitHub Models API:
+
+```bash
+# Set up environment variables
+export CODING_AGENT_API_ENDPOINT="https://models.github.ai"
+export CODING_AGENT_API_KEY="$(gh auth token)"  # or your github_pat_... token
+export CODING_AGENT_MODEL="openai/gpt-4.1"
+
+# Start interactive mode
+coding-agent
+```
+
+### Available Copilot Models
+
+| Model | Context Size | Notes |
+|-------|-------------|-------|
+| `gpt-4o` | 128k | Default, general purpose |
+| `gpt-4o-mini` | 128k | Faster, lower cost |
+| `claude-sonnet-4` | 200k | Strong coding performance |
+| `o3-mini` | 128k | Reasoning model |
+
+### Configuration Methods
+
+**Environment Variables:**
+```bash
+export CODING_AGENT_API_ENDPOINT="https://api.githubcopilot.com"
+export GITHUB_TOKEN="ghu_..."          # Copilot user token
+# Or: export CODING_AGENT_API_KEY="ghu_..."
+export CODING_AGENT_MODEL="gpt-4o"
+```
+
+**Config File** (`copilot-config.txt`):
+```ini
+api_endpoint=https://api.githubcopilot.com
+api_key=ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+model=gpt-4o
+context_size=128000
+max_iterations=1000
+```
+
+```bash
+coding-agent --config copilot-config.txt
+```
+
+**CLI Flags:**
+```bash
+coding-agent \
+  --api-endpoint https://api.githubcopilot.com \
+  --api-key "$GITHUB_TOKEN" \
+  --model gpt-4o \
+  -p "Create a REST API"
+```
+
+### Token Resolution Order
+
+When connecting to a Copilot endpoint, the API key is resolved in this order (highest priority first):
+
+1. `--api-key` CLI flag
+2. `CODING_AGENT_API_KEY` environment variable
+3. `GITHUB_TOKEN` environment variable (only when endpoint is `githubcopilot.com`)
+4. `api_key` field in config file
+
+⚠️ **Important:** A PAT (`github_pat_...`) in `CODING_AGENT_API_KEY` will override a valid Copilot token in `GITHUB_TOKEN`. If you encounter authentication errors, check for unintended overrides.
+
+### Troubleshooting Copilot Connections
+
+**Authentication failed (401):**
+```
+Error: API authentication failed (HTTP 401)
+Ensure your GITHUB_TOKEN or --api-key is a valid GitHub Copilot token.
+Generate one at: https://github.com/settings/tokens
+```
+
+**PAT used on Copilot endpoint:**
+```
+Error: API error (HTTP 400) - checking third-party user token: bad request
+hint: api.githubcopilot.com does not accept Personal Access Tokens (github_pat).
+Use a Copilot user token (ghu_) for this endpoint.
+Alternatively switch to CODING_AGENT_API_ENDPOINT=https://models.github.ai
+```
+
+**Rate limited (429):**
+The agent will automatically retry with appropriate backoff. Copilot rate limit headers are respected.
+
+**Model not available:**
+```
+Error: Model "gpt-4-turbo" is not available on GitHub Copilot
+```
+Try one of the available models listed above.
 
 ## Project Structure
 

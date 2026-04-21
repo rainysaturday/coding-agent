@@ -122,6 +122,8 @@ func displayHelp() {
 	fmt.Println("      --max-iterations int Maximum iterations for loop protection (default: 1000)")
 	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 7200)")
 	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 7200)")
+	fmt.Println("      --api-endpoint string  API endpoint URL (default: \"http://localhost:8080\")")
+	fmt.Println("      --api-key string       API key for authentication")
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
 	fmt.Println("      --output file        Write results to file")
@@ -137,6 +139,16 @@ func displayHelp() {
 	fmt.Println("  coding-agent --debug")
 	fmt.Println("  coding-agent --debug --debug-log /tmp/agent-debug.log")
 	fmt.Println("  coding-agent -p \"Task\" --debug")
+	fmt.Println()
+	fmt.Println("GitHub Copilot setup:")
+	fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://api.githubcopilot.com\"")
+	fmt.Println("  export GITHUB_TOKEN=\"ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"")
+	fmt.Println("  coding-agent --model gpt-4o")
+	fmt.Println()
+	fmt.Println("GitHub Models setup (official API):")
+	fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://models.github.ai\"")
+	fmt.Println("  export CODING_AGENT_API_KEY=\"github_pat_xxxxxxxxxxxxxxxxxxxx\"")
+	fmt.Println("  coding-agent --model openai/gpt-4.1")
 }
 
 func runOneShotMode(cfg *config.Config) error {

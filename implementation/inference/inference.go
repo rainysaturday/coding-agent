@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,6 +92,7 @@ type APIToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+	Index    *int         `json:"index,omitempty"` // Index in streaming deltas
 }
 
 // FunctionCall represents the function part of a tool call.
@@ -155,6 +157,29 @@ func (ic *InferenceClient) GetTools() []ToolDefinition {
 	return ic.tools
 }
 
+// isCopilotEndpoint checks if the endpoint is a GitHub Copilot URL.
+func (ic *InferenceClient) isCopilotEndpoint() bool {
+	return strings.Contains(ic.endpoint, "githubcopilot.com")
+}
+
+// isGitHubModelsEndpoint checks if the endpoint is a GitHub Models URL.
+func (ic *InferenceClient) isGitHubModelsEndpoint() bool {
+	return strings.Contains(ic.endpoint, "models.github.ai")
+}
+
+// buildURL constructs the full API URL based on the endpoint type.
+// Copilot uses /chat/completions, GitHub Models uses /inference/chat/completions,
+// and all other endpoints use the default /v1/chat/completions.
+func (ic *InferenceClient) buildURL() string {
+	if ic.isCopilotEndpoint() {
+		return ic.endpoint + "/chat/completions"
+	}
+	if ic.isGitHubModelsEndpoint() {
+		return ic.endpoint + "/inference/chat/completions"
+	}
+	return ic.endpoint + "/v1/chat/completions"
+}
+
 // InferenceRequest sends a request to the inference backend.
 func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
 	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, nil)
@@ -211,8 +236,8 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 			}
 		}
 
-		// Create HTTP request
-		req, err := http.NewRequestWithContext(ctx, "POST", ic.endpoint+"/v1/chat/completions", bytes.NewReader(jsonData))
+		// Create HTTP request using buildURL() for endpoint-aware path construction
+		req, err := http.NewRequestWithContext(ctx, "POST", ic.buildURL(), bytes.NewReader(jsonData))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -222,6 +247,12 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 			req.Header.Set("Authorization", "Bearer "+ic.apiKey)
 		}
 
+		// Add Copilot-specific headers when needed
+		if ic.isCopilotEndpoint() {
+			req.Header.Set("Copilot-Integration-Id", "coding-agent")
+			req.Header.Set("Editor-Version", "coding-agent/1.0")
+		}
+
 		// Make request
 		resp, err := ic.client.Do(req)
 		if err != nil {
@@ -229,14 +260,70 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 			continue
 		}
 
+		// Handle 429 rate limiting - retry with backoff
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := resp.Header.Get("Retry-After")
+			var retryDelay time.Duration
+			if retryAfter != "" {
+				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+					retryDelay = time.Duration(seconds) * time.Second
+				} else {
+					retryDelay = ic.retryDelay
+				}
+			} else {
+				retryDelay = ic.retryDelay
+			}
+
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if attempt < ic.maxRetries {
+				// Log retry attempt for debugging
+				if len(body) > 0 {
+					lastErr = fmt.Errorf("API rate limited (429, attempt %d): %s - retrying in %v", attempt+1, string(body), retryDelay)
+				} else {
+					lastErr = fmt.Errorf("API rate limited (429, attempt %d) - retrying in %v", attempt+1, retryDelay)
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(retryDelay):
+				}
+				continue
+			}
+			return nil, fmt.Errorf("API rate limited (429) after %d retries", ic.maxRetries)
+		}
+
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			// Only retry on server errors (5xx), not client errors (4xx)
+
+			// Handle authentication errors with specific guidance
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				errorMsg := fmt.Sprintf("API authentication failed (HTTP %d)", resp.StatusCode)
+				if ic.isCopilotEndpoint() {
+					errorMsg += "\nEnsure your GITHUB_TOKEN or --api-key is a valid GitHub Copilot token.\nGenerate one at: https://github.com/settings/tokens"
+				}
+				return nil, fmt.Errorf(errorMsg)
+			}
+
+			// Handle bad request errors with Copilot-specific guidance
+			if resp.StatusCode == http.StatusBadRequest {
+				errorMsg := fmt.Sprintf("API error (HTTP %d) - %s", resp.StatusCode, string(body))
+				if ic.isCopilotEndpoint() {
+					if strings.Contains(string(body), "third-party user token") || strings.Contains(string(body), "Personal Access Token") {
+						errorMsg += "\nhint: api.githubcopilot.com does not accept Personal Access Tokens (github_pat). Use a Copilot user token (ghu_) for this endpoint.\nAlternatively switch to CODING_AGENT_API_ENDPOINT=https://models.github.ai when using PAT/OAuth tokens"
+					}
+				}
+				return nil, fmt.Errorf(errorMsg)
+			}
+
+			// Retry on server errors (5xx), not client errors (4xx)
 			if resp.StatusCode >= 500 {
 				lastErr = fmt.Errorf("API error (attempt %d): %d - %s", attempt+1, resp.StatusCode, string(body))
 				continue
 			}
+
+			// For other non-OK status codes, return error without retry
 			return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(body))
 		}
 
@@ -380,45 +467,202 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var toolCallsList []*accumulatedToolCall
 	// Track which tool calls we've already notified about
 	notifiedToolCalls := make(map[int]bool)
+	// Track the last active tool call index for continuation deltas
+	lastActiveToolCallIndex := -1
 
 	scanner := bufio.NewScanner(body)
+	var jsonBuffer strings.Builder
+	inJSON := false
+
+	// Declare chunk for JSON parsing - used for both single-line and multi-line SSE
+	var chunk struct {
+		Choices []struct {
+			Delta struct {
+				Content   string        `json:"content"`
+				Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
+				ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
+			} `json:"delta"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+		Timings struct {
+			PromptN    int `json:"prompt_n"`
+			PredictedN int `json:"predicted_n"`
+		} `json:"timings"`
+	}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Skip empty lines and non-SSE data
-		if !strings.HasPrefix(line, "data: ") {
+		// Handle SSE data lines
+		if strings.HasPrefix(line, "data: ") {
+			// If we were accumulating multi-line JSON, flush and process it first
+			if inJSON && jsonBuffer.Len() > 0 {
+				inJSON = false
+				var bufferChunk struct {
+					Choices []struct {
+						Delta struct {
+							Content   string        `json:"content"`
+							Reasoning string        `json:"reasoning"`
+							ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
+						} `json:"delta"`
+						FinishReason string `json:"finish_reason"`
+					} `json:"choices"`
+					Usage struct {
+						PromptTokens     int `json:"prompt_tokens"`
+						CompletionTokens int `json:"completion_tokens"`
+						TotalTokens      int `json:"total_tokens"`
+					} `json:"usage"`
+					Timings struct {
+						PromptN    int `json:"prompt_n"`
+						PredictedN int `json:"predicted_n"`
+					} `json:"timings"`
+				}
+				if err := json.Unmarshal([]byte(jsonBuffer.String()), &bufferChunk); err != nil {
+					jsonBuffer.Reset()
+				} else {
+					// Process the buffered chunk data immediately
+					if len(bufferChunk.Choices) > 0 {
+						if bufferChunk.Choices[0].Delta.Content != "" {
+							fullContent.WriteString(bufferChunk.Choices[0].Delta.Content)
+						}
+						if bufferChunk.Choices[0].Delta.Reasoning != "" {
+							reasoningContent.WriteString(bufferChunk.Choices[0].Delta.Reasoning)
+						}
+						if len(bufferChunk.Choices[0].Delta.ToolCalls) > 0 {
+							for _, deltaTC := range bufferChunk.Choices[0].Delta.ToolCalls {
+								targetIndex := -1
+								if deltaTC.Index != nil && *deltaTC.Index >= 0 {
+									targetIndex = *deltaTC.Index
+								}
+								if targetIndex == -1 && deltaTC.ID != "" {
+									for i, tc := range toolCallsList {
+										if tc.ID == deltaTC.ID {
+											targetIndex = i
+											break
+										}
+									}
+								}
+								if targetIndex == -1 && deltaTC.ID == "" && deltaTC.Function.Name == "" && len(toolCallsList) > 0 {
+									if deltaTC.Function.Arguments != "" {
+										found := false
+										for i, tc := range toolCallsList {
+											if tc.Arguments == "" {
+												targetIndex = i
+												found = true
+												break
+											}
+										}
+										if !found {
+											targetIndex = lastActiveToolCallIndex
+											if targetIndex < 0 {
+												targetIndex = len(toolCallsList) - 1
+											}
+										}
+									}
+								}
+								if targetIndex == -1 {
+									targetIndex = len(toolCallsList)
+								}
+								for len(toolCallsList) <= targetIndex {
+									toolCallsList = append(toolCallsList, &accumulatedToolCall{})
+								}
+								existing := toolCallsList[targetIndex]
+								if deltaTC.ID != "" || deltaTC.Function.Name != "" {
+									lastActiveToolCallIndex = targetIndex
+								}
+								if deltaTC.ID != "" {
+									existing.ID = deltaTC.ID
+								}
+								if deltaTC.Type != "" {
+									existing.Type = deltaTC.Type
+								} else if existing.Type == "" {
+									existing.Type = "function"
+								}
+								if deltaTC.Function.Name != "" {
+									existing.Name = deltaTC.Function.Name
+								}
+								if deltaTC.Function.Arguments != "" {
+									existing.Arguments += deltaTC.Function.Arguments
+								}
+								if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
+									toolName := deltaTC.Function.Name
+									notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
+									callback(StreamingChunk{
+										Text:        notification,
+										ContentType: StreamingContentTypeNormal,
+									})
+									notifiedToolCalls[targetIndex] = true
+								}
+							}
+						}
+						if bufferChunk.Usage.TotalTokens > 0 {
+							totalTokens = bufferChunk.Usage.TotalTokens
+							inputTokens = bufferChunk.Usage.PromptTokens
+							outputTokens = bufferChunk.Usage.CompletionTokens
+						} else if bufferChunk.Timings.PredictedN > 0 {
+							inputTokens = bufferChunk.Timings.PromptN
+							outputTokens = bufferChunk.Timings.PredictedN
+							totalTokens = inputTokens + outputTokens
+						}
+					}
+					jsonBuffer.Reset()
+				}
+			} else if inJSON {
+				jsonBuffer.Reset()
+			}
+
+			// Reset inJSON since we're now handling a new data line
+			inJSON = false
+
+			data := strings.TrimPrefix(line, "data: ")
+
+			// Check for end of stream
+			if data == "[DONE]" {
+				break
+			}
+
+			// Reset chunk before unmarshaling to prevent stale data from persisting
+			// json.Unmarshal does not clear existing slice values, so we must reset manually
+			chunk = struct {
+				Choices []struct {
+					Delta struct {
+						Content   string        `json:"content"`
+						Reasoning string        `json:"reasoning"`
+						ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
+					} `json:"delta"`
+					FinishReason string `json:"finish_reason"`
+				} `json:"choices"`
+				Usage struct {
+					PromptTokens     int `json:"prompt_tokens"`
+					CompletionTokens int `json:"completion_tokens"`
+					TotalTokens      int `json:"total_tokens"`
+				} `json:"usage"`
+				Timings struct {
+					PromptN    int `json:"prompt_n"`
+					PredictedN int `json:"predicted_n"`
+				} `json:"timings"`
+			}{}
+
+			// Try to parse as complete JSON first
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				// If it failed, check if this is a multi-line JSON blob
+				// by seeing if the data looks like it's incomplete
+				jsonBuffer.WriteString(data)
+				inJSON = true
+				continue
+			}
+		} else if inJSON {
+			// We are in the middle of accumulating multi-line JSON,
+			// append this line (without SSE prefix) to the buffer
+			jsonBuffer.WriteString(line)
 			continue
-		}
-
-		data := strings.TrimPrefix(line, "data: ")
-
-		// Check for end of stream
-		if data == "[DONE]" {
-			break
-		}
-
-		// Parse SSE data
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content   string        `json:"content"`
-					Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
-					ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
-				} `json:"delta"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-			Usage struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			} `json:"usage"`
-			Timings struct {
-				PromptN    int `json:"prompt_n"`
-				PredictedN int `json:"predicted_n"`
-			} `json:"timings"`
-		}
-
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		} else {
+			// Skip empty lines and non-SSE data when not accumulating JSON
 			continue
 		}
 
@@ -438,16 +682,22 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 
 			// Accumulate tool calls from streaming delta
 			// Tool calls come in partial chunks that need to be merged
+			// Deltas may arrive with an index field indicating which tool call they belong to
+			// or without an index (continuation of the current tool call being built)
 			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
 				for _, deltaTC := range chunk.Choices[0].Delta.ToolCalls {
 					// Determine which tool call this delta belongs to
-					// If the tool call has an ID, look for an existing one with that ID
-					// If no ID or not found, check if we should merge with the last tool call
+					// Priority: index field > ID lookup > continuation of last active tool call
 
 					targetIndex := -1
 
-					// First, try to find by ID
-					if deltaTC.ID != "" {
+					// 1. Try to use the index field if present
+					if deltaTC.Index != nil && *deltaTC.Index >= 0 {
+						targetIndex = *deltaTC.Index
+					}
+
+					// 2. If no index, try to find by ID
+					if targetIndex == -1 && deltaTC.ID != "" {
 						for i, tc := range toolCallsList {
 							if tc.ID == deltaTC.ID {
 								targetIndex = i
@@ -456,12 +706,25 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 						}
 					}
 
-					// If not found by ID and this chunk has no ID or no name,
-					// it might be a continuation of the last tool call
-					if targetIndex == -1 && (deltaTC.ID == "" && deltaTC.Function.Name == "") && len(toolCallsList) > 0 {
-						// Check if this chunk has arguments (indicating it's a continuation)
+					// 3. If still not found and this is a continuation delta (no ID, no name),
+					// find the first tool call that has empty arguments to match it correctly
+					if targetIndex == -1 && deltaTC.ID == "" && deltaTC.Function.Name == "" && len(toolCallsList) > 0 {
 						if deltaTC.Function.Arguments != "" {
-							targetIndex = len(toolCallsList) - 1
+							// Find the first tool call with empty arguments to match continuation correctly
+							found := false
+							for i, tc := range toolCallsList {
+								if tc.Arguments == "" {
+									targetIndex = i
+									found = true
+									break
+								}
+							}
+							if !found {
+								targetIndex = lastActiveToolCallIndex
+								if targetIndex < 0 {
+									targetIndex = len(toolCallsList) - 1
+								}
+							}
 						}
 					}
 
@@ -477,10 +740,22 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 
 					existing := toolCallsList[targetIndex]
 
+					// Update last active tool call index when we see a new tool call start
+					if deltaTC.ID != "" || deltaTC.Function.Name != "" {
+						lastActiveToolCallIndex = targetIndex
+					}
+
 					// Merge with existing tool call - accumulate fields
 					// ID
 					if deltaTC.ID != "" {
 						existing.ID = deltaTC.ID
+					}
+					// Type - normalize empty values to "function" for Copilot compatibility
+					// This prevents errors like: Invalid value: ''. Supported values are: 'function', 'allowed_tools', and 'custom'.
+					if deltaTC.Type != "" {
+						existing.Type = deltaTC.Type
+					} else if existing.Type == "" {
+						existing.Type = "function"
 					}
 					// Name typically comes first and doesn't change
 					if deltaTC.Function.Name != "" {
@@ -489,10 +764,6 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					// Arguments are streamed as incremental JSON string fragments
 					if deltaTC.Function.Arguments != "" {
 						existing.Arguments += deltaTC.Function.Arguments
-					}
-					// Type should be consistent
-					if deltaTC.Type != "" {
-						existing.Type = deltaTC.Type
 					}
 
 					// Notify about new tool call if callback is available
@@ -556,6 +827,12 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 		// Skip empty tool calls (those that were only created for merging)
 		if accTC.Name == "" && accTC.Arguments == "" {
 			continue
+		}
+
+		// Ensure type is set for compatibility - normalize empty values to "function"
+		// This prevents errors from models that don't include type in streaming deltas
+		if accTC.Type == "" {
+			accTC.Type = "function"
 		}
 
 		// Create API tool call for reference

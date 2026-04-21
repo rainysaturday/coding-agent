@@ -164,6 +164,12 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.ContextSize = ctxSize
 		case "--no-stream":
 			cfg.Streaming = false
+		case "--api-endpoint":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--api-endpoint requires an argument")
+			}
+			i++
+			cfg.APIEndpoint = args[i]
 		case "--connection-timeout":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--connection-timeout requires an argument")
@@ -202,6 +208,12 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.DebugLog = args[i]
+	case "--api-key":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--api-key requires an argument")
+			}
+			i++
+			cfg.APIKey = args[i]
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -354,6 +366,15 @@ func loadEnv(cfg *Config) {
 	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
 		cfg.DebugLog = val
 	}
+
+	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL
+	if cfg.APIKey == "" {
+		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
+			if isGitHubCopilotEndpoint(cfg.APIEndpoint) {
+				cfg.APIKey = val
+			}
+		}
+	}
 }
 
 // Validate validates the configuration.
@@ -375,4 +396,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("read timeout must be at least 10 seconds")
 	}
 	return nil
+}
+
+// isGitHubCopilotEndpoint checks if the endpoint is a GitHub Copilot URL.
+// This is used to conditionally apply Copilot-specific behavior.
+func isGitHubCopilotEndpoint(endpoint string) bool {
+	return strings.Contains(endpoint, "githubcopilot.com")
 }
