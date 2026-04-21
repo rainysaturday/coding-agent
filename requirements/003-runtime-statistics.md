@@ -4,10 +4,10 @@
 The harness must track and display basic runtime statistics during execution.
 
 ## Acceptance Criteria
-- [ ] Display total input tokens processed
-- [ ] Display total output tokens generated
-- [ ] Display tokens per second rate
-- [ ] Display total number of tool calls
-- [ ] Display number of failed tool calls
-- [ ] Statistics update in real-time or on demand
-- [ ] Statistics can be reset or shown in summary
+- [x] Display total input tokens processed
+- [x] Display total output tokens generated
+- [x] Display tokens per second rate
+- [x] Display total number of tool calls
+- [x] Display number of failed tool calls
+- [x] Statistics update in real-time or on demand
+- [x] Statistics can be reset or shown in summary

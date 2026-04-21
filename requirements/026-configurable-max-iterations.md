@@ -4,16 +4,16 @@
 The coding agent harness must support a configurable maximum iteration limit to prevent infinite loops when the agent is stuck in a cycle of tool calls. This provides a safety mechanism that allows the user to intervene when the agent is not making progress.
 
 ## Acceptance Criteria
-- [ ] Maximum iterations is configurable via command-line flag (`--max-iterations`)
-- [ ] Maximum iterations is configurable via environment variable (`CODING_AGENT_MAX_ITERATIONS`)
-- [ ] Maximum iterations is configurable via config file (`max_iterations`)
-- [ ] Default maximum iterations is 1000
-- [ ] Maximum iterations can be set as positive integer value
-- [ ] Validation ensures max iterations is positive
-- [ ] Agent stops and reports error when max iterations exceeded
-- [ ] Iteration count is tracked and displayed in statistics
-- [ ] User is notified when approaching max iterations (optional warning)
-- [ ] Max iterations is included in help documentation
+- [x] Maximum iterations is configurable via command-line flag (`--max-iterations`)
+- [x] Maximum iterations is configurable via environment variable (`CODING_AGENT_MAX_ITERATIONS`)
+- [x] Maximum iterations is configurable via config file (`max_iterations`)
+- [x] Default maximum iterations is 1000
+- [x] Maximum iterations can be set as positive integer value
+- [x] Validation ensures max iterations is positive
+- [x] Agent stops and reports error when max iterations exceeded
+- [x] Iteration count is tracked and displayed in statistics
+- [x] User is notified when approaching max iterations (optional warning)
+- [x] Max iterations is included in help documentation
 
 ## Configuration
 
@@ -162,22 +162,22 @@ for {
 ## Testing Requirements
 
 ### Unit Tests
-- [ ] Default max iterations is 1000
-- [ ] Command-line flag sets max iterations correctly
-- [ ] Environment variable sets max iterations correctly
-- [ ] Config file sets max iterations correctly
-- [ ] Command-line overrides environment variable
-- [ ] Environment variable overrides config file
-- [ ] Invalid values are rejected with proper error
-- [ ] Agent stops when max iterations exceeded
-- [ ] Iteration count is accurate
+- [x] Default max iterations is 1000
+- [x] Command-line flag sets max iterations correctly
+- [x] Environment variable sets max iterations correctly
+- [x] Config file sets max iterations correctly
+- [x] Command-line overrides environment variable
+- [x] Environment variable overrides config file
+- [x] Invalid values are rejected with proper error
+- [x] Agent stops when max iterations exceeded
+- [x] Iteration count is accurate
 
 ### Integration Tests
-- [ ] Agent completes task within iteration limit
-- [ ] Agent stops at iteration limit with error
-- [ ] Statistics show correct iteration count
-- [ ] Error message includes iteration limit
-- [ ] Context is preserved after iteration limit
+- [x] Agent completes task within iteration limit
+- [x] Agent stops at iteration limit with error
+- [x] Statistics show correct iteration count
+- [x] Error message includes iteration limit
+- [x] Context is preserved after iteration limit
 
 ## Security Considerations
 - Prevents resource exhaustion from infinite loops

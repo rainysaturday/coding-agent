@@ -6,21 +6,21 @@ The harness must support a `patch` tool that allows updating files based on stan
 
 ## Acceptance Criteria
 
-- [ ] Tool named `patch` is available
-- [ ] Accepts file path as input parameter
-- [ ] Accepts diff content as input parameter (unified diff format)
-- [ ] Applies the diff patch to the specified file
-- [ ] Validates the patch can be applied before making changes
-- [ ] Returns success/failure status with details
-- [ ] Provides clear error messages when patch fails
-- [ ] Handles patches that don't match file content gracefully
-- [ ] Handles file not found errors gracefully
-- [ ] Handles permission errors gracefully
-- [ ] Handles invalid diff format gracefully
-- [ ] Tool call failures are tracked in statistics
-- [ ] Supports multiple hunk patches in a single diff
-- [ ] Supports context lines in patches
-- [ ] Supports addition (+), deletion (-), and context ( ) lines
+- [x] Tool named `patch` is available
+- [x] Accepts file path as input parameter
+- [x] Accepts diff content as input parameter (unified diff format)
+- [x] Applies the diff patch to the specified file
+- [x] Validates the patch can be applied before making changes
+- [x] Returns success/failure status with details
+- [x] Provides clear error messages when patch fails
+- [x] Handles patches that don't match file content gracefully
+- [x] Handles file not found errors gracefully
+- [x] Handles permission errors gracefully
+- [x] Handles invalid diff format gracefully
+- [x] Tool call failures are tracked in statistics
+- [x] Supports multiple hunk patches in a single diff
+- [x] Supports context lines in patches
+- [x] Supports addition (+), deletion (-), and context ( ) lines
 
 ## Tool Definition (OpenAI Format)
 
@@ -287,35 +287,35 @@ Agent:
 
 ### Unit Tests
 
-- [ ] Parse valid unified diff format
-- [ ] Parse multiple hunks correctly
-- [ ] Handle single-line additions
-- [ ] Handle single-line deletions
-- [ ] Handle line modifications
-- [ ] Handle empty hunks
-- [ ] Detect invalid diff format
-- [ ] Match context lines correctly
+- [x] Parse valid unified diff format
+- [x] Parse multiple hunks correctly
+- [x] Handle single-line additions
+- [x] Handle single-line deletions
+- [x] Handle line modifications
+- [x] Handle empty hunks
+- [x] Detect invalid diff format
+- [x] Match context lines correctly
 
 ### Integration Tests
 
-- [ ] Apply patch to existing file
-- [ ] Handle file not found
-- [ ] Handle permission errors
-- [ ] Handle context mismatch
-- [ ] Apply multi-hunk patches
-- [ ] Verify file content after patch
-- [ ] Preserve file permissions
-- [ ] Rollback on failure (no partial changes)
+- [x] Apply patch to existing file
+- [x] Handle file not found
+- [x] Handle permission errors
+- [x] Handle context mismatch
+- [x] Apply multi-hunk patches
+- [x] Verify file content after patch
+- [x] Preserve file permissions
+- [x] Rollback on failure (no partial changes)
 
 ### Edge Cases
 
-- [ ] Patch for non-existent file
-- [ ] Empty diff string
-- [ ] Malformed hunk headers
-- [ ] Negative line numbers
-- [ ] Very large diffs
-- [ ] Binary file patches (should fail gracefully)
-- [ ] Unicode content in patches
+- [x] Patch for non-existent file
+- [x] Empty diff string
+- [x] Malformed hunk headers
+- [x] Negative line numbers
+- [x] Very large diffs
+- [x] Binary file patches (should fail gracefully)
+- [x] Unicode content in patches
 
 ## Security Considerations
 
@@ -340,21 +340,21 @@ Agent:
 
 ## Acceptance Checklist
 
-- [ ] Tool named `patch` is available
-- [ ] Accepts file path parameter
-- [ ] Accepts diff content parameter
-- [ ] Applies unified diff patches correctly
-- [ ] Validates diff format before applying
-- [ ] Returns success/failure status
-- [ ] Provides clear error messages
-- [ ] Handles context line matching
-- [ ] Supports multiple hunks
-- [ ] Supports additions, deletions, modifications
-- [ ] Handles file not found gracefully
-- [ ] Handles permission errors gracefully
-- [ ] Handles invalid diff format gracefully
-- [ ] Does not modify file on failure
-- [ ] Tracks failures in statistics
-- [ ] Implementation uses Go standard library only
-- [ ] Unit tests pass
-- [ ] Integration tests pass
+- [x] Tool named `patch` is available
+- [x] Accepts file path parameter
+- [x] Accepts diff content parameter
+- [x] Applies unified diff patches correctly
+- [x] Validates diff format before applying
+- [x] Returns success/failure status
+- [x] Provides clear error messages
+- [x] Handles context line matching
+- [x] Supports multiple hunks
+- [x] Supports additions, deletions, modifications
+- [x] Handles file not found gracefully
+- [x] Handles permission errors gracefully
+- [x] Handles invalid diff format gracefully
+- [x] Does not modify file on failure
+- [x] Tracks failures in statistics
+- [x] Implementation uses Go standard library only
+- [x] Unit tests pass
+- [x] Integration tests pass

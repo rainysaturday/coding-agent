@@ -4,16 +4,16 @@
 The TUI must support history navigation using up and down arrow keys to recall previously entered prompts. This makes it easier for users to resend, modify, or reference previous inputs without retyping.
 
 ## Acceptance Criteria
-- [ ] Up arrow key displays the previous prompt from history
-- [ ] Down arrow key displays the next prompt from history (when navigating backwards)
-- [ ] History is maintained in chronological order (newest first for up navigation)
-- [ ] Empty history does not cause errors or crashes
-- [ ] Current input is preserved when navigating history
-- [ ] History navigation works seamlessly with text editing
-- [ ] Clear visual indication of history navigation (cursor position maintained)
-- [ ] History persists for the duration of the session
-- [ ] Maximum history size is configurable to prevent excessive memory usage
-- [ ] History can be cleared via command (e.g., `clear-history`)
+- [x] Up arrow key displays the previous prompt from history
+- [x] Down arrow key displays the next prompt from history (when navigating backwards)
+- [x] History is maintained in chronological order (newest first for up navigation)
+- [x] Empty history does not cause errors or crashes
+- [x] Current input is preserved when navigating history
+- [x] History navigation works seamlessly with text editing
+- [x] Clear visual indication of history navigation (cursor position maintained)
+- [x] History persists for the duration of the session
+- [x] Maximum history size is configurable to prevent excessive memory usage
+- [x] History can be cleared via command (e.g., `clear-history`)
 
 ## Implementation Details
 

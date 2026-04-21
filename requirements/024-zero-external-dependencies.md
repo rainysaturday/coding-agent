@@ -4,14 +4,14 @@
 The coding agent harness must have zero external dependencies in the codebase. All functionality must be implemented using only the Go standard library.
 
 ## Acceptance Criteria
-- [ ] No external Go modules in go.mod (only standard library packages)
-- [ ] No vendor directory with external packages
-- [ ] `go mod tidy` produces a clean go.mod with no external dependencies
-- [ ] All HTTP clients, JSON parsing, file operations use stdlib only
-- [ ] No third-party TUI libraries - implement terminal UI with stdlib
-- [ ] No third-party logging libraries - use fmt or custom logging
-- [ ] Project can be built in isolated environments without network access
-- [ ] CI/CD pipeline does not require fetching external dependencies
+- [x] No external Go modules in go.mod (only standard library packages)
+- [x] No vendor directory with external packages
+- [x] `go mod tidy` produces a clean go.mod with no external dependencies
+- [x] All HTTP clients, JSON parsing, file operations use stdlib only
+- [x] No third-party TUI libraries - implement terminal UI with stdlib
+- [x] No third-party logging libraries - use fmt or custom logging
+- [x] Project can be built in isolated environments without network access
+- [x] CI/CD pipeline does not require fetching external dependencies
 
 ## Implementation Guidelines
 
@@ -182,10 +182,10 @@ go mod download -x 2>&1 | grep -v "^$"
 ```
 
 ### Code Review Checklist
-- [ ] No `go get` commands in build scripts
-- [ ] No import paths starting with `github.com`, `golang.org/x/` (except term if needed), `go.uber.org`, etc.
-- [ ] All dependencies listed in go.mod are from `stdlib` or `go.dev` (internal)
-- [ ] `go build` succeeds in clean environment
+- [x] No `go get` commands in build scripts
+- [x] No import paths starting with `github.com`, `golang.org/x/` (except term if needed), `go.uber.org`, etc.
+- [x] All dependencies listed in go.mod are from `stdlib` or `go.dev` (internal)
+- [x] `go build` succeeds in clean environment
 
 ## Related Requirements
 - **001-go-runtime.md**: Go runtime requirements

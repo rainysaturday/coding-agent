@@ -13,13 +13,13 @@ Many modern LLMs produce reasoning or thinking content before their final respon
 This reasoning content is valuable for transparency but should be visually distinct from the final response to improve readability.
 
 ## Acceptance Criteria
-- [ ] Reasoning tokens are detected and separated from regular response content
-- [ ] Reasoning tokens are displayed in a darker/dimmed text color
-- [ ] Non-reasoning tokens use the default/text color
-- [ ] The color distinction is visible in both streaming and non-streaming modes
-- [ ] The implementation uses ANSI color codes (no external dependencies)
-- [ ] Users can clearly distinguish reasoning from final response at a glance
-- [ ] Color choice is compatible with common terminal color schemes
+- [x] Reasoning tokens are detected and separated from regular response content
+- [x] Reasoning tokens are displayed in a darker/dimmed text color
+- [x] Non-reasoning tokens use the default/text color
+- [x] The color distinction is visible in both streaming and non-streaming modes
+- [x] The implementation uses ANSI color codes (no external dependencies)
+- [x] Users can clearly distinguish reasoning from final response at a glance
+- [x] Color choice is compatible with common terminal color schemes
 
 ## Implementation Details
 

@@ -4,12 +4,12 @@
 The coding agent harness must display version information on startup, including the Git commit hash and whether the repository was clean (no uncommitted changes) at build time. This enables traceability and debugging of specific builds.
 
 ## Acceptance Criteria
-- [ ] Git commit hash is displayed on startup/title screen
-- [ ] Dirty status is shown (clean/dirty indicator)
-- [ ] Version information is embedded at build time
-- [ ] Format is consistent and human-readable
-- [ ] Build timestamp can optionally be included
-- [ ] No runtime dependency on Git (information is embedded)
+- [x] Git commit hash is displayed on startup/title screen
+- [x] Dirty status is shown (clean/dirty indicator)
+- [x] Version information is embedded at build time
+- [x] Format is consistent and human-readable
+- [x] Build timestamp can optionally be included
+- [x] No runtime dependency on Git (information is embedded)
 
 ## Display Format
 

@@ -15,15 +15,15 @@ This information enables the agent to:
 
 ## Acceptance Criteria
 
-- [ ] System prompt includes the current working directory
-- [ ] System prompt includes the path to the coding-agent executable
-- [ ] System prompt includes OS information (e.g., Linux, macOS, Windows)
-- [ ] System prompt includes architecture information (e.g., amd64, arm64)
-- [ ] Environment information is gathered at runtime
-- [ ] Environment information is included in the system prompt at the beginning
-- [ ] Environment information is preserved during context compression
-- [ ] Environment information is human-readable and concise
-- [ ] Implementation uses Go standard library (no external dependencies)
+- [x] System prompt includes the current working directory
+- [x] System prompt includes the path to the coding-agent executable
+- [x] System prompt includes OS information (e.g., Linux, macOS, Windows)
+- [x] System prompt includes architecture information (e.g., amd64, arm64)
+- [x] Environment information is gathered at runtime
+- [x] Environment information is included in the system prompt at the beginning
+- [x] Environment information is preserved during context compression
+- [x] Environment information is human-readable and concise
+- [x] Implementation uses Go standard library (no external dependencies)
 
 ## Implementation Details
 
@@ -217,18 +217,18 @@ If environment information cannot be retrieved:
 
 ### Unit Tests
 
-- [ ] `getEnvironmentInfo()` returns valid information
-- [ ] Working directory is correctly retrieved
-- [ ] Executable path is correctly retrieved
-- [ ] OS and architecture are correctly reported
-- [ ] Error handling works when info unavailable
+- [x] `getEnvironmentInfo()` returns valid information
+- [x] Working directory is correctly retrieved
+- [x] Executable path is correctly retrieved
+- [x] OS and architecture are correctly reported
+- [x] Error handling works when info unavailable
 
 ### Integration Tests
 
-- [ ] System prompt includes environment info
-- [ ] Environment info is accurate for current system
-- [ ] Sub-agent spawning works with executable path
-- [ ] Environment info is preserved during compression
+- [x] System prompt includes environment info
+- [x] Environment info is accurate for current system
+- [x] Sub-agent spawning works with executable path
+- [x] Environment info is preserved during compression
 
 ## Related Requirements
 
@@ -239,13 +239,13 @@ If environment information cannot be retrieved:
 
 ## Acceptance Checklist
 
-- [ ] System prompt includes current working directory
-- [ ] System prompt includes agent executable path
-- [ ] System prompt includes OS information
-- [ ] System prompt includes architecture information
-- [ ] Environment info is gathered at runtime
-- [ ] Environment info is human-readable
-- [ ] Implementation uses Go standard library only
-- [ ] Error handling for unavailable info
-- [ ] Environment info preserved during compression
-- [ ] Sub-agent spawning documented in system prompt
+- [x] System prompt includes current working directory
+- [x] System prompt includes agent executable path
+- [x] System prompt includes OS information
+- [x] System prompt includes architecture information
+- [x] Environment info is gathered at runtime
+- [x] Environment info is human-readable
+- [x] Implementation uses Go standard library only
+- [x] Error handling for unavailable info
+- [x] Environment info preserved during compression
+- [x] Sub-agent spawning documented in system prompt

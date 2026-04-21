@@ -4,16 +4,16 @@
 When a tool call fails, the error must be reported back to the LLM in a clear, actionable format. This allows the LLM to understand what went wrong and potentially retry with corrected parameters or take alternative action.
 
 ## Acceptance Criteria
-- [ ] Failed tool calls return detailed error messages to the LLM
-- [ ] Error messages include the original tool call for reference
-- [ ] Error messages are descriptive and actionable
-- [ ] Error format is consistent across all tool types
-- [ ] LLM can see the error in subsequent context
-- [ ] Error messages include relevant context (file paths, command, etc.)
-- [ ] System-level errors are translated to user-friendly messages
-- [ ] LLM can distinguish between different error types
-- [ ] Failed tool calls are tracked in statistics
-- [ ] Multiple failures do not crash the agent
+- [x] Failed tool calls return detailed error messages to the LLM
+- [x] Error messages include the original tool call for reference
+- [x] Error messages are descriptive and actionable
+- [x] Error format is consistent across all tool types
+- [x] LLM can see the error in subsequent context
+- [x] Error messages include relevant context (file paths, command, etc.)
+- [x] System-level errors are translated to user-friendly messages
+- [x] LLM can distinguish between different error types
+- [x] Failed tool calls are tracked in statistics
+- [x] Multiple failures do not crash the agent
 
 ## Implementation Details
 

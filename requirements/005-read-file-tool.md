@@ -4,13 +4,13 @@
 The harness must support a `read_file` tool that allows reading file contents via OpenAI's tool calling interface.
 
 ## Acceptance Criteria
-- [ ] Tool named `read_file` is available
-- [ ] Accepts file path as input parameter
-- [ ] Reads file contents and returns them
-- [ ] Handles file not found errors gracefully
-- [ ] Handles permission errors gracefully
-- [ ] Supports reading text files
-- [ ] Tool call failures are tracked in statistics
+- [x] Tool named `read_file` is available
+- [x] Accepts file path as input parameter
+- [x] Reads file contents and returns them
+- [x] Handles file not found errors gracefully
+- [x] Handles permission errors gracefully
+- [x] Supports reading text files
+- [x] Tool call failures are tracked in statistics
 
 ## Tool Definition (OpenAI Format)
 

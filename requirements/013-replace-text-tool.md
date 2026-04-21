@@ -7,16 +7,16 @@ The harness must support tools for replacing content in a file via OpenAI's tool
 ## Acceptance Criteria
 
 ### replace_text Tool
-- [ ] Tool named `replace_text` is available
-- [ ] Accepts file path as input parameter (required)
-- [ ] Accepts search text as input parameter (required)
-- [ ] Accepts replacement text as input parameter (required)
-- [ ] Accepts count parameter for number of replacements (optional, defaults to 1)
-- [ ] Finds and replaces matching text
-- [ ] Supports replacing multiple occurrences with count parameter
-- [ ] Returns error if search text not found
-- [ ] Returns number of replacements made
-- [ ] Tool call failures are tracked in statistics
+- [x] Tool named `replace_text` is available
+- [x] Accepts file path as input parameter (required)
+- [x] Accepts search text as input parameter (required)
+- [x] Accepts replacement text as input parameter (required)
+- [x] Accepts count parameter for number of replacements (optional, defaults to 1)
+- [x] Finds and replaces matching text
+- [x] Supports replacing multiple occurrences with count parameter
+- [x] Returns error if search text not found
+- [x] Returns number of replacements made
+- [x] Tool call failures are tracked in statistics
 
 ## Tool Definition (OpenAI Format)
 

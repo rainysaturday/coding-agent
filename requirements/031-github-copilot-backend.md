@@ -12,24 +12,24 @@ The harness should also document GitHub Models as the official, publicly documen
 
 ## Acceptance Criteria
 
-- [ ] GitHub Copilot endpoint is configurable via `--api-endpoint https://api.githubcopilot.com`
-- [ ] GitHub Copilot token is accepted via `GITHUB_TOKEN` environment variable
-- [ ] GitHub Copilot token is accepted via `--api-key` CLI flag
-- [ ] GitHub Copilot token is accepted via `api_key` config file field
-- [ ] `--help` output explains how to configure GitHub Copilot
-- [ ] Copilot-compatible models can be selected (e.g., `gpt-4o`, `claude-sonnet-4`, `o3-mini`)
-- [ ] Requests include the required `Copilot-Integration-Id` header
-- [ ] Requests include the required `Editor-Version` header
-- [ ] Tool calling works correctly with Copilot-hosted models
-- [ ] Streaming responses work correctly with Copilot-hosted models
-- [ ] Non-streaming responses work correctly with Copilot-hosted models
-- [ ] Streamed `tool_calls` deltas are merged by index into complete tool calls before being stored in message history
-- [ ] Outgoing `messages[*].tool_calls[*].type` is always populated with a valid value (`function` by default)
-- [ ] Token usage is parsed from Copilot API responses
-- [ ] Connection errors to Copilot API produce clear error messages
-- [ ] Authentication failures (401/403) produce clear error messages with guidance
-- [ ] Rate limiting (429) is handled with appropriate backoff and retry
-- [ ] Context size limits are respected per model
+- [x] GitHub Copilot endpoint is configurable via `--api-endpoint https://api.githubcopilot.com`
+- [x] GitHub Copilot token is accepted via `GITHUB_TOKEN` environment variable
+- [x] GitHub Copilot token is accepted via `--api-key` CLI flag
+- [x] GitHub Copilot token is accepted via `api_key` config file field
+- [x] `--help` output explains how to configure GitHub Copilot
+- [x] Copilot-compatible models can be selected (e.g., `gpt-4o`, `claude-sonnet-4`, `o3-mini`)
+- [x] Requests include the required `Copilot-Integration-Id` header
+- [x] Requests include the required `Editor-Version` header
+- [x] Tool calling works correctly with Copilot-hosted models
+- [x] Streaming responses work correctly with Copilot-hosted models
+- [x] Non-streaming responses work correctly with Copilot-hosted models
+- [x] Streamed `tool_calls` deltas are merged by index into complete tool calls before being stored in message history
+- [x] Outgoing `messages[*].tool_calls[*].type` is always populated with a valid value (`function` by default)
+- [x] Token usage is parsed from Copilot API responses
+- [x] Connection errors to Copilot API produce clear error messages
+- [x] Authentication failures (401/403) produce clear error messages with guidance
+- [x] Rate limiting (429) is handled with appropriate backoff and retry
+- [x] Context size limits are respected per model
 
 ## Configuration
 
@@ -329,29 +329,29 @@ coding-agent -p "Create a REST API" --model openai/gpt-4.1
 
 ### Unit Tests
 
-- [ ] `GITHUB_TOKEN` fallback sets `APIKey` when `CODING_AGENT_API_KEY` is not set
-- [ ] `GITHUB_TOKEN` does NOT override `CODING_AGENT_API_KEY` when both are set
-- [ ] `isCopilotEndpoint()` returns `true` for `https://api.githubcopilot.com`
-- [ ] `isCopilotEndpoint()` returns `false` for `http://localhost:8080`
-- [ ] `buildURL()` returns `/chat/completions` for Copilot endpoint
-- [ ] `buildURL()` returns `/v1/chat/completions` for non-Copilot endpoint
-- [ ] Copilot-specific headers are set when endpoint is Copilot
-- [ ] Copilot-specific headers are NOT set for non-Copilot endpoints
-- [ ] 429 responses trigger retry with backoff
-- [ ] 401/403 responses produce helpful error messages
-- [ ] PAT-on-Copilot 400 errors produce explicit guidance to use `ghu_` or switch to `models.github.ai`
-- [ ] Non-429 4xx responses do not trigger retry loops
-- [ ] Streaming tool-call delta merge correctly combines partial chunks by index
-- [ ] Empty streamed tool-call `type` values are normalized to `function`
-- [ ] Agent stores merged streaming tool-calls as the latest snapshot rather than appending partial entries
+- [x] `GITHUB_TOKEN` fallback sets `APIKey` when `CODING_AGENT_API_KEY` is not set
+- [x] `GITHUB_TOKEN` does NOT override `CODING_AGENT_API_KEY` when both are set
+- [x] `isCopilotEndpoint()` returns `true` for `https://api.githubcopilot.com`
+- [x] `isCopilotEndpoint()` returns `false` for `http://localhost:8080`
+- [x] `buildURL()` returns `/chat/completions` for Copilot endpoint
+- [x] `buildURL()` returns `/v1/chat/completions` for non-Copilot endpoint
+- [x] Copilot-specific headers are set when endpoint is Copilot
+- [x] Copilot-specific headers are NOT set for non-Copilot endpoints
+- [x] 429 responses trigger retry with backoff
+- [x] 401/403 responses produce helpful error messages
+- [x] PAT-on-Copilot 400 errors produce explicit guidance to use `ghu_` or switch to `models.github.ai`
+- [x] Non-429 4xx responses do not trigger retry loops
+- [x] Streaming tool-call delta merge correctly combines partial chunks by index
+- [x] Empty streamed tool-call `type` values are normalized to `function`
+- [x] Agent stores merged streaming tool-calls as the latest snapshot rather than appending partial entries
 
 ### Integration Tests
 
-- [ ] End-to-end tool calling works against Copilot API
-- [ ] Streaming works against Copilot API
-- [ ] Non-streaming works against Copilot API
-- [ ] Prompt that triggers tool use (for example, creating a file) succeeds without `messages[*].tool_calls[*].type` validation errors
-- [ ] Context compression works with Copilot-hosted models
+- [x] End-to-end tool calling works against Copilot API
+- [x] Streaming works against Copilot API
+- [x] Non-streaming works against Copilot API
+- [x] Prompt that triggers tool use (for example, creating a file) succeeds without `messages[*].tool_calls[*].type` validation errors
+- [x] Context compression works with Copilot-hosted models
 
 ## Security Considerations
 
@@ -378,16 +378,16 @@ coding-agent -p "Create a REST API" --model openai/gpt-4.1
 
 ## Summary Checklist
 
-- [ ] `GITHUB_TOKEN` fallback for authentication
-- [ ] Help output includes Copilot and GitHub Models setup guidance
-- [ ] Copilot-specific HTTP headers (`Copilot-Integration-Id`, `Editor-Version`)
-- [ ] Correct request paths (`/chat/completions` for Copilot, `/inference/chat/completions` for GitHub Models, `/v1/chat/completions` default)
-- [ ] 429 rate limit retry support
-- [ ] Clear authentication error messages
-- [ ] Token-type guidance is documented (`ghu_` for Copilot endpoint, PAT/OAuth for GitHub Models endpoint)
-- [ ] Token redaction in debug logs
-- [ ] Works in interactive and one-shot modes
-- [ ] Works with streaming and non-streaming
-- [ ] Tool calling works with Copilot-hosted models
-- [ ] Streaming tool-call assembly is robust (merge by index, normalize `type=function`, avoid partial-entry accumulation)
-- [ ] Documentation updated
+- [x] `GITHUB_TOKEN` fallback for authentication
+- [x] Help output includes Copilot and GitHub Models setup guidance
+- [x] Copilot-specific HTTP headers (`Copilot-Integration-Id`, `Editor-Version`)
+- [x] Correct request paths (`/chat/completions` for Copilot, `/inference/chat/completions` for GitHub Models, `/v1/chat/completions` default)
+- [x] 429 rate limit retry support
+- [x] Clear authentication error messages
+- [x] Token-type guidance is documented (`ghu_` for Copilot endpoint, PAT/OAuth for GitHub Models endpoint)
+- [x] Token redaction in debug logs
+- [x] Works in interactive and one-shot modes
+- [x] Works with streaming and non-streaming
+- [x] Tool calling works with Copilot-hosted models
+- [x] Streaming tool-call assembly is robust (merge by index, normalize `type=function`, avoid partial-entry accumulation)
+- [x] Documentation updated

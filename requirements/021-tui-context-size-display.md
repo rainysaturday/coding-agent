@@ -4,15 +4,15 @@
 The current context size (in tokens) must always be visible in the TUI. This allows users to monitor how much conversation history is being maintained and understand when context compression may occur.
 
 ## Acceptance Criteria
-- [ ] Current context size is displayed in the TUI
-- [ ] Context size is shown in tokens
-- [ ] Context size updates in real-time as conversation progresses
-- [ ] Maximum context size limit is visible or can be shown on demand
-- [ ] Context size is displayed prominently but non-intrusively
-- [ ] Context size is included in statistics display
-- [ ] Warning displayed when approaching context limit
-- [ ] Percentage of context used can be shown
-- [ ] Context size display does not interfere with main TUI functionality
+- [x] Current context size is displayed in the TUI
+- [x] Context size is shown in tokens
+- [x] Context size updates in real-time as conversation progresses
+- [x] Maximum context size limit is visible or can be shown on demand
+- [x] Context size is displayed prominently but non-intrusively
+- [x] Context size is included in statistics display
+- [x] Warning displayed when approaching context limit
+- [x] Percentage of context used can be shown
+- [x] Context size display does not interfere with main TUI functionality
 
 ## Implementation Details
 

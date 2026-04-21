@@ -4,16 +4,16 @@
 The TUI must support cancellation of ongoing operations (such as inference requests or tool execution) using Ctrl+C. This allows users to interrupt long-running or unwanted operations gracefully.
 
 ## Acceptance Criteria
-- [ ] Ctrl+C cancels ongoing inference requests
-- [ ] Ctrl+C cancels ongoing tool execution when possible
-- [ ] Cancellation is graceful (no crashes or data corruption)
-- [ ] User is notified when operation is cancelled
-- [ ] Partial results are handled appropriately
-- [ ] Context state is preserved after cancellation
-- [ ] Cancellation does not affect previous conversation history
-- [ ] Visual feedback during cancellation (e.g., "Cancelled")
-- [ ] Cancellation can be triggered at any time during operation
-- [ ] Multiple Ctrl+C presses do not cause errors
+- [x] Ctrl+C cancels ongoing inference requests
+- [x] Ctrl+C cancels ongoing tool execution when possible
+- [x] Cancellation is graceful (no crashes or data corruption)
+- [x] User is notified when operation is cancelled
+- [x] Partial results are handled appropriately
+- [x] Context state is preserved after cancellation
+- [x] Cancellation does not affect previous conversation history
+- [x] Visual feedback during cancellation (e.g., "Cancelled")
+- [x] Cancellation can be triggered at any time during operation
+- [x] Multiple Ctrl+C presses do not cause errors
 
 ## Implementation Details
 

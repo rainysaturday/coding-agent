@@ -4,7 +4,7 @@
 The coding agent harness must be written in Go (Golang) and compile/run as a standalone binary.
 
 ## Acceptance Criteria
-- [ ] Project uses Go modules (go.mod)
-- [ ] Binary compiles without errors using `go build`
-- [ ] Binary runs on Linux, macOS, and Windows
-- [ ] Project has no external dependencies that prevent cross-compilation
+- [x] Project uses Go modules (go.mod)
+- [x] Binary compiles without errors using `go build`
+- [x] Binary runs on Linux, macOS, and Windows
+- [x] Project has no external dependencies that prevent cross-compilation

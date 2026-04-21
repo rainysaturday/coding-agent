@@ -4,23 +4,23 @@
 When a tool is called and executed, the result of the tool call must be added back into the conversation context. This allows the AI to see the tool output and iterate further based on the results. With OpenAI's tool calling API, tool results are sent back as `tool` role messages.
 
 ## Acceptance Criteria
-- [ ] Tool call results are automatically added to the conversation context
-- [ ] Results are added as tool messages after tool execution (OpenAI format)
-- [ ] AI can see and respond to tool results in subsequent turns
-- [ ] Multiple tool calls can be chained (AI calls tool -> sees result -> calls another tool)
-- [ ] Tool results include both success output and error messages
-- [ ] Tool result format follows OpenAI's tool message specification
-- [ ] Tool results preserve the original tool call ID for reference
-- [ ] Context size is monitored after adding tool results
-- [ ] Iteration continues until task is complete or AI determines no more tool calls needed
-- [ ] Maximum iteration limit is enforced to prevent infinite loops
-- [ ] **Streaming mode**: Tool calls are accumulated from partial deltas before execution
-- [ ] **Streaming mode**: Tool execution waits until all tool call data is received
-- [ ] **Non-streaming mode**: Tool call feedback is displayed to the user (stdout)
-- [ ] **Streaming mode**: Tool call feedback is streamed to the callback
-- [ ] The Message struct has a `ToolCalls` field to store tool calls from the API
-- [ ] Assistant messages containing tool calls include the `tool_calls` field when serialized and sent to the API
-- [ ] Assistant messages added to context preserve the `tool_calls` from the API response
+- [x] Tool call results are automatically added to the conversation context
+- [x] Results are added as tool messages after tool execution (OpenAI format)
+- [x] AI can see and respond to tool results in subsequent turns
+- [x] Multiple tool calls can be chained (AI calls tool -> sees result -> calls another tool)
+- [x] Tool results include both success output and error messages
+- [x] Tool result format follows OpenAI's tool message specification
+- [x] Tool results preserve the original tool call ID for reference
+- [x] Context size is monitored after adding tool results
+- [x] Iteration continues until task is complete or AI determines no more tool calls needed
+- [x] Maximum iteration limit is enforced to prevent infinite loops
+- [x] **Streaming mode**: Tool calls are accumulated from partial deltas before execution
+- [x] **Streaming mode**: Tool execution waits until all tool call data is received
+- [x] **Non-streaming mode**: Tool call feedback is displayed to the user (stdout)
+- [x] **Streaming mode**: Tool call feedback is streamed to the callback
+- [x] The Message struct has a `ToolCalls` field to store tool calls from the API
+- [x] Assistant messages containing tool calls include the `tool_calls` field when serialized and sent to the API
+- [x] Assistant messages added to context preserve the `tool_calls` from the API response
 
 ## Tool Result Format (OpenAI)
 

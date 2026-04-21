@@ -4,13 +4,13 @@
 The harness must support a `bash` tool that allows execution of shell commands via OpenAI's tool calling interface.
 
 ## Acceptance Criteria
-- [ ] Tool named `bash` is available
-- [ ] Accepts command string as input parameter
-- [ ] Executes command in shell environment
-- [ ] Returns command output (stdout and stderr)
-- [ ] Returns exit code of executed command
-- [ ] Handles command execution errors gracefully
-- [ ] Tool call failures are tracked in statistics
+- [x] Tool named `bash` is available
+- [x] Accepts command string as input parameter
+- [x] Executes command in shell environment
+- [x] Returns command output (stdout and stderr)
+- [x] Returns exit code of executed command
+- [x] Handles command execution errors gracefully
+- [x] Tool call failures are tracked in statistics
 
 ## Tool Definition (OpenAI Format)
 

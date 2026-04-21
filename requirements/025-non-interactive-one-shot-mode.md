@@ -4,15 +4,15 @@
 The coding agent harness must support a non-interactive one-shot prompting mode where the CLI process accepts an initial prompt as a command-line argument or stdin, starts the agent to process it, and exits automatically when the agent completes its work.
 
 ## Acceptance Criteria
-- [ ] Accept prompt via command-line flag (e.g., `--prompt "..."` or `-p "..."`)
-- [ ] Accept prompt via stdin in non-interactive mode
-- [ ] Agent runs autonomously without requiring user input
-- [ ] CLI exits automatically when agent completes the task
-- [ ] Exit code indicates success (0) or failure (non-zero)
-- [ ] Output is written to stdout/stderr in a clean format
-- [ ] No interactive TUI is displayed in one-shot mode
-- [ ] Tool calls and results are logged to stdout for visibility
-- [ ] Final summary/results are clearly presented before exit
+- [x] Accept prompt via command-line flag (e.g., `--prompt "..."` or `-p "..."`)
+- [x] Accept prompt via stdin in non-interactive mode
+- [x] Agent runs autonomously without requiring user input
+- [x] CLI exits automatically when agent completes the task
+- [x] Exit code indicates success (0) or failure (non-zero)
+- [x] Output is written to stdout/stderr in a clean format
+- [x] No interactive TUI is displayed in one-shot mode
+- [x] Tool calls and results are logged to stdout for visibility
+- [x] Final summary/results are clearly presented before exit
 
 ## Command-Line Interface
 
@@ -343,21 +343,21 @@ done
 ## Testing Requirements
 
 ### Unit Tests
-- [ ] Prompt loading from flag works correctly
-- [ ] Prompt loading from stdin works correctly
-- [ ] Prompt loading from file works correctly
-- [ ] Exit code is 0 on success
-- [ ] Exit code is non-zero on failure
-- [ ] Output is written correctly
-- [ ] Verbose mode shows execution details
-- [ ] Quiet mode shows only final output
+- [x] Prompt loading from flag works correctly
+- [x] Prompt loading from stdin works correctly
+- [x] Prompt loading from file works correctly
+- [x] Exit code is 0 on success
+- [x] Exit code is non-zero on failure
+- [x] Output is written correctly
+- [x] Verbose mode shows execution details
+- [x] Quiet mode shows only final output
 
 ### Integration Tests
-- [ ] One-shot mode completes simple tasks
-- [ ] One-shot mode handles multi-step tasks
-- [ ] One-shot mode handles tool calls correctly
-- [ ] One-shot mode exits when task is complete
-- [ ] One-shot mode handles errors gracefully
+- [x] One-shot mode completes simple tasks
+- [x] One-shot mode handles multi-step tasks
+- [x] One-shot mode handles tool calls correctly
+- [x] One-shot mode exits when task is complete
+- [x] One-shot mode handles errors gracefully
 
 ## Related Requirements
 - **001-go-runtime.md**: Go runtime requirements

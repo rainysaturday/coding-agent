@@ -4,16 +4,16 @@
 The coding agent harness must provide brief but relevant feedback to the user in the TUI when tools are called and executed. This ensures the user understands what actions are being taken and their outcomes.
 
 ## Acceptance Criteria
-- [ ] Tool call initiation is displayed in the TUI before execution
-- [ ] Tool call display includes tool name and key parameters
-- [ ] Tool execution results are displayed in the TUI after completion
-- [ ] Success messages are brief and informative (e.g., "File written successfully")
-- [ ] Tool output is displayed in a readable format (truncated if too long)
-- [ ] Error messages are displayed prominently for failed tool calls
-- [ ] Multiple tool calls in a sequence are clearly separated in display
-- [ ] Tool feedback does not overwhelm the TUI with excessive output
-- [ ] Long outputs are truncated with indication that content was truncated
-- [ ] Users can see which tool was called and what it did at a glance
+- [x] Tool call initiation is displayed in the TUI before execution
+- [x] Tool call display includes tool name and key parameters
+- [x] Tool execution results are displayed in the TUI after completion
+- [x] Success messages are brief and informative (e.g., "File written successfully")
+- [x] Tool output is displayed in a readable format (truncated if too long)
+- [x] Error messages are displayed prominently for failed tool calls
+- [x] Multiple tool calls in a sequence are clearly separated in display
+- [x] Tool feedback does not overwhelm the TUI with excessive output
+- [x] Long outputs are truncated with indication that content was truncated
+- [x] Users can see which tool was called and what it did at a glance
 
 ## Implementation Details
 

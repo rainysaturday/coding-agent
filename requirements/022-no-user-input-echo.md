@@ -4,11 +4,11 @@
 The TUI must NOT echo back the user's input after submission. Since the user can already see what they typed on the screen, echoing it back creates unnecessary clutter and redundancy in the output display.
 
 ## Acceptance Criteria
-- [ ] User input is NOT echoed back after submission
-- [ ] User input is still added to conversation context for LLM
-- [ ] Only assistant responses and tool feedback are displayed after user input
-- [ ] History navigation works without echoing
-- [ ] Internal processing (context integration) is not affected
+- [x] User input is NOT echoed back after submission
+- [x] User input is still added to conversation context for LLM
+- [x] Only assistant responses and tool feedback are displayed after user input
+- [x] History navigation works without echoing
+- [x] Internal processing (context integration) is not affected
 
 ## Rationale
 

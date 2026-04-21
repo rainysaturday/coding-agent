@@ -6,23 +6,23 @@ The coding agent harness must support a `--debug` flag that continuously saves t
 
 ## Acceptance Criteria
 
-- [ ] Accept `--debug` flag via command-line argument
-- [ ] Debug log file is created when `--debug` flag is enabled
-- [ ] All LLM conversation messages are logged to the debug file
-- [ ] Log includes system prompt, user messages, assistant responses
-- [ ] Log includes tool calls and their arguments
-- [ ] Log includes tool results and execution output
-- [ ] Log includes timestamps for each message
-- [ ] Log includes token usage information for each request
-- [ ] Log file path is configurable (default: `debug.log` in current directory)
-- [ ] Debug logging works in both interactive and one-shot modes
-- [ ] Debug logging works in both streaming and non-streaming modes
-- [ ] Log file can be configured via environment variable (`CODING_AGENT_DEBUG_LOG`)
-- [ ] Log file can be configured via command-line flag (`--debug-log path`)
-- [ ] Log format is structured and human-readable
-- [ ] Log file is truncated on new session
-- [ ] Debug mode does not interfere with normal operation
-- [ ] Sensitive information (API keys) is redacted from logs
+- [x] Accept `--debug` flag via command-line argument
+- [x] Debug log file is created when `--debug` flag is enabled
+- [x] All LLM conversation messages are logged to the debug file
+- [x] Log includes system prompt, user messages, assistant responses
+- [x] Log includes tool calls and their arguments
+- [x] Log includes tool results and execution output
+- [x] Log includes timestamps for each message
+- [x] Log includes token usage information for each request
+- [x] Log file path is configurable (default: `debug.log` in current directory)
+- [x] Debug logging works in both interactive and one-shot modes
+- [x] Debug logging works in both streaming and non-streaming modes
+- [x] Log file can be configured via environment variable (`CODING_AGENT_DEBUG_LOG`)
+- [x] Log file can be configured via command-line flag (`--debug-log path`)
+- [x] Log format is structured and human-readable
+- [x] Log file is truncated on new session
+- [x] Debug mode does not interfere with normal operation
+- [x] Sensitive information (API keys) is redacted from logs
 
 ## Command-Line Interface
 
@@ -415,30 +415,30 @@ This may include sensitive information. Ensure the log file is protected.
 
 ### Unit Tests
 
-- [ ] Debug logger creates file correctly
-- [ ] All message types are logged
-- [ ] Timestamps are accurate
-- [ ] Token counts are recorded
-- [ ] Tool calls and results are logged
-- [ ] Sensitive data is redacted
-- [ ] Session summary is accurate
-- [ ] JSON format output is valid
+- [x] Debug logger creates file correctly
+- [x] All message types are logged
+- [x] Timestamps are accurate
+- [x] Token counts are recorded
+- [x] Tool calls and results are logged
+- [x] Sensitive data is redacted
+- [x] Session summary is accurate
+- [x] JSON format output is valid
 
 ### Integration Tests
 
-- [ ] Debug mode works in interactive mode
-- [ ] Debug mode works in one-shot mode
-- [ ] Debug mode works in streaming mode
-- [ ] Log file is readable after session
-- [ ] Environment variable configuration works
-- [ ] Command-line flag overrides environment variable
+- [x] Debug mode works in interactive mode
+- [x] Debug mode works in one-shot mode
+- [x] Debug mode works in streaming mode
+- [x] Log file is readable after session
+- [x] Environment variable configuration works
+- [x] Command-line flag overrides environment variable
 
 ### Security Tests
 
-- [ ] API keys are redacted from logs
-- [ ] Log file has restrictive permissions
-- [ ] Sensitive data patterns are detected and redacted
-- [ ] No credentials are written to logs
+- [x] API keys are redacted from logs
+- [x] Log file has restrictive permissions
+- [x] Sensitive data patterns are detected and redacted
+- [x] No credentials are written to logs
 
 ## Related Requirements
 
@@ -450,16 +450,16 @@ This may include sensitive information. Ensure the log file is protected.
 
 ## Acceptance Checklist
 
-- [ ] `--debug` flag enables debug logging
-- [ ] `--debug-log path` specifies log file location
-- [ ] All conversation messages are logged
-- [ ] Timestamps are included
-- [ ] Token usage is tracked
-- [ ] Tool calls and results are logged
-- [ ] Session summary is generated
-- [ ] Sensitive data is redacted
-- [ ] Works in interactive and one-shot modes
-- [ ] Works in streaming and non-streaming modes
-- [ ] Environment variable configuration works
-- [ ] Log file permissions are secure
-- [ ] No external logging dependencies used
+- [x] `--debug` flag enables debug logging
+- [x] `--debug-log path` specifies log file location
+- [x] All conversation messages are logged
+- [x] Timestamps are included
+- [x] Token usage is tracked
+- [x] Tool calls and results are logged
+- [x] Session summary is generated
+- [x] Sensitive data is redacted
+- [x] Works in interactive and one-shot modes
+- [x] Works in streaming and non-streaming modes
+- [x] Environment variable configuration works
+- [x] Log file permissions are secure
+- [x] No external logging dependencies used

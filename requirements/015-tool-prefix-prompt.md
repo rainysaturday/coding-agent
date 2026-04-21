@@ -6,19 +6,19 @@ The list of available tools and their descriptions must ALWAYS be prefixed to th
 
 ## Acceptance Criteria
 
-- [ ] Tool list is included in system prompt at the beginning of every conversation
-- [ ] Tool descriptions are included in system prompt
-- [ ] System prompt is preserved during context compression
-- [ ] System prompt is NOT modified or removed during conversation
-- [ ] System prompt is updated when new tools are added
-- [ ] System prompt includes tool descriptions and usage guidelines
-- [ ] System prompt is sent with every inference request
-- [ ] System prompt remains constant throughout conversation lifecycle
-- [ ] Tools are also provided in API request's `tools` field for native tool calling
-- [ ] System prompt instructs agent to double-check and verify all work
-- [ ] Agent verifies correctness of files created/modified before considering task complete
-- [ ] Agent tests code execution or validates output when possible
-- [ ] Agent confirms changes match user requirements
+- [x] Tool list is included in system prompt at the beginning of every conversation
+- [x] Tool descriptions are included in system prompt
+- [x] System prompt is preserved during context compression
+- [x] System prompt is NOT modified or removed during conversation
+- [x] System prompt is updated when new tools are added
+- [x] System prompt includes tool descriptions and usage guidelines
+- [x] System prompt is sent with every inference request
+- [x] System prompt remains constant throughout conversation lifecycle
+- [x] Tools are also provided in API request's `tools` field for native tool calling
+- [x] System prompt instructs agent to double-check and verify all work
+- [x] Agent verifies correctness of files created/modified before considering task complete
+- [x] Agent tests code execution or validates output when possible
+- [x] Agent confirms changes match user requirements
 
 ## Implementation Details
 

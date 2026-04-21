@@ -10,13 +10,13 @@ The harness must provide a minimal terminal user interface (TUI) that includes a
 - Natural language prompts (without '/') are sent directly to the LLM
 
 ## Acceptance Criteria
-- [ ] TUI displays in terminal with clear output area
-- [ ] Input prompt accepts user text input
-- [ ] Enter key submits input
-- [ ] Commands starting with '/' are interpreted as agent commands (not sent to LLM)
-- [ ] Natural language input (without '/') is sent to the LLM as a prompt
-- [ ] Output displays previous messages/requests and tool feedback
-- [ ] Basic styling or formatting for readability
+- [x] TUI displays in terminal with clear output area
+- [x] Input prompt accepts user text input
+- [x] Enter key submits input
+- [x] Commands starting with '/' are interpreted as agent commands (not sent to LLM)
+- [x] Natural language input (without '/') is sent to the LLM as a prompt
+- [x] Output displays previous messages/requests and tool feedback
+- [x] Basic styling or formatting for readability
 
 ## Supported Commands
 - `/stats` - Display runtime statistics
