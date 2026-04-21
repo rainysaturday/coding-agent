@@ -8,6 +8,9 @@
 - **#024: Zero External Dependencies** - No external Go modules, stdlib only
 - **#023: Versioning** - Git commit hash, dirty status, build time embedding
 
+### File System Tools
+- **#033: File Search Tool** - Glob pattern file discovery with recursive ** support, metadata output
+
 ### Terminal User Interface
 - **#002: TUI Input Prompt** - Terminal UI with input area, command processing
 - **#019: TUI History Navigation** - Arrow key history navigation
@@ -62,4 +65,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**32 / 32 features implemented**
+**33 / 33 features implemented**

@@ -119,6 +119,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeReplaceText(tc.Parameters)
 	case "replace_lines":
 		result = te.executeReplaceLines(tc.Parameters)
+	case "glob":
+		result = te.executeGlob(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -949,4 +951,241 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 			"patches_applied": hunkCount,
 		},
 	}
+}
+// executeGlob searches for files matching a glob pattern.
+func (te *ToolExecutor) executeGlob(params map[string]interface{}) *ToolResult {
+	pattern, ok := params["pattern"].(string)
+	if !ok || pattern == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: pattern",
+		}
+	}
+
+	maxResultsParam, hasMaxResults := params["max_results"]
+	maxResults := 100 // Default limit
+	if hasMaxResults {
+		switch v := maxResultsParam.(type) {
+		case float64:
+			maxResults = int(v)
+		case int:
+			maxResults = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxResults = n
+			}
+		}
+	}
+
+	// Normalize pattern - handle ** for recursive matching
+	// filepath.Glob doesn't support ** directly, so we need custom handling
+	var matches []string
+	var err error
+
+	// Check if pattern contains **
+	if strings.Contains(pattern, "**") {
+		matches, err = te.globRecursive(pattern, maxResults)
+	} else {
+		matches, err = filepath.Glob(pattern)
+	}
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("glob error: %v", err),
+		}
+	}
+
+	if len(matches) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("No files found matching pattern: %s", pattern),
+			Extra: map[string]interface{}{
+				"pattern":      pattern,
+				"matchesFound": 0,
+			},
+		}
+	}
+
+	// Limit results
+	if len(matches) > maxResults {
+		matches = matches[:maxResults]
+	}
+
+	// Format output with file info
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Found %d file(s) matching '%s':\n\n", len(matches), pattern))
+
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil {
+			output.WriteString(fmt.Sprintf("  %s [error getting info]\n", match))
+		} else {
+			size := info.Size()
+			modTime := info.ModTime().Format("2006-01-02 15:04:05")
+			if info.IsDir() {
+				output.WriteString(fmt.Sprintf("  %s/ (directory)\n", match))
+			} else {
+				output.WriteString(fmt.Sprintf("  %s (%d bytes, modified %s)\n", match, size, modTime))
+			}
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"pattern":      pattern,
+			"matchesFound": len(matches),
+		},
+	}
+}
+
+// globRecursive performs recursive glob matching for patterns containing **.
+// It expands ** into proper recursive directory traversal.
+func (te *ToolExecutor) globRecursive(pattern string, maxResults int) ([]string, error) {
+	var matches []string
+
+	// Split pattern into base directory and remaining pattern
+	// Pattern can be: "**/*.go", "src/**/*.ts", "/path/**", "**/test.go"
+	// We need to find the first ** and split there
+	firstStar := strings.Index(pattern, "**")
+	if firstStar == -1 {
+		// No ** found, fall back to regular glob
+		return filepath.Glob(pattern)
+	}
+
+	// The base is everything before the first **
+	var baseDir string
+	before := strings.TrimRight(pattern[:firstStar], "/")
+	if before == "" {
+		baseDir = "."
+	} else if filepath.IsAbs(before) {
+		baseDir = before
+	} else {
+		baseDir = "."
+		// relative pattern like "src/**" - base is "src"
+		if before != "." {
+			baseDir = before
+		}
+	}
+
+	// The remaining pattern is everything after the first **
+	after := strings.TrimLeft(pattern[firstStar+2:], "/")
+	// after could be "*.go" or "" or "src/**"
+
+	// Walk the directory tree
+	err := filepath.WalkDir(baseDir, func(walkPath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+
+		if maxResults > 0 && len(matches) >= maxResults {
+			return filepath.SkipDir
+		}
+
+		// Always skip directories themselves from results
+		if d.IsDir() {
+			return nil
+		}
+
+		// Get relative path from baseDir
+		relPath, err := filepath.Rel(baseDir, walkPath)
+		if err != nil {
+			return nil
+		}
+
+		// Match: apply the remaining pattern against the relative path
+		// If after is empty, match everything
+		// If after is "*.go", match all .go files at any depth
+		// If after is "src/*.ts", match .ts files only under a "src" subdir at any depth
+		if after == "" {
+			matches = append(matches, walkPath)
+		} else if strings.Contains(after, "/") {
+			// Multi-level remaining pattern like "src/**/*.go" or "src/*.ts"
+			// We need to check if relPath ends with a matching suffix
+			lastSlash := strings.LastIndex(after, "/")
+			dirPattern := after[:lastSlash]
+			filePattern := after[lastSlash+1:]
+
+			// Get the suffix of relPath after removing the filename
+			dirSuffix := relPath[:len(relPath)-len(filepath.Base(relPath))]
+			dirSuffix = strings.TrimSuffix(dirSuffix, "/")
+
+			// Check if the directory suffix matches the dirPattern
+			if strings.Contains(dirPattern, "**") {
+				// Handle ** in remaining pattern too (nested **)
+				// For "src/**" we check if relPath starts with "src/"
+				if strings.HasPrefix(relPath, strings.TrimRight(dirPattern, "/**")) {
+					if matched, _ := filepath.Match(filePattern, filepath.Base(relPath)); matched {
+						matches = append(matches, walkPath)
+					}
+				}
+			} else {
+				if matched, _ := filepath.Match(dirPattern, dirSuffix); matched {
+					if fileMatched, _ := filepath.Match(filePattern, filepath.Base(relPath)); fileMatched {
+						matches = append(matches, walkPath)
+					}
+				}
+			}
+		} else {
+			// Simple pattern like "*.go" - match against filename at any depth
+			if matched, _ := filepath.Match(after, filepath.Base(relPath)); matched {
+				matches = append(matches, walkPath)
+			}
+		}
+
+		return nil
+	})
+
+	return matches, err
+}
+
+// matchGlob checks if a path matches a glob pattern.
+// It handles * and ? wildcards similar to filepath.Match.
+func matchGlob(pattern, path string) (bool, error) {
+	// Handle ** patterns in remaining pattern (shouldn't happen in practice after globRecursive splits,
+	// but handle for robustness)
+	if strings.Contains(pattern, "**") {
+		// Split on ** to get prefix and suffix
+		idx := strings.Index(pattern, "**")
+		prefixPattern := strings.TrimRight(pattern[:idx], "/")
+		afterPattern := strings.TrimLeft(pattern[idx+2:], "/")
+
+		// Check if path starts with prefixPattern
+		if prefixPattern != "" && !strings.HasPrefix(path, prefixPattern+"/") {
+			return false, nil
+		}
+		// Match remaining pattern against the path (or filename if no prefix)
+		if afterPattern == "" {
+			return true, nil
+		}
+		if strings.Contains(afterPattern, "/") {
+			// Nested pattern - use matchGlob recursively
+			return matchGlob(afterPattern, path)
+		}
+		// Simple suffix pattern like *.go - match against filename
+		return filepath.Match(afterPattern, filepath.Base(path))
+	}
+
+	// Handle patterns with "/" - split into prefix + filename
+	if strings.Contains(pattern, "/") {
+		lastSlash := strings.LastIndex(pattern, "/")
+		prefixPattern := pattern[:lastSlash]
+		filePattern := pattern[lastSlash+1:]
+
+		// The prefix path should match the directory part
+		prefixPath := path[:len(path)-len(filepath.Base(path))]
+		// Trim trailing slashes for matching
+		prefixPath = strings.TrimRight(prefixPath, "/")
+		prefixMatch, err := filepath.Match(prefixPattern, prefixPath)
+		if err != nil || !prefixMatch {
+			return false, err
+		}
+		fileMatch, err := filepath.Match(filePattern, filepath.Base(path))
+		return fileMatch, err
+	}
+
+	// No "/" - use filepath.Match directly
+	return filepath.Match(pattern, path)
 }

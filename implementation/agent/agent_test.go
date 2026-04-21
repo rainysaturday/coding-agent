@@ -791,6 +791,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"replace_text": {"path", "search", "replace"},
 		"patch":        {"path", "diff"},
 	"replace_lines":  {"path"},
+		"glob":         {"pattern"},
 	}
 
 	for _, tool := range toolDefs {

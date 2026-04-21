@@ -595,6 +595,15 @@ case "replace_lines":
 			path = p
 		}
 		msg = fmt.Sprintf("\n%s[Patching] file: %s%s\n", ColorCyan, path, ColorReset)
+	case "glob":
+		pattern := ""
+		if p, ok := params["pattern"].(string); ok {
+			pattern = p
+			if len(pattern) > 50 {
+				pattern = pattern[:50] + "..."
+			}
+		}
+		msg = fmt.Sprintf("\n%s[Searching] pattern: %s%s\n", ColorCyan, pattern, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -720,6 +729,16 @@ case "replace_lines":
 				hunks = h
 			}
 			return fmt.Sprintf("%s[Success] applied %d hunk(s)%s\n", ColorGreen, hunks, ColorReset)
+		case "glob":
+			pattern := ""
+			if p, ok := result.Extra["pattern"].(string); ok {
+				pattern = p
+			}
+			matchCount := 0
+			if mc, ok := result.Extra["matchesFound"].(int); ok {
+				matchCount = mc
+			}
+			return fmt.Sprintf("%s[Success] found %d file(s) matching '%s'%s\n", ColorGreen, matchCount, pattern, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -855,6 +874,14 @@ AVAILABLE TOOLS:
    How to call: Use the patch tool when you need to apply a unified diff to a file.
    Example use case: Applying code changes, fixing bugs, updating file content
 
+
+8. glob
+   Description: Search for files matching a glob pattern (e.g., "*.go", "src/**/*.ts", "**/test.js")
+   Parameters:
+     - pattern (string, required): Glob pattern to match (supports *, ?, **)
+     - max_results (integer, optional): Maximum number of results to return (default: 100)
+   How to call: Use glob to discover files in the codebase. Supports recursive matching with ** patterns.
+   Example use case: Finding all Go files in a project with "go/**/*.go", or finding test files with "**/*_test.go"
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1079,6 +1106,27 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "diff"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "glob",
+				Description: "Search for files matching a glob pattern (e.g., \"*.go\", \"src/**/*.ts\", \"**/test.js\")",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"pattern": {
+							Type:        "string",
+							Description: "Glob pattern to match (supports *, ?, ** for recursive matching)",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum number of results to return (default: 100)",
+						},
+					},
+					Required: []string{"pattern"},
 				},
 			},
 		},

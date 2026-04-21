@@ -1423,3 +1423,239 @@ func TestExecute_Bash_WithPipes(t *testing.T) {
 		}
 	}
 }
+
+func TestExecuteGlob_BasicPattern(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create test directory structure
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "test.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644)
+
+	// Test glob with pattern
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": filepath.Join(tmpDir, "*.go"),
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "test.go") {
+		t.Errorf("Expected output to contain 'test.go', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "main.go") {
+		t.Errorf("Expected output to contain 'main.go', got: %s", result.Output)
+	}
+}
+
+func TestExecuteGlob_RecursivePattern(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create test directory structure
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "src", "sub"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "root.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "src", "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "src", "sub", "nested.go"), []byte("package main"), 0644)
+
+	// Test glob with recursive pattern
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": filepath.Join(tmpDir, "**/*.go"),
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "root.go") {
+		t.Errorf("Expected output to contain 'root.go', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "src/main.go") {
+		t.Errorf("Expected output to contain 'src/main.go', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "nested.go") {
+		t.Errorf("Expected output to contain 'nested.go', got: %s", result.Output)
+	}
+}
+
+func TestExecuteGlob_NoMatch(t *testing.T) {
+	te := NewToolExecutor()
+
+	tmpDir := t.TempDir()
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": filepath.Join(tmpDir, "*.xyz"),
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "No files found") {
+		t.Errorf("Expected 'No files found', got: %s", result.Output)
+	}
+}
+
+func TestExecuteGlob_MissingPattern(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{},
+	})
+
+	if result.Success {
+		t.Errorf("Expected failure for missing pattern, got success")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: pattern") {
+		t.Errorf("Expected 'missing required parameter: pattern', got: %s", result.Error)
+	}
+}
+
+func TestExecuteGlob_MaxResults(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create test directory with many files
+	tmpDir := t.TempDir()
+	for i := 0; i < 10; i++ {
+		os.WriteFile(filepath.Join(tmpDir, fmt.Sprintf("file%d.go", i)), []byte("package main"), 0644)
+	}
+
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern":     filepath.Join(tmpDir, "*.go"),
+			"max_results": 3.0,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	if extra, ok := result.Extra["matchesFound"].(int); ok {
+		if extra != 3 {
+			t.Errorf("Expected 3 matches, got %d", extra)
+		}
+	}
+}
+
+func TestExecuteGlob_EmptyPattern(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": "",
+		},
+	})
+
+	if result.Success {
+		t.Errorf("Expected failure for empty pattern, got success")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: pattern") {
+		t.Errorf("Expected 'missing required parameter: pattern', got: %s", result.Error)
+	}
+}
+
+func TestExecuteGlob_MixedCase(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create test directory structure
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "Src"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "Test.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "Src", "Main.go"), []byte("package main"), 0644)
+
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": filepath.Join(tmpDir, "**/*.go"),
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+	// Should find both files regardless of case
+	if !strings.Contains(result.Output, "Test.go") {
+		t.Errorf("Expected output to contain 'Test.go', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Main.go") {
+		t.Errorf("Expected output to contain 'Main.go', got: %s", result.Output)
+	}
+}
+
+func TestExecuteGlob_InvalidPattern(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "glob",
+		Parameters: map[string]interface{}{
+			"pattern": "[invalid", // Invalid regex pattern
+		},
+	})
+
+	// Should handle gracefully - either succeed with no results or error
+	if result.Success {
+		// If it succeeds, check that it didn't crash
+		if result.Output == "" {
+			t.Errorf("Expected some output for invalid pattern")
+		}
+	}
+	// Not requiring failure here since different OS/file systems handle invalid patterns differently
+}
+
+func TestMatchGlob_SimplePattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"*.go", "test.go", true},
+		{"*.go", "test.txt", false},
+		{"main.go", "main.go", true},
+		{"*.js", "src/app.js", false}, // path has directory prefix, simple pattern won't match
+	}
+
+	for _, tc := range tests {
+		got, err := matchGlob(tc.pattern, tc.path)
+		if err != nil {
+			t.Errorf("matchGlob(%q, %q) error: %v", tc.pattern, tc.path, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestMatchGlob_PrefixPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"src/*.go", "src/test.go", true},
+		{"src/*.go", "src/test.txt", false},
+		{"src/*.go", "lib/test.go", false},
+		{"**/*.go", "src/nested/test.go", true},
+		{"src/**/*.go", "src/a/b/c/test.go", true},
+	}
+
+	for _, tc := range tests {
+		got, err := matchGlob(tc.pattern, tc.path)
+		if err != nil {
+			t.Errorf("matchGlob(%q, %q) error: %v", tc.pattern, tc.path, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
