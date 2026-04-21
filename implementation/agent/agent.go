@@ -583,7 +583,7 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
-case "replace_lines":
+	case "replace_lines":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
@@ -699,7 +699,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				}
 			}
 			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
-case "replace_lines":
+		case "replace_lines":
 			start := 0
 			end := 0
 			if s, ok := result.Extra["start"].(int); ok {
@@ -866,7 +866,7 @@ AVAILABLE TOOLS:
     Note: When using line-number mode, if start > end, the tool returns an error. If lines is empty, it effectively deletes those lines.
 
 
-7. patch
+8. patch
    Description: Apply a unified diff patch to a file
    Parameters:
      - path (string, required): The path to the file to patch
@@ -875,7 +875,7 @@ AVAILABLE TOOLS:
    Example use case: Applying code changes, fixing bugs, updating file content
 
 
-8. glob
+9. glob
    Description: Search for files matching a glob pattern (e.g., "*.go", "src/**/*.ts", "**/test.js")
    Parameters:
      - pattern (string, required): Glob pattern to match (supports *, ?, **)
@@ -1047,7 +1047,7 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
-{
+		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
 				Name:        "replace_lines",

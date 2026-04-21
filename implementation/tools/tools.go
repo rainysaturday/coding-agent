@@ -952,6 +952,7 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		},
 	}
 }
+
 // executeGlob searches for files matching a glob pattern.
 func (te *ToolExecutor) executeGlob(params map[string]interface{}) *ToolResult {
 	pattern, ok := params["pattern"].(string)

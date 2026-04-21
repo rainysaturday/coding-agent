@@ -212,9 +212,9 @@ func TestDisplayStats_ZeroStartTime(t *testing.T) {
 	tui := NewTUI(cfg)
 
 	stats := &agent.Stats{
-		InputTokens:     1000,
-		OutputTokens:    500,
-		StartTime:       time.Time{}, // Zero time
+		InputTokens:  1000,
+		OutputTokens: 500,
+		StartTime:    time.Time{}, // Zero time
 	}
 
 	// Should not panic with zero start time
@@ -515,16 +515,16 @@ func TestContextSizePercentage_Calculations(t *testing.T) {
 func TestContextSizeIndicators(t *testing.T) {
 	// Test the indicator logic
 	tests := []struct {
-		size    int
-		max     int
-		wantOk  bool // should be valid (non-negative)
+		size   int
+		max    int
+		wantOk bool // should be valid (non-negative)
 	}{
-		{10000, 128000, true},    // <50% - checkmark
-		{70000, 128000, true},    // 50-75% - warning
-		{100000, 128000, true},   // 75-90% - warning warning
-		{125000, 128000, true},   // >90% - warning warning warning
-		{0, 128000, true},        // zero
-		{128000, 128000, true},   // exactly at max
+		{10000, 128000, true},  // <50% - checkmark
+		{70000, 128000, true},  // 50-75% - warning
+		{100000, 128000, true}, // 75-90% - warning warning
+		{125000, 128000, true}, // >90% - warning warning warning
+		{0, 128000, true},      // zero
+		{128000, 128000, true}, // exactly at max
 	}
 
 	for _, tt := range tests {

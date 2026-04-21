@@ -558,7 +558,6 @@ func TestExecute_ReplaceLines_SearchNotFound(t *testing.T) {
 	}
 }
 
-
 func TestExecute_ReplaceLinesByNumber_StartGreaterThanEnd(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
@@ -1506,7 +1505,7 @@ func TestExecuteGlob_MissingPattern(t *testing.T) {
 	te := NewToolExecutor()
 
 	result := te.Execute(&ToolCall{
-		Name: "glob",
+		Name:       "glob",
 		Parameters: map[string]interface{}{},
 	})
 

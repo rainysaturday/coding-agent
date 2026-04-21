@@ -623,7 +623,7 @@ func TestLogToolCall_WithComplexParams(t *testing.T) {
 		"start": float64(1),
 		"end":   float64(10),
 		"content": map[string]interface{}{
-			"text": "hello world",
+			"text":  "hello world",
 			"lines": []interface{}{"line1", "line2"},
 		},
 	}

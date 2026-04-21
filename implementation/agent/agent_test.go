@@ -365,10 +365,10 @@ func TestFormatResult(t *testing.T) {
 
 func TestFormatToolStatus_Success(t *testing.T) {
 	tests := []struct {
-		name     string
-		tool     string
-		result   *tools.ToolResult
-		check    func(string) bool
+		name   string
+		tool   string
+		result *tools.ToolResult
+		check  func(string) bool
 	}{
 		{
 			name: "bash success",
@@ -783,15 +783,15 @@ func TestBuildTools_Parameters(t *testing.T) {
 	toolDefs := buildTools()
 
 	expectedParams := map[string][]string{
-		"bash":         {"command"},
-		"read_file":    {"path"},
-		"write_file":   {"path", "content"},
-		"read_lines":   {"path", "start", "end"},
-		"insert_lines": {"path", "line", "lines"},
-		"replace_text": {"path", "search", "replace"},
-		"patch":        {"path", "diff"},
-	"replace_lines":  {"path"},
-		"glob":         {"pattern"},
+		"bash":          {"command"},
+		"read_file":     {"path"},
+		"write_file":    {"path", "content"},
+		"read_lines":    {"path", "start", "end"},
+		"insert_lines":  {"path", "line", "lines"},
+		"replace_text":  {"path", "search", "replace"},
+		"patch":         {"path", "diff"},
+		"replace_lines": {"path"},
+		"glob":          {"pattern"},
 	}
 
 	for _, tool := range toolDefs {
@@ -861,5 +861,3 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 		t.Errorf("Expected max 0, got %d", receivedMax)
 	}
 }
-
-

@@ -376,8 +376,8 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Timings struct {
-			PromptN      int `json:"prompt_n"`
-			PredictedN   int `json:"predicted_n"`
+			PromptN    int `json:"prompt_n"`
+			PredictedN int `json:"predicted_n"`
 		} `json:"timings"`
 	}
 

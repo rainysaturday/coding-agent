@@ -505,7 +505,7 @@ func TestToolDefinition_Structure(t *testing.T) {
 			Name:        "test_tool",
 			Description: "A test tool for testing",
 			Parameters: ParameterSchema{
-				Type: "object",
+				Type:     "object",
 				Required: []string{"required_param"},
 				Properties: map[string]Property{
 					"required_param": {Type: "string", Description: "A required parameter"},
