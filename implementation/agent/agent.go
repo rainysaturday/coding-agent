@@ -1606,6 +1606,20 @@ AVAILABLE TOOLS:
     How to call: Use env_var to read, set, or manage environment variables. Useful for configuring tools, checking configuration, or loading environment files.
     Example use case: env_var(action='get', name='HOME') to read the HOME variable, env_var(action='set', name='MY_VAR', value='hello') to set a variable, env_var(action='list', prefix='GOPATH') to list GOPATH-related variables, env_var(action='source', path='.env', overwrite=true) to load a .env file.
 
+31. git_merge
+    Description: Manage git merge operations with five actions: merge (standard merge), abort (abort in-progress merge), status (check merge status), squash (squash merge), and merge_pr (merge a GitHub pull request).
+    Parameters:
+      - action (string, required): One of: 'merge', 'abort', 'status', 'squash', 'merge_pr'
+      - source (string, optional): Source branch to merge (required for merge and squash actions)
+      - target (string, optional): Target branch to merge into (default: current branch)
+      - commit_message (string, optional): Custom commit message (for merge and squash actions)
+      - github_token (string, optional): GitHub API token for merge_pr action (also reads GITHUB_TOKEN env var)
+      - repo (string, optional): Repository in 'owner/repo' format (required for merge_pr action)
+      - pr_number (integer, optional): Pull request number to merge (required for merge_pr action)
+      - merge_method (string, optional): Merge method for PR: 'merge', 'squash', or 'rebase' (for merge_pr action only)
+    How to call: Use git_merge for branch merging operations. Merge a branch with action='merge', check merge conflicts with action='status', abort a bad merge with action='abort', squash all commits into one with action='squash', or merge a GitHub PR with action='merge_pr'.
+    Example use case: git_merge(action='merge', source='feature/auth'), git_merge(action='status') to check for conflicts, git_merge(action='abort') to cancel a merge, git_merge(action='squash', source='feature/new-api'), git_merge(action='merge_pr', pr_number=42, repo='owner/myproject', merge_method='squash')
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2796,6 +2810,51 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_merge",
+				Description: "Manage git merge operations: merge (standard), abort, status check, squash merge, and merge GitHub PRs.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Merge action: 'merge' (standard merge), 'abort' (abort in-progress merge), 'status' (check merge status), 'squash' (squash merge), or 'merge_pr' (merge a GitHub pull request)",
+						},
+						"source": {
+							Type:        "string",
+							Description: "Source branch to merge (required for merge and squash actions)",
+						},
+						"target": {
+							Type:        "string",
+							Description: "Target branch to merge into (default: HEAD/current branch)",
+						},
+						"commit_message": {
+							Type:        "string",
+							Description: "Custom commit message (for merge and squash actions)",
+						},
+						"github_token": {
+							Type:        "string",
+							Description: "GitHub API token for merge_pr action (also reads GITHUB_TOKEN env var as fallback)",
+						},
+						"repo": {
+							Type:        "string",
+							Description: "Repository in 'owner/repo' format (required for merge_pr action)",
+						},
+						"pr_number": {
+							Type:        "integer",
+							Description: "Pull request number to merge (required for merge_pr action)",
+						},
+						"merge_method": {
+							Type:        "string",
+							Description: "Merge method for PR: 'merge' (default), 'squash', or 'rebase' (for merge_pr action only)",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

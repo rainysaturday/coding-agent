@@ -57,6 +57,7 @@
 
 ### Git Tools (Extended)
 - **#059: Git Tag Management Tool** - Manage git tags with four actions: list (with pattern filtering and sorting), create (annotated/lightweight), delete, and show (with tagger/date/message/object ref details); tag name validation
+- **#062: Git Merge Tool** - Unified merge management with five actions: merge (standard branch merge with target branch support), abort (cancel in-progress merge), status (check for merge conflicts), squash (squash merge all commits into one), and merge_pr (merge GitHub pull requests via API with merge/squash/rebase methods)
 
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
@@ -140,6 +141,6 @@
 
 ## Completed Feature Count
 
-**61 / 61 features implemented**
+**62 / 62 features implemented**
 
 ## Upcoming Features

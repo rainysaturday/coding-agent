@@ -194,6 +194,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeRunBuild(tc.Parameters)
 	case "run_coverage":
 		result = te.executeRunCoverage(tc.Parameters)
+	case "git_merge":
+		result = te.executeGitMerge(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -11063,5 +11065,631 @@ func (te *ToolExecutor) generateCoverageSummary(report coverageReport) string {
 	}
 
 	return sb.String()
+}
+
+// executeGitMerge handles git merge operations: merge, abort, status, squash, merge_pr.
+func (te *ToolExecutor) executeGitMerge(params map[string]interface{}) *ToolResult {
+	action, ok := params["action"].(string)
+	if !ok || action == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	switch action {
+	case "merge":
+		return te.gitMergeMerge(params)
+	case "abort":
+		return te.gitMergeAbort(params)
+	case "status":
+		return te.gitMergeStatus(params)
+	case "squash":
+		return te.gitMergeSquash(params)
+	case "merge_pr":
+		return te.gitMergePR(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown merge action: %s. Valid actions: merge, abort, status, squash, merge_pr", action),
+		}
+	}
+}
+
+// gitMergeMerge performs a standard git merge of source into the current branch.
+func (te *ToolExecutor) gitMergeMerge(params map[string]interface{}) *ToolResult {
+	source, ok := params["source"].(string)
+	if !ok || source == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: source (branch to merge)",
+		}
+	}
+
+	target, ok := params["target"].(string)
+	if !ok || target == "" {
+		target = "HEAD"
+	}
+
+	commitMsg, hasCommitMsg := params["commit_message"]
+
+	// First, checkout target branch if different from current
+	if target != "HEAD" {
+		// Check if we need to checkout
+		checkoutCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		currentBranch, err := checkoutCmd.Output()
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to determine current branch: %v", err),
+			}
+		}
+		if strings.TrimSpace(string(currentBranch)) != target {
+			// Check if there are uncommitted changes
+			statusCmd := exec.Command("git", "diff-index", "--quiet", "HEAD", "--")
+			if statusCmd.Run() != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("cannot checkout '%s': you have uncommitted changes. Commit or stash them first.", target),
+				}
+			}
+			// Checkout target branch
+			checkoutCmd := exec.Command("git", "checkout", target)
+			checkoutOutput, checkoutErr := checkoutCmd.CombinedOutput()
+			if checkoutErr != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("failed to checkout branch '%s': %s", target, string(checkoutOutput)),
+				}
+			}
+		}
+		target = "HEAD"
+	}
+
+	// Verify source branch exists
+	verifyCmd := exec.Command("git", "rev-parse", "--verify", source)
+	if verifyCmd.Run() != nil {
+		output, _ := verifyCmd.CombinedOutput()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source branch '%s' does not exist: %s", source, string(output)),
+		}
+	}
+
+	// Check if the target branch has uncommitted changes
+	statusCmd := exec.Command("git", "diff-index", "--quiet", "HEAD", "--")
+	if statusCmd.Run() != nil {
+		diffOutput, _ := statusCmd.CombinedOutput()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot merge: you have uncommitted changes. Commit or stash them first.\nDifferences:\n%s", string(diffOutput)),
+		}
+	}
+
+	// Perform the merge
+	args := []string{"merge", "--no-edit", source}
+
+	// Use custom commit message if provided
+	if hasCommitMsg {
+		msgStr, _ := commitMsg.(string)
+		if msgStr != "" {
+			args = []string{"merge", "-m", msgStr, source}
+		}
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Check if this is a merge conflict
+		if strings.Contains(string(output), "CONFLICT") || strings.Contains(string(output), "has local changes") {
+			// Get conflicting files
+			conflictFiles := te.getConflictingFiles()
+			conflictSummary := ""
+			if len(conflictFiles) > 0 {
+				conflictSummary = "\nConflicting files:\n"
+				for _, f := range conflictFiles {
+					conflictSummary += fmt.Sprintf("  - %s\n", f)
+				}
+			}
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("merge conflict: %s%s", string(output), conflictSummary),
+				Extra: map[string]interface{}{
+					"conflict":    true,
+					"conflicts":   conflictFiles,
+					"merge_in_progress": true,
+				},
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("merge failed: %s", string(output)),
+		}
+	}
+
+	// Get merge commit hash
+	commitCmd := exec.Command("git", "rev-parse", "HEAD")
+	commitHash, _ := commitCmd.Output()
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Successfully merged '%s' into current branch\nCommit: %s", source, strings.TrimSpace(string(commitHash))),
+		Extra: map[string]interface{}{
+			"tool":      "git_merge",
+			"action":    "merge",
+			"source":    source,
+			"target":    target,
+			"commitHash": strings.TrimSpace(string(commitHash)),
+		},
+	}
+}
+
+// gitMergeAbort aborts an in-progress merge.
+func (te *ToolExecutor) gitMergeAbort(params map[string]interface{}) *ToolResult {
+	// Check if a merge is in progress
+	mergeHeadPath := ".git/MERGE_HEAD"
+	if _, err := os.Stat(mergeHeadPath); os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   "no merge in progress. MERGE_HEAD not found.",
+		}
+	}
+
+	cmd := exec.Command("git", "merge", "--abort")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to abort merge: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  "Merge aborted successfully. Working tree restored to pre-merge state.",
+		Extra: map[string]interface{}{
+			"tool":      "git_merge",
+			"action":    "abort",
+			"message":   "Merge aborted successfully",
+		},
+	}
+}
+
+// gitMergeStatus checks if a merge is in progress and lists conflicting files.
+func (te *ToolExecutor) gitMergeStatus(params map[string]interface{}) *ToolResult {
+	// Check if a merge is in progress
+	mergeHeadPath := ".git/MERGE_HEAD"
+	if _, err := os.Stat(mergeHeadPath); os.IsNotExist(err) {
+		return &ToolResult{
+			Success: true,
+			Output:  "No merge in progress.",
+			Extra: map[string]interface{}{
+				"tool":           "git_merge",
+				"action":         "status",
+				"merge_in_progress": false,
+				"conflicts":      []string{},
+			},
+		}
+	}
+
+	// Get conflicting files
+	conflictFiles := te.getConflictingFiles()
+
+	// Get the source branch being merged
+	sourceBranch := "unknown"
+	mergeHeadContent, _ := os.ReadFile(mergeHeadPath)
+	mergeHeadHash := strings.TrimSpace(string(mergeHeadContent))
+
+	// Try to find the branch name for this commit
+	branchCmd := exec.Command("git", "branch", "--contains", mergeHeadHash)
+	branchOutput, _ := branchCmd.CombinedOutput()
+	branches := strings.Split(strings.TrimSpace(string(branchOutput)), "\n")
+	for _, b := range branches {
+		b = strings.TrimSpace(b)
+		if b != "" && !strings.Contains(b, "*") {
+			sourceBranch = strings.TrimPrefix(b, "  ")
+			break
+		} else if b != "" && strings.Contains(b, "*") {
+			// This is the current branch, skip
+			continue
+		}
+	}
+
+	// If no non-current branch found, try get-branch
+	if sourceBranch == "unknown" || sourceBranch == "" {
+		// Fallback: try to get from reflog
+		reflogCmd := exec.Command("git", "reflog", "show", "--format=%gs", "-1")
+		reflogOutput, _ := reflogCmd.CombinedOutput()
+		reflogStr := string(reflogOutput)
+		// Parse "merge <branch>: Merge commit message"
+		if strings.HasPrefix(reflogStr, "merge ") {
+			parts := strings.SplitN(reflogStr[6:], ":", 2)
+			if len(parts) > 0 {
+				sourceBranch = strings.TrimSpace(parts[0])
+			}
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Merge in progress: %s into current branch.\nConflicts: %d file(s)", sourceBranch, len(conflictFiles)),
+		Extra: map[string]interface{}{
+			"tool":              "git_merge",
+			"action":            "status",
+			"merge_in_progress": true,
+			"source_branch":     sourceBranch,
+			"merge_head":        mergeHeadHash,
+			"conflicts":         conflictFiles,
+			"conflictCount":     len(conflictFiles),
+		},
+	}
+}
+
+// gitMergeSquash performs a squash merge of source into the current branch.
+func (te *ToolExecutor) gitMergeSquash(params map[string]interface{}) *ToolResult {
+	source, ok := params["source"].(string)
+	if !ok || source == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: source (branch to squash merge)",
+		}
+	}
+
+	target, ok := params["target"].(string)
+	if !ok || target == "" {
+		target = "HEAD"
+	}
+
+	// Verify source branch exists
+	verifyCmd := exec.Command("git", "rev-parse", "--verify", source)
+	if verifyCmd.Run() != nil {
+		output, _ := verifyCmd.CombinedOutput()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source branch '%s' does not exist: %s", source, string(output)),
+		}
+	}
+
+	// Checkout target branch if different from current
+	if target != "HEAD" {
+		checkoutCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+		currentBranch, err := checkoutCmd.Output()
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to determine current branch: %v", err),
+			}
+		}
+		if strings.TrimSpace(string(currentBranch)) != target {
+			statusCmd := exec.Command("git", "diff-index", "--quiet", "HEAD", "--")
+			if statusCmd.Run() != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("cannot checkout '%s': you have uncommitted changes. Commit or stash them first.", target),
+				}
+			}
+			checkoutCmd := exec.Command("git", "checkout", target)
+			checkoutOutput, checkoutErr := checkoutCmd.CombinedOutput()
+			if checkoutErr != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("failed to checkout branch '%s': %s", target, string(checkoutOutput)),
+				}
+			}
+		}
+		target = "HEAD"
+	}
+
+	// Check for uncommitted changes
+	statusCmd := exec.Command("git", "diff-index", "--quiet", "HEAD", "--")
+	if statusCmd.Run() != nil {
+		diffOutput, _ := statusCmd.CombinedOutput()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot squash merge: you have uncommitted changes.\nDifferences:\n%s", string(diffOutput)),
+		}
+	}
+
+	// Perform squash merge
+	cmd := exec.Command("git", "merge", "--squash", source)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Clean up the squash state
+		exec.Command("git", "merge", "--abort").Run()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("squash merge failed: %s", string(output)),
+		}
+	}
+
+	// Check if there are actually changes to commit
+	statusCmd = exec.Command("git", "diff-index", "--quiet", "--cached", "HEAD", "--")
+	if statusCmd.Run() != nil {
+		// No changes - clean up
+		exec.Command("git", "merge", "--abort").Run()
+		return &ToolResult{
+			Success: true,
+			Output:  "Squash merge completed but no changes to commit. The source branch was already fully merged.",
+			Extra: map[string]interface{}{
+				"tool":            "git_merge",
+				"action":          "squash",
+				"source":          source,
+				"target":          target,
+				"noChangesToCommit": true,
+			},
+		}
+	}
+
+	// Commit the squashed changes
+	commitMsg, hasCommitMsg := params["commit_message"]
+	args := []string{"commit", "-m", "Squash merge of branch '" + source + "'"}
+	if hasCommitMsg {
+		msgStr, _ := commitMsg.(string)
+		if msgStr != "" {
+			args = []string{"commit", "-m", msgStr}
+		}
+	}
+	commitCmd := exec.Command("git", args...)
+	commitOutput, commitErr := commitCmd.CombinedOutput()
+	if commitErr != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to commit squashed changes: %s", string(commitOutput)),
+		}
+	}
+
+	// Get commit hash
+	revCmd := exec.Command("git", "rev-parse", "HEAD")
+	commitHash, _ := revCmd.Output()
+
+	// Clean up squash state
+	exec.Command("git", "reset", "HEAD").Run()
+	exec.Command("git", "checkout", "--", ".").Run()
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Squash merge of '%s' completed.\nSquashed into single commit: %s", source, strings.TrimSpace(string(commitHash))),
+		Extra: map[string]interface{}{
+			"tool":         "git_merge",
+			"action":       "squash",
+			"source":       source,
+			"target":       target,
+			"commitHash":   strings.TrimSpace(string(commitHash)),
+			"message":      "Squash merge completed successfully",
+		},
+	}
+}
+
+// gitMergePR merges a GitHub pull request using the GitHub API.
+func (te *ToolExecutor) gitMergePR(params map[string]interface{}) *ToolResult {
+	// Get parameters
+	token, ok := params["github_token"].(string)
+	if !ok || token == "" {
+		// Try environment variable
+		token = os.Getenv("GITHUB_TOKEN")
+	}
+	if token == "" {
+		token = os.Getenv("GITHUB_API_TOKEN")
+	}
+	if token == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: github_token (or set GITHUB_TOKEN environment variable)",
+		}
+	}
+
+	repo, ok := params["repo"].(string)
+	if !ok || repo == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: repo (format: owner/repo)",
+		}
+	}
+
+	prNumFloat, okFloat := params["pr_number"].(float64)
+	prNumIntRaw, okInt := params["pr_number"].(int)
+	if !okFloat && !okInt {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: pr_number",
+		}
+	}
+	var prNumber float64
+	if okFloat {
+		prNumber = prNumFloat
+	} else {
+		prNumber = float64(prNumIntRaw)
+	}
+
+	mergeMethod, ok := params["merge_method"].(string)
+	if !ok || mergeMethod == "" {
+		mergeMethod = "merge"
+	}
+
+	// Validate repo format
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid repo format '%s': expected 'owner/repo'", repo),
+		}
+	}
+
+	// Validate merge method
+	validMethods := map[string]bool{
+		"merge":  true,
+		"squash": true,
+		"rebase": true,
+	}
+	if !validMethods[mergeMethod] {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid merge method: %s. Valid methods: merge, squash, rebase", mergeMethod),
+		}
+	}
+
+	// Validate PR number
+	prNumInt := int(prNumber)
+	if prNumInt <= 0 {
+		return &ToolResult{
+			Success: false,
+			Error:   "pr_number must be a positive integer",
+		}
+	}
+
+	// Build the API URL
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d/merge", repo, prNumInt)
+
+	// Create request body
+	reqBody := map[string]interface{}{
+		"merge_method": mergeMethod,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+
+	// Create HTTP request
+	req, err := http.NewRequest("PUT", apiURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create request: %v", err),
+		}
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "coding-agent")
+
+	// Execute request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to merge PR: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	// Handle response
+	if resp.StatusCode == 200 || resp.StatusCode == 201 {
+		// Parse response for merge commit SHA
+		var result map[string]interface{}
+		json.Unmarshal(respBody, &result)
+
+		sha := ""
+		if s, ok := result["sha"].(string); ok {
+			sha = s
+		}
+
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Successfully merged PR #%d into %s (method: %s)\nMerge commit: %s", prNumInt, repo, mergeMethod, sha),
+			Extra: map[string]interface{}{
+				"tool":         "git_merge",
+				"action":       "merge_pr",
+				"pr_number":    prNumInt,
+				"repo":         repo,
+				"merge_method": mergeMethod,
+				"sha":          sha,
+			},
+		}
+	} else if resp.StatusCode == 403 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("GitHub API returned 403: check your token permissions. Response: %s", string(respBody)),
+			Extra: map[string]interface{}{
+				"tool":         "git_merge",
+				"action":       "merge_pr",
+				"pr_number":    prNumInt,
+				"repo":         repo,
+				"http_status":  resp.StatusCode,
+				"response":     string(respBody),
+			},
+		}
+	} else if resp.StatusCode == 405 {
+		// Merge method not allowed
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("GitHub API returned 405: merge method '%s' not allowed for this PR. Response: %s", mergeMethod, string(respBody)),
+			Extra: map[string]interface{}{
+				"tool":         "git_merge",
+				"action":       "merge_pr",
+				"pr_number":    prNumInt,
+				"repo":         repo,
+				"merge_method": mergeMethod,
+				"http_status":  resp.StatusCode,
+				"response":     string(respBody),
+			},
+		}
+	} else {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("GitHub API error (status %d): %s", resp.StatusCode, string(respBody)),
+			Extra: map[string]interface{}{
+				"tool":         "git_merge",
+				"action":       "merge_pr",
+				"pr_number":    prNumInt,
+				"repo":         repo,
+				"merge_method": mergeMethod,
+				"http_status":  resp.StatusCode,
+				"response":     string(respBody),
+			},
+		}
+	}
+}
+
+// getConflictingFiles returns a list of files with merge conflicts.
+func (te *ToolExecutor) getConflictingFiles() []string {
+	var files []string
+
+	// Method 1: Use git diff --name-only --diff-filter=U
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	output, err := cmd.Output()
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				files = append(files, line)
+			}
+		}
+		if len(files) > 0 {
+			return files
+		}
+	}
+
+	// Method 2: Search for conflict markers in tracked files
+	cmd = exec.Command("git", "ls-files")
+	output, err = cmd.Output()
+	if err != nil {
+		return files
+	}
+
+	fileList := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, filePath := range fileList {
+		filePath = strings.TrimSpace(filePath)
+		if filePath == "" {
+			continue
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		// Check for conflict markers
+		contentStr := string(content)
+		if strings.Contains(contentStr, "<<<<<<< ") && strings.Contains(contentStr, "=======") && strings.Contains(contentStr, ">>>>>>> ") {
+			files = append(files, filePath)
+		}
+	}
+
+	return files
 }
 

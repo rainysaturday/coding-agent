@@ -3148,3 +3148,254 @@ func TestExecuteFileCompare_Stats(t *testing.T) {
 		t.Errorf("Expected 0 failed calls, got %d", stats.FailedCalls)
 	}
 }
+
+func TestExecute_GitMerge_MissingAction(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing action parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: action") {
+		t.Errorf("Expected 'missing required parameter: action' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_UnknownAction(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "invalid_action",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for unknown action")
+	}
+	if !strings.Contains(result.Error, "unknown merge action") {
+		t.Errorf("Expected 'unknown merge action' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_Status_NoMerge(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "status",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if !result.Success {
+		t.Errorf("Expected success when no merge is in progress, got: %s", result.Error)
+	}
+	if extra, ok := result.Extra["merge_in_progress"].(bool); ok && extra {
+		t.Error("Expected merge_in_progress to be false when no merge is in progress")
+	}
+}
+
+func TestExecute_GitMerge_Abort_NoMerge(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "abort",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	// Without a merge in progress, this should fail gracefully
+	if result.Success {
+		t.Error("Expected failure when no merge is in progress for abort action")
+	}
+}
+
+func TestExecute_GitMerge_Merge_MissingSource(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "merge",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing source parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: source") {
+		t.Errorf("Expected 'missing required parameter: source' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_Merge_NonExistentBranch(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "merge",
+			"source": "this-branch-definitely-does-not-exist-12345",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for non-existent source branch")
+	}
+	if !strings.Contains(result.Error, "does not exist") {
+		t.Errorf("Expected 'does not exist' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_Squash_MissingSource(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action": "squash",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing source parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: source") {
+		t.Errorf("Expected 'missing required parameter: source' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_PR_MissingToken(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action":      "merge_pr",
+			"pr_number":   42,
+			"repo":        "owner/repo",
+			"merge_method": "merge",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing github_token")
+	}
+	if !strings.Contains(result.Error, "github_token") {
+		t.Errorf("Expected 'github_token' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_PR_MissingRepo(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action":      "merge_pr",
+			"github_token": "fake-token",
+			"pr_number":   42,
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing repo")
+	}
+	if !strings.Contains(result.Error, "repo") {
+		t.Errorf("Expected 'repo' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_PR_InvalidRepoFormat(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action":      "merge_pr",
+			"github_token": "fake-token",
+			"repo":        "invalid-repo-format",
+			"pr_number":   42,
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for invalid repo format")
+	}
+	if !strings.Contains(result.Error, "invalid repo format") {
+		t.Errorf("Expected 'invalid repo format' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_PR_InvalidMergeMethod(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action":       "merge_pr",
+			"github_token":  "fake-token",
+			"repo":         "owner/repo",
+			"pr_number":    42,
+			"merge_method": "invalid_method",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for invalid merge method")
+	}
+	if !strings.Contains(result.Error, "invalid merge method") {
+		t.Errorf("Expected 'invalid merge method' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitMerge_PR_MissingPRNumber(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_merge",
+		Parameters: map[string]interface{}{
+			"action":      "merge_pr",
+			"github_token": "fake-token",
+			"repo":        "owner/repo",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for missing pr_number")
+	}
+	if !strings.Contains(result.Error, "pr_number") {
+		t.Errorf("Expected 'pr_number' error, got: %s", result.Error)
+	}
+}
