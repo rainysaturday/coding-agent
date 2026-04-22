@@ -2752,3 +2752,138 @@ func TestExecuteScaffold_CustomBody(t *testing.T) {
 		t.Error("Expected custom body in generated file")
 	}
 }
+
+func TestExecuteProjectTree_Success(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Create a test directory structure
+	testDir := t.TempDir()
+	os.MkdirAll(filepath.Join(testDir, "src", "utils"), 0755)
+	os.WriteFile(filepath.Join(testDir, "src", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	os.WriteFile(filepath.Join(testDir, "src", "utils", "helper.go"), []byte("package utils\n\nfunc Helper() {}\n"), 0644)
+	os.WriteFile(filepath.Join(testDir, "README.md"), []byte("# Test Project\n"), 0644)
+	os.WriteFile(filepath.Join(testDir, "go.mod"), []byte("module test\n"), 0644)
+
+	// Run project_tree on the test directory
+	result := te.executeProjectTree(map[string]interface{}{
+		"path":      testDir,
+		"max_depth": 3,
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	output := result.Output
+	if !strings.Contains(output, "src") {
+		t.Error("Expected output to contain 'src' directory")
+	}
+	if !strings.Contains(output, "main.go") {
+		t.Error("Expected output to contain 'main.go'")
+	}
+	if !strings.Contains(output, "README.md") {
+		t.Error("Expected output to contain 'README.md'")
+	}
+	if !strings.Contains(output, "go.mod") {
+		t.Error("Expected output to contain 'go.mod'")
+	}
+
+	// Check extra fields
+	if _, ok := result.Extra["totalDirs"]; !ok {
+		t.Error("Expected extra field 'totalDirs'")
+	}
+	if _, ok := result.Extra["totalFiles"]; !ok {
+		t.Error("Expected extra field 'totalFiles'")
+	}
+}
+
+func TestExecuteProjectTree_MaxDepth(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	os.MkdirAll(filepath.Join(testDir, "a", "b", "c"), 0755)
+	os.WriteFile(filepath.Join(testDir, "a", "file.txt"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(testDir, "a", "b", "file.txt"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(testDir, "a", "b", "c", "file.txt"), []byte("content"), 0644)
+
+	// With max_depth=1, should only show 'a' directory without its children files
+	result := te.executeProjectTree(map[string]interface{}{
+		"path":      testDir,
+		"max_depth": 1,
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Should contain 'a' directory
+	if !strings.Contains(result.Output, "a") {
+		t.Error("Expected output to contain 'a' directory")
+	}
+	// Should NOT contain the 'c' directory as a tree node
+	if strings.Contains(result.Output, "├── c") || strings.Contains(result.Output, "└── c") {
+		t.Error("Expected output to NOT contain 'c' directory as a tree node")
+	}
+	// Should NOT contain 'b' directory either
+	if strings.Contains(result.Output, "├── b") || strings.Contains(result.Output, "└── b") {
+		t.Error("Expected output to NOT contain 'b' directory as a tree node")
+	}
+}
+
+func TestExecuteProjectTree_NoHiddenFiles(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	os.WriteFile(filepath.Join(testDir, ".gitignore"), []byte("*.log\n"), 0644)
+	os.WriteFile(filepath.Join(testDir, "main.go"), []byte("package main\n"), 0644)
+
+	result := te.executeProjectTree(map[string]interface{}{
+		"path":        testDir,
+		"show_hidden": false,
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	if strings.Contains(result.Output, ".gitignore") {
+		t.Error("Expected output to NOT contain '.gitignore' when show_hidden=false")
+	}
+	if !strings.Contains(result.Output, "main.go") {
+		t.Error("Expected output to contain 'main.go'")
+	}
+}
+
+func TestExecuteProjectTree_PathNotFound(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.executeProjectTree(map[string]interface{}{
+		"path": "/nonexistent/path/that/does/not/exist",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for non-existent path")
+	}
+	if !strings.Contains(result.Error, "path not found") {
+		t.Errorf("Expected 'path not found' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteProjectTree_NotADirectory(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	testFile := filepath.Join(testDir, "file.txt")
+	os.WriteFile(testFile, []byte("content"), 0644)
+
+	result := te.executeProjectTree(map[string]interface{}{
+		"path": testFile,
+	})
+
+	if result.Success {
+		t.Error("Expected failure when path is a file")
+	}
+	if !strings.Contains(result.Error, "not a directory") {
+		t.Errorf("Expected 'not a directory' error, got: %s", result.Error)
+	}
+}

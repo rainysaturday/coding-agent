@@ -1290,6 +1290,17 @@ AVAILABLE TOOLS:
     Example use case: run_tests() to run all tests, or run_tests(command='go test ./pkg/...', args=['-v']) to run specific packages with verbose output.
     Note: Auto-detection runs 'go test ./...' for Go projects, 'npm test' for Node.js projects, and 'python -m pytest' for Python projects.
 
+23. project_tree
+    Description: Generate a visual directory tree showing the project structure with file metadata. Displays tree-drawing characters (├──, └──, │), file type icons (📁 for directories, 🐹 for Go, 🐍 for Python, etc.), file sizes, and symlink indicators.
+    Parameters:
+      - path (string, optional): Directory path to show (default: current directory)
+      - max_depth (integer, optional): Maximum depth to traverse (default: 3)
+      - show_hidden (boolean, optional): Include hidden files (dotfiles) (default: true)
+      - max_entries (integer, optional): Maximum entries to show per level (default: 100)
+    How to call: Use project_tree to get a quick overview of the project structure without navigating through list_dir repeatedly.
+    Example use case: project_tree() to see current directory, project_tree(path='src/', max_depth=2) to see a specific subdirectory.
+    Note: The tree uses Unicode box-drawing characters for clean visual presentation. File icons are based on file extensions.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -1918,6 +1929,35 @@ func buildTools() []inference.ToolDefinition {
 						"timeout": {
 							Type:        "integer",
 							Description: "Maximum execution time in seconds (default: 60)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "project_tree",
+				Description: "Generate a visual directory tree showing the project structure with file metadata including icons, sizes, and type indicators. Supports depth limiting and hidden file filtering.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Directory path to show tree for (default: current directory)",
+						},
+						"max_depth": {
+							Type:        "integer",
+							Description: "Maximum depth levels to traverse (default: 3)",
+						},
+						"show_hidden": {
+							Type:        "boolean",
+							Description: "Include hidden files (dotfiles) in the tree (default: true)",
+						},
+						"max_entries": {
+							Type:        "integer",
+							Description: "Maximum entries to show per level (default: 100)",
 						},
 					},
 					Required: []string{},

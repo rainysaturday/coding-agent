@@ -89,9 +89,14 @@
 ### Code Scaffolding
 - **#044: Scaffold Tool** - Generate code from built-in templates with variable substitution. Templates: go_struct, go_handler, go_service, python_class, python_dataclass, proto_message, openapi_schema, go_test
 
+### Project Understanding
+- **#046: Project Tree Tool** - Generate a visual directory tree with file metadata (type, size, permissions), depth limiting, glob filtering, and hidden file toggling
+
 ### Test Execution
 - **#045: Run Tests Tool** - Execute tests for the current project with auto-detection of project type (Go, Node.js, Python). Supports custom commands, arguments, and timeouts. Returns structured results with pass/fail status, exit code, and failure summaries.
 
 ## Completed Feature Count
 
-**45 / 45 features implemented**
+**46 / 46 features implemented**
+
+## Upcoming Features

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -159,6 +160,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeScaffold(tc.Parameters)
 	case "run_tests":
 		result = te.executeRunTests(tc.Parameters)
+	case "project_tree":
+		result = te.executeProjectTree(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -3371,4 +3374,404 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// treeEntry represents a single entry in the directory tree.
+type treeEntry struct {
+	Name      string
+	RelPath   string // Full relative path from root
+	IsDir     bool
+	IsSymlink bool
+	Mode      os.FileMode
+	Size      int64
+	ModTime   time.Time
+}
+
+// pathNode represents a node in the directory tree structure.
+type pathNode struct {
+	name     string
+	entry    treeEntry
+	children map[string]*pathNode
+	isLeaf   bool // true if this node is an actual file/dir entry, not just a path component
+}
+
+// executeProjectTree generates a visual directory tree with file metadata.
+func (te *ToolExecutor) executeProjectTree(params map[string]interface{}) *ToolResult {
+	// Determine path (default: current directory)
+	path := "."
+	if p, ok := params["path"].(string); ok && p != "" {
+		path = p
+	}
+
+	// Clean path
+	cleanPath := filepath.Clean(path)
+
+	// Check if path exists and is a directory
+	info, err := os.Stat(cleanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("path not found: %s", cleanPath),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot access path: %v", err),
+		}
+	}
+	if !info.IsDir() {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path is not a directory: %s", cleanPath),
+		}
+	}
+
+	// Determine max depth (default: 3)
+	maxDepth := 3
+	if md, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(md)
+	} else if md, ok := params["max_depth"].(int); ok {
+		maxDepth = md
+	} else if md, ok := params["max_depth"].(string); ok {
+		if n, err := strconv.Atoi(md); err == nil {
+			maxDepth = n
+		}
+	}
+
+	// Determine show hidden flag (default: true - show hidden files)
+	showHidden := true
+	if sh, ok := params["show_hidden"].(bool); ok {
+		showHidden = sh
+	}
+
+	// Determine max entries (default: 100 per level)
+	maxEntries := 100
+	if me, ok := params["max_entries"]; ok {
+		switch v := me.(type) {
+		case float64:
+			maxEntries = int(v)
+		case int:
+			maxEntries = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxEntries = n
+			}
+		}
+	}
+
+	// Collect all entries recursively with depth tracking
+	var allEntries []treeEntry
+
+	walkFn := func(walkPath string, d os.DirEntry, depth int) error {
+		if depth > maxDepth {
+			return filepath.SkipDir
+		}
+
+		// Skip the root directory itself
+		rel, _ := filepath.Rel(cleanPath, walkPath)
+		if rel == "." || rel == "" {
+			return nil
+		}
+
+		// Check hidden files/directories
+		baseName := filepath.Base(walkPath)
+		if !showHidden && strings.HasPrefix(baseName, ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Get file info
+		fileInfo, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		// Check if it's a symlink
+		isSymlink := d.Type()&os.ModeSymlink != 0
+
+		allEntries = append(allEntries, treeEntry{
+			Name:      baseName,
+			RelPath:   rel,
+			IsDir:     d.IsDir() || (isSymlink && fileInfo != nil && fileInfo.IsDir()),
+			IsSymlink: isSymlink,
+			Mode:      fileInfo.Mode(),
+			Size:      fileInfo.Size(),
+			ModTime:   fileInfo.ModTime(),
+		})
+
+		return nil
+	}
+
+	// Walk the directory
+	err = filepath.WalkDir(cleanPath, func(walkPath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip inaccessible paths
+		}
+		rel, _ := filepath.Rel(cleanPath, walkPath)
+		depth := 0
+		if rel != "." && rel != "" {
+			depth = strings.Count(rel, string(filepath.Separator)) + 1
+		}
+		return walkFn(walkPath, d, depth)
+	})
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to walk directory: %v", err),
+		}
+	}
+
+	// Build the tree structure
+	treeOutput := buildTree(cleanPath, allEntries, maxEntries)
+
+	// Count stats
+	totalDirs := 0
+	totalFiles := 0
+	totalSymlinks := 0
+	totalSize := int64(0)
+	for _, entry := range allEntries {
+		if entry.IsSymlink {
+			totalSymlinks++
+		} else if entry.IsDir {
+			totalDirs++
+		} else {
+			totalFiles++
+			totalSize += entry.Size
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  treeOutput,
+		Extra: map[string]interface{}{
+			"tool":          "project_tree",
+			"path":          cleanPath,
+			"maxDepth":      maxDepth,
+			"totalDirs":     totalDirs,
+			"totalFiles":    totalFiles,
+			"totalSymlinks": totalSymlinks,
+			"totalSize":     totalSize,
+		},
+	}
+}
+
+// buildTree constructs a visual tree string from flat entries.
+func buildTree(rootPath string, entries []treeEntry, maxEntries int) string {
+	var buf strings.Builder
+
+	// Root directory header
+	cleanRoot := filepath.Clean(rootPath)
+	if cleanRoot == "." {
+		buf.WriteString("📁 .\n")
+	} else {
+		buf.WriteString(fmt.Sprintf("📁 %s\n", cleanRoot))
+	}
+
+	if len(entries) == 0 {
+		buf.WriteString("  (empty)\n")
+		return buf.String()
+	}
+
+	// Build a map from relative path to entry for quick lookup
+	entryByPath := make(map[string]treeEntry)
+	for _, e := range entries {
+		entryByPath[e.RelPath] = e
+	}
+
+	// Create root node
+	root := &pathNode{
+		name:     "",
+		entry:    treeEntry{IsDir: true},
+		children: make(map[string]*pathNode),
+	}
+
+	// Sort entries by their relative path length first (parents before children)
+	sorted := make([]treeEntry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		// Split by path segments
+		segmentsI := strings.Count(sorted[i].RelPath, string(filepath.Separator))
+		segmentsJ := strings.Count(sorted[j].RelPath, string(filepath.Separator))
+		if segmentsI != segmentsJ {
+			return segmentsI < segmentsJ
+		}
+		return sorted[i].RelPath < sorted[j].RelPath
+	})
+
+	// Insert each entry into the tree
+	for _, e := range sorted {
+		parts := strings.Split(e.RelPath, string(filepath.Separator))
+		current := root
+
+		for _, part := range parts {
+			if _, exists := current.children[part]; !exists {
+				// Find the entry for this path component
+				var ent treeEntry
+				for idx := 0; idx < len(parts); idx++ {
+					if parts[idx] == part {
+						// Build the segment path up to this point
+						segment := ""
+						for k := 0; k <= idx; k++ {
+							if k > 0 {
+								segment += string(filepath.Separator)
+							}
+							segment += parts[k]
+						}
+						if ie, ok := entryByPath[segment]; ok {
+							ent = ie
+						} else {
+							ent = treeEntry{Name: part, RelPath: part}
+						}
+						break
+					}
+				}
+				current.children[part] = &pathNode{
+					name:     part,
+					entry:    ent,
+					children: make(map[string]*pathNode),
+				}
+			}
+			current = current.children[part]
+		}
+
+		// Mark this node as an actual entry
+		current.isLeaf = true
+		if e.Name != "" {
+			current.entry = e
+		}
+	}
+
+	// Render the tree
+	renderTree(root, "", true, &buf, maxEntries, 0)
+
+	if len(entries) > maxEntries {
+		buf.WriteString(fmt.Sprintf("\n... (%d entries shown, limited by max_entries)", maxEntries))
+	}
+
+	return buf.String()
+}
+
+// renderTree recursively renders a tree node with tree-drawing characters.
+func renderTree(node *pathNode, prefix string, isLast bool, buf *strings.Builder, maxEntries int, depth int) {
+	if node.name == "" {
+		// Root node - render children directly
+		children := sortedChildren(node.children)
+		for i, child := range children {
+			if depth > maxEntries {
+				buf.WriteString(prefix + "... (more entries omitted)\n")
+				return
+			}
+			renderTree(child, "", i == len(children)-1, buf, maxEntries, depth+1)
+		}
+		return
+	}
+
+	// Draw this node
+	connector := "├── "
+	if isLast {
+		connector = "└── "
+	}
+
+	displayName := node.name
+	var icon string
+
+	if node.entry.IsSymlink {
+		icon = "🔗 "
+		// Try to read symlink target
+		if target, err := os.Readlink(filepath.Join(prefix, displayName)); err == nil {
+			displayName = fmt.Sprintf("%s -> %s", displayName, target)
+		}
+	} else if node.entry.IsDir {
+		icon = "📁 "
+	} else {
+		// File with extension icon
+		ext := strings.ToLower(filepath.Ext(displayName))
+		switch ext {
+		case ".go":
+			icon = "🐹 "
+		case ".py":
+			icon = "🐍 "
+		case ".rs":
+			icon = "🦀 "
+		case ".js", ".mjs", ".cjs":
+			icon = "📜 "
+		case ".ts", ".tsx":
+			icon = "🔷 "
+		case ".json":
+			icon = "📋 "
+		case ".yaml", ".yml":
+			icon = "⚙️ "
+		case ".toml":
+			icon = "📝 "
+		case ".md":
+			icon = "📄 "
+		case ".html":
+			icon = "🌐 "
+		case ".css":
+			icon = "🎨 "
+		case ".sh":
+			icon = "⚡ "
+		case ".txt":
+			icon = "📃 "
+		case ".xml":
+			icon = "📰 "
+		case ".proto":
+			icon = "🔧 "
+		case ".sql":
+			icon = "🗃️ "
+		case ".env":
+			icon = "🔒 "
+		default:
+			icon = "📄 "
+		}
+	}
+
+	// Format size for files
+	sizeStr := ""
+	if !node.entry.IsDir && node.entry.Size > 0 {
+		sizeStr = fmt.Sprintf(" (%s)", formatFileSize(node.entry.Size))
+	}
+
+	buf.WriteString(fmt.Sprintf("%s%s%s%s%s\n", prefix, connector, icon, displayName, sizeStr))
+
+	// Render children if directory
+	if node.entry.IsDir || node.entry.IsSymlink {
+		children := sortedChildren(node.children)
+		if len(children) > 0 {
+			newPrefix := prefix
+			if prefix == "" {
+				newPrefix = "    "
+			} else if isLast {
+				newPrefix = prefix + "    "
+			} else {
+				newPrefix = prefix + "│   "
+			}
+
+			for i, child := range children {
+				renderTree(child, newPrefix, i == len(children)-1, buf, maxEntries, depth+1)
+			}
+		} else {
+			buf.WriteString(prefix + "    (empty)\n")
+		}
+	}
+}
+
+// sortedChildren returns children sorted with directories first, then files alphabetically.
+func sortedChildren(children map[string]*pathNode) []*pathNode {
+	result := make([]*pathNode, 0, len(children))
+	for _, c := range children {
+		result = append(result, c)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		// Directories first
+		if result[i].entry.IsDir != result[j].entry.IsDir {
+			return result[i].entry.IsDir
+		}
+		// Alphabetical within same type
+		return result[i].name < result[j].name
+	})
+	return result
 }
