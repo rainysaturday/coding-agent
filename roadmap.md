@@ -59,6 +59,7 @@
 - **#059: Git Tag Management Tool** - Manage git tags with four actions: list (with pattern filtering and sorting), create (annotated/lightweight), delete, and show (with tagger/date/message/object ref details); tag name validation
 - **#062: Git Merge Tool** - Unified merge management with five actions: merge (standard branch merge with target branch support), abort (cancel in-progress merge), status (check for merge conflicts), squash (squash merge all commits into one), and merge_pr (merge GitHub pull requests via API with merge/squash/rebase methods)
 - **#065: Git Revert Tool** - Revert git changes with five actions: list (recent commits), commit (revert a specific commit by hash creating undo commit), files (revert specific files to last committed state), soft_reset (soft reset to a commit keeping changes staged), and hard_reset (hard reset to a commit discarding all changes); branch protection for main/master; dry-run mode; safety checks for destructive operations
+- **#066: Git Rebase Tool** - Manage git rebases with six actions: list (show commits that would be rebased), start (begin rebase onto target branch/commit), continue (resume after conflicts), abort (cancel rebase and restore original branch), skip (skip current commit), and update (update rebase todo list for interactive rebase); supports keep-empty and allow-empty flags
 
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
@@ -148,6 +149,6 @@
 
 ## Completed Feature Count
 
-**65 / 65 features implemented**
+**66 / 66 features implemented**
 
 ## Upcoming Features

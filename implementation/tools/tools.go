@@ -13908,3 +13908,481 @@ func (te *ToolExecutor) executeGitRevertHardReset(params map[string]interface{})
 		},
 	}
 }
+
+// executeGitRebase manages git rebases with various actions.
+func (te *ToolExecutor) executeGitRebase(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "list":
+		return te.gitRebaseList(params)
+	case "start":
+		return te.gitRebaseStart(params)
+	case "continue":
+		return te.gitRebaseContinue(params)
+	case "abort":
+		return te.gitRebaseAbort(params)
+	case "skip":
+		return te.gitRebaseSkip(params)
+	case "update":
+		return te.gitRebaseUpdate(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s. Valid actions: list, start, continue, abort, skip, update", actionStr),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": actionStr,
+			},
+		}
+	}
+}
+
+// gitRebaseList lists commits that would be rebased onto a target.
+func (te *ToolExecutor) gitRebaseList(params map[string]interface{}) *ToolResult {
+	target, hasTarget := params["target"]
+	targetBranch := ""
+	if hasTarget {
+		targetBranch, _ = target.(string)
+	}
+
+	// Get current branch
+	currentBranch, err := te.getCurrentBranch()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get current branch: %v", err),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "list",
+			},
+		}
+	}
+
+	// Default target to origin/main if not specified
+	if targetBranch == "" {
+		targetBranch = "origin/main"
+	}
+
+	// Check if target exists
+	cmd := exec.Command("git", "rev-parse", "--verify", targetBranch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("target branch '%s' not found. Available branches:\n%s", targetBranch, te.listBranches()),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "list",
+				"target": targetBranch,
+			},
+		}
+	}
+	_ = output // target exists
+
+	// Get commits that would be rebased (commits in current branch not in target)
+	cmd = exec.Command("git", "log", "--format=%h %s", currentBranch+".."+targetBranch, "--reverse")
+	commits, err := cmd.CombinedOutput()
+	if err != nil {
+		// Try the other way around
+		cmd = exec.Command("git", "log", "--format=%h %s", targetBranch+".."+currentBranch, "--reverse")
+		commits, err = cmd.CombinedOutput()
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to list commits: %v", err),
+				Extra: map[string]interface{}{
+					"tool":   "git_rebase",
+					"action": "list",
+				},
+			}
+		}
+	}
+
+	commitLines := strings.TrimSpace(string(commits))
+	if commitLines == "" {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("No commits to rebase. Branch '%s' is already up to date with '%s'.", currentBranch, targetBranch),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "list",
+				"count":  0,
+			},
+		}
+	}
+
+	lines := strings.Split(commitLines, "\n")
+	commitList := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			commitList = append(commitList, line)
+		}
+	}
+
+	result := fmt.Sprintf("Commits to rebase (%d):\n", len(commitList))
+	for i, c := range commitList {
+		result += fmt.Sprintf("  %d. %s\n", i+1, c)
+	}
+	result += fmt.Sprintf("\nTarget: %s\nBranch: %s\n", targetBranch, currentBranch)
+
+	return &ToolResult{
+		Success: true,
+		Output:  result,
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "list",
+			"count":  len(commitList),
+			"target": targetBranch,
+		},
+	}
+}
+
+// gitRebaseStart starts a rebase onto a target branch.
+func (te *ToolExecutor) gitRebaseStart(params map[string]interface{}) *ToolResult {
+	target, hasTarget := params["target"]
+	if !hasTarget {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: target (branch or commit to rebase onto)",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "start",
+			},
+		}
+	}
+
+	targetBranch, _ := target.(string)
+	if targetBranch == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "target branch cannot be empty",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "start",
+			},
+		}
+	}
+
+	// Check if target exists
+	cmd := exec.Command("git", "rev-parse", "--verify", targetBranch)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("target '%s' not found. Make sure the branch exists.", targetBranch),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "start",
+				"target": targetBranch,
+			},
+		}
+	}
+	_ = output // target exists
+
+	// Check if rebase is already in progress
+	inRebase := te.checkRebaseInProgress()
+	if inRebase {
+		return &ToolResult{
+			Success: false,
+			Error:   "A rebase is already in progress. Use action='continue' to resume or action='abort' to cancel.",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "start",
+			},
+		}
+	}
+
+	// Build git rebase command
+	args := []string{"rebase", targetBranch}
+
+	// Add optional flags
+	if keepEmpty, ok := params["keep_empty"].(bool); ok && keepEmpty {
+		args = append(args, "--keep-empty")
+	}
+	if allowEmpty, ok := params["allow_empty"].(bool); ok && allowEmpty {
+		args = append(args, "--allow-empty")
+	}
+
+	cmd = exec.Command("git", args...)
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to start rebase: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "start",
+				"target": targetBranch,
+				"output": string(output),
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Rebase started onto '%s'. If conflicts arise, resolve them and use git_rebase(action='continue').", targetBranch),
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "start",
+			"target": targetBranch,
+		},
+	}
+}
+
+// gitRebaseContinue continues a rebase after resolving conflicts.
+func (te *ToolExecutor) gitRebaseContinue(params map[string]interface{}) *ToolResult {
+	// Check if rebase is actually in progress
+	inRebase := te.checkRebaseInProgress()
+	if !inRebase {
+		return &ToolResult{
+			Success: false,
+			Error:   "No rebase in progress. Use git_rebase(action='start', target='...') to begin a rebase first.",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "continue",
+			},
+		}
+	}
+
+	cmd := exec.Command("git", "rebase", "--continue")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Check if it's a conflict (continue requires resolving first)
+		if strings.Contains(string(output), "CONFLICT") || strings.Contains(string(output), "conflict") {
+			return &ToolResult{
+				Success: false,
+				Error:   "Rebase conflict detected. Resolve conflicts, then use git add to mark resolved, and retry.",
+				Extra: map[string]interface{}{
+					"tool":   "git_rebase",
+					"action": "continue",
+					"output": string(output),
+				},
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("rebase continue failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "continue",
+				"output": string(output),
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  "Rebase continued successfully.",
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "continue",
+		},
+	}
+}
+
+// gitRebaseAbort aborts an in-progress rebase.
+func (te *ToolExecutor) gitRebaseAbort(params map[string]interface{}) *ToolResult {
+	// Check if rebase is in progress
+	inRebase := te.checkRebaseInProgress()
+	if !inRebase {
+		return &ToolResult{
+			Success: false,
+			Error:   "No rebase in progress to abort.",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "abort",
+			},
+		}
+	}
+
+	cmd := exec.Command("git", "rebase", "--abort")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to abort rebase: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "abort",
+				"output": string(output),
+			},
+		}
+	}
+
+	currentBranch, _ := te.getCurrentBranch()
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Rebase aborted. Restored to branch '%s'.", currentBranch),
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "abort",
+		},
+	}
+}
+
+// gitRebaseSkip skips the current commit during an interactive rebase.
+func (te *ToolExecutor) gitRebaseSkip(params map[string]interface{}) *ToolResult {
+	// Check if rebase is in progress
+	inRebase := te.checkRebaseInProgress()
+	if !inRebase {
+		return &ToolResult{
+			Success: false,
+			Error:   "No rebase in progress to skip a commit.",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "skip",
+			},
+		}
+	}
+
+	cmd := exec.Command("git", "rebase", "--skip")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to skip commit: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "skip",
+				"output": string(output),
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  "Skipped current commit and continued rebase.",
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "skip",
+		},
+	}
+}
+
+// gitRebaseUpdate updates the rebase todo list (for interactive rebases).
+func (te *ToolExecutor) gitRebaseUpdate(params map[string]interface{}) *ToolResult {
+	todo, hasTodo := params["rebase_todo"]
+	if !hasTodo || todo == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: rebase_todo (the updated todo list)",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "update",
+			},
+		}
+	}
+
+	todoStr, ok := todo.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "rebase_todo must be a string",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "update",
+			},
+		}
+	}
+
+	if todoStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "rebase_todo cannot be empty",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "update",
+			},
+		}
+	}
+
+	// Check if rebase is in progress
+	inRebase := te.checkRebaseInProgress()
+	if !inRebase {
+		return &ToolResult{
+			Success: false,
+			Error:   "No rebase in progress. Use action='start' to begin a rebase first.",
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "update",
+			},
+		}
+	}
+
+	// Write the updated todo list to .git/rebase-merge/git-rebase-todo
+	rebaseTodoPath := ".git/rebase-merge/git-rebase-todo"
+	if _, err := os.Stat(rebaseTodoPath); os.IsNotExist(err) {
+		// Try rebase-apply directory
+		rebaseTodoPath = ".git/rebase-apply/git-rebase-todo"
+	}
+
+	err := os.WriteFile(rebaseTodoPath, []byte(todoStr), 0644)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write rebase todo: %v", err),
+			Extra: map[string]interface{}{
+				"tool":   "git_rebase",
+				"action": "update",
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  "Rebase todo list updated. The rebase will continue with the new order on the next continue.",
+		Extra: map[string]interface{}{
+			"tool":   "git_rebase",
+			"action": "update",
+		},
+	}
+}
+
+// checkRebaseInProgress checks if a git rebase is currently in progress.
+func (te *ToolExecutor) checkRebaseInProgress() bool {
+	// Check for rebase-merge directory
+	if _, err := os.Stat(".git/rebase-merge"); err == nil {
+		return true
+	}
+	// Check for rebase-apply directory
+	if _, err := os.Stat(".git/rebase-apply"); err == nil {
+		return true
+	}
+	return false
+}
+
+// getCurrentBranch gets the current git branch name.
+func (te *ToolExecutor) getCurrentBranch() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current branch: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// listBranches lists all local and remote branches.
+func (te *ToolExecutor) listBranches() string {
+	cmd := exec.Command("git", "branch", "-a")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "Unable to list branches."
+	}
+	return string(output)
+}

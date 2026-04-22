@@ -1634,7 +1634,19 @@ AVAILABLE TOOLS:
     How to call: Use git_revert to undo changes. List commits with git_revert(action='list'), revert a commit with git_revert(action='commit', hash='abc123'), revert specific files with git_revert(action='files', files=['src/main.go']), reset branches with git_revert(action='soft_reset', hash='abc123') or git_revert(action='hard_reset', hash='abc123', force=true).
     Example use case: git_revert(action='list'), git_revert(action='commit', hash='a1b2c3d'), git_revert(action='files', files=['src/config.js', 'README.md']), git_revert(action='soft_reset', hash='e4f5g6h'), git_revert(action='hard_reset', hash='e4f5g6h', force=true)
 
-34. generate_docs
+34. git_rebase
+    Description: Manage git rebases with actions: list (show commits that would be rebased), start (begin rebase onto target), continue (resume after conflicts), abort (cancel rebase), skip (skip current commit), update (update todo list).
+    Parameters:
+      - action (string, required): One of: 'list', 'start', 'continue', 'abort', 'skip', 'update'
+      - target (string, required for start): Branch or commit to rebase onto (e.g., 'main', 'origin/main', 'abc1234')
+      - rebase_todo (string, optional): Updated todo list for 'update' action (edit commit order)
+      - keep_empty (boolean, optional): Include empty commits during rebase (for start action)
+      - allow_empty (boolean, optional): Allow empty commits (for start action)
+      - force (boolean, optional): Force operation, bypassing branch protection
+    How to call: Use git_rebase to manage interactive rebases. List commits with git_rebase(action='list'), start a rebase with git_rebase(action='start', target='main'), continue after resolving conflicts with git_rebase(action='continue'), abort with git_rebase(action='abort'), or skip with git_rebase(action='skip').
+    Example use case: git_rebase(action='list'), git_rebase(action='start', target='origin/main'), git_rebase(action='continue'), git_rebase(action='abort'), git_rebase(action='skip')
+
+35. generate_docs
     Description: Generate documentation for code files. Auto-detects language from file extension (Go, Python, JavaScript/TypeScript, Java, Rust, C/C++, Ruby, PHP, C#, Swift, Kotlin) and supports markdown or inline docstring output formats.
     Parameters:
       - path (string, required): Path to a file or directory to generate documentation for
@@ -2921,6 +2933,43 @@ func buildTools() []inference.ToolDefinition {
 						"allow_empty": {
 							Type:        "boolean",
 							Description: "Allow reverting to an empty commit (for commit action)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_rebase",
+				Description: "Manage git rebases: list commits that would be rebased, start a rebase onto a target branch, continue after conflicts, abort, or skip commits.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Rebase action: 'list' (list commits to be rebased), 'start' (begin rebase onto target), 'continue' (resume after conflicts), 'abort' (cancel rebase), 'skip' (skip current commit), 'update' (update todo list)",
+						},
+						"target": {
+							Type:        "string",
+							Description: "Branch or commit to rebase onto (required for start action, e.g., 'main', 'origin/main', 'abc1234')",
+						},
+						"rebase_todo": {
+							Type:        "string",
+							Description: "Updated todo list for update action (edit commit order, each line: pick|reword|edit|squash|fixup|drop <hash> <message>)",
+						},
+						"keep_empty": {
+							Type:        "boolean",
+							Description: "Include empty commits during rebase (for start action)",
+						},
+						"allow_empty": {
+							Type:        "boolean",
+							Description: "Allow empty commits (for start action)",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Force operation, bypassing branch protection (default: false)",
 						},
 					},
 					Required: []string{"action"},
