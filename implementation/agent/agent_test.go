@@ -1024,6 +1024,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"run_tests":     {},
 		"project_tree":  {},
 		"code_navigation": {"query"},
+		"check_links":     {},
 	}
 
 	for _, tool := range toolDefs {

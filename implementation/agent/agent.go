@@ -1340,6 +1340,16 @@ AVAILABLE TOOLS:
     Example use case: code_navigation(query='HandleRequest', mode='definitions') to find function definitions, code_navigation(query='User', mode='references') to find all usages of 'User', code_navigation(query='ReadWriter', mode='implementations') to find types implementing ReadWriter.
     Note: This tool uses grep-based pattern matching optimized for different programming languages. For the best results, specify the file_type when searching in a specific project.
 
+25. check_links
+    Description: Scan Markdown and HTML files for broken links (both internal file links and external URLs). Detects relative paths, image references, and HTTP/HTTPS URLs. Returns structured results with summaries of valid and broken links.
+    Parameters:
+      - paths (array, optional): Glob patterns to restrict search to specific files/directories (e.g., ['docs/**/*.md', 'README.md']). If omitted, searches all .md and .html files recursively from the current directory.
+      - file_types (array, optional): File extensions to scan for links. Default: ['.md', '.html', '.htm']. Can be a list of extensions with or without the leading dot.
+      - timeout (integer, optional): Timeout in seconds for checking external URLs (default: 10).
+    How to call: Use check_links to verify that all links in documentation and web files are valid. Useful during code reviews or documentation updates.
+    Example use case: check_links() to scan all .md and .html files, check_links(paths=['docs/**/*.md']) to check only documentation files, check_links(file_types=['.md'], timeout=15) to scan only markdown files with a longer timeout.
+    Note: Internal links are resolved relative to the file's directory. External links are verified via HTTP HEAD request (falls back to GET). Rate-limited to 5 simultaneous requests.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2033,6 +2043,31 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"query"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "check_links",
+				Description: "Scan Markdown and HTML files for broken links (both internal file links and external URLs). Detects relative paths, image references, and HTTP/HTTPS URLs. Returns structured results with summaries of valid and broken links.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"paths": {
+							Type:        "array",
+							Description: "Glob patterns to restrict search to specific files/directories (e.g., ['docs/**/*.md', 'README.md']). If omitted, searches all .md and .html files recursively from the current directory.",
+						},
+						"file_types": {
+							Type:        "array",
+							Description: "File extensions to scan for links. Default: ['.md', '.html', '.htm']. Can be a list of extensions with or without the leading dot.",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Timeout in seconds for checking external URLs (default: 10)",
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},

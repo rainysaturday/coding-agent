@@ -98,8 +98,11 @@
 ### Code Navigation
 - **#047: Code Navigation Tool** - Navigate code to find definitions, references, or implementations of symbols across the codebase. Supports multiple languages (Go, Python, JavaScript/TypeScript, Rust, Java, etc.) with grep-based pattern matching. Features three modes: `definitions` (find where defined), `references` (find all usages), `implementations` (find interface implementations). Supports language-specific file filtering, path scoping, and configurable result limits.
 
+### Link Validation
+- **#048: Broken Link Checker Tool** - Scan Markdown and HTML files for broken links (both internal file links and external URLs). Detects relative paths, image references, and HTTP/HTTPS URLs. Returns structured results with summaries of valid and broken links, with details for each broken link.
+
 ## Completed Feature Count
 
-**47 / 47 features implemented**
+**48 / 48 features implemented**
 
 ## Upcoming Features

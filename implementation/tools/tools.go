@@ -164,6 +164,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeProjectTree(tc.Parameters)
 	case "code_navigation":
 		result = te.executeCodeNavigation(tc.Parameters)
+	case "check_links":
+		result = te.executeCheckLinks(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -4103,4 +4105,494 @@ type codeNavigationResult struct {
 	Line     int    `json:"line"`
 	Content  string `json:"content"`
 	MatchType string `json:"match_type,omitempty"`
+}
+
+// brokenLink represents a broken link found during scanning.
+type brokenLink struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Type       string `json:"type"`
+	LinkValue  string `json:"link_value"`
+	LinkText   string `json:"link_text,omitempty"`
+	StatusCode int    `json:"status_code,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// linkInfo represents a link found during scanning.
+type linkInfo struct {
+	FilePath string
+	Line     int
+	Type     string
+	Value    string
+	Text     string
+}
+
+// executeCheckLinks scans files for broken internal and external links.
+func (te *ToolExecutor) executeCheckLinks(params map[string]interface{}) *ToolResult {
+	// Determine paths to search (default: current directory recursively)
+	var pathPatterns []string
+	if pathsParam, hasPaths := params["paths"]; hasPaths {
+		switch v := pathsParam.(type) {
+		case []interface{}:
+			for _, p := range v {
+				pathPatterns = append(pathPatterns, fmt.Sprintf("%v", p))
+			}
+		case string:
+			if strings.Contains(v, ",") {
+				for _, p := range strings.Split(v, ",") {
+					pathPatterns = append(pathPatterns, strings.TrimSpace(p))
+				}
+			} else {
+				pathPatterns = []string{v}
+			}
+		}
+	}
+
+	// Determine file types to scan (default: .md, .html, .htm)
+	var fileTypes []string
+	if ftParam, hasFT := params["file_types"]; hasFT {
+		switch v := ftParam.(type) {
+		case []interface{}:
+			for _, ft := range v {
+				fileTypes = append(fileTypes, strings.ToLower(fmt.Sprintf("%v", ft)))
+			}
+		case string:
+			if strings.Contains(v, ",") {
+				for _, ft := range strings.Split(v, ",") {
+					fileTypes = append(fileTypes, strings.TrimSpace(strings.ToLower(ft)))
+				}
+			} else {
+				fileTypes = []string{strings.TrimSpace(strings.ToLower(v))}
+			}
+		}
+	}
+	if len(fileTypes) == 0 {
+		fileTypes = []string{".md", ".html", ".htm"}
+	}
+
+	// Determine root directory for resolving relative links (default: current directory)
+	rootDir := "."
+	if rd, ok := params["root_dir"].(string); ok && rd != "" {
+		rootDir = rd
+	}
+	_ = rootDir // root_dir is used implicitly via current working directory
+
+	// Determine timeout for external link checks (default: 10 seconds)
+	timeoutSeconds := 10
+	if tp, ok := params["timeout"].(float64); ok {
+		timeoutSeconds = int(tp)
+	} else if tp, ok := params["timeout"].(int); ok {
+		timeoutSeconds = tp
+	} else if tp, ok := params["timeout"].(string); ok {
+		if n, err := strconv.Atoi(tp); err == nil {
+			timeoutSeconds = n
+		}
+	}
+
+	// Collect files to scan
+	var targetFiles []string
+	if len(pathPatterns) > 0 {
+		for _, p := range pathPatterns {
+			matches, err := te.globRecursive(p, 10000)
+			if err != nil {
+				continue
+			}
+			for _, m := range matches {
+				lowerM := strings.ToLower(m)
+				for _, ft := range fileTypes {
+					ftClean := strings.TrimPrefix(ft, ".")
+					if strings.HasSuffix(lowerM, "."+ftClean) {
+						targetFiles = append(targetFiles, m)
+						break
+					}
+				}
+			}
+		}
+	} else {
+		matches, err := te.globRecursive("**", 10000)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to discover files: %v", err),
+			}
+		}
+		for _, m := range matches {
+			lowerM := strings.ToLower(m)
+			for _, ft := range fileTypes {
+				ftClean := strings.TrimPrefix(ft, ".")
+				if strings.HasSuffix(lowerM, "."+ftClean) {
+					targetFiles = append(targetFiles, m)
+					break
+				}
+			}
+		}
+	}
+
+	if len(targetFiles) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("No %v files found to scan.\n\nTotal links found: 0\nBroken internal links: 0\nBroken external links: 0", fileTypes),
+			Extra: map[string]interface{}{
+				"tool":                "check_links",
+				"totalLinksFound":     0,
+				"totalFilesScanned":   0,
+				"internalLinksOk":     0,
+				"internalLinksBroken": 0,
+				"externalLinksOk":     0,
+				"externalLinksBroken": 0,
+			},
+		}
+	}
+
+	// Scan all files for links
+	var allLinks []linkInfo
+	for _, filePath := range targetFiles {
+		links := scanFileForLinks(filePath, fileTypes)
+		for i := range links {
+			links[i].FilePath = filePath
+		}
+		allLinks = append(allLinks, links...)
+	}
+
+	// Validate internal links
+	var internalOk, internalBroken, externalOk, externalBroken int
+	var brokenLinks []brokenLink
+
+	// Collect unique external URLs to check
+	externalURLs := make(map[string][]linkInfo)
+
+	for _, link := range allLinks {
+		if link.Type == "internal" {
+			fileDir := filepath.Dir(link.FilePath)
+			resolvedPath := filepath.Clean(filepath.Join(fileDir, link.Value))
+			pathOnly := link.Value
+			if idx := strings.Index(pathOnly, "#"); idx != -1 {
+				pathOnly = pathOnly[:idx]
+			}
+			if _, err := os.Stat(resolvedPath); err == nil {
+				internalOk++
+			} else {
+				internalBroken++
+				brokenLinks = append(brokenLinks, brokenLink{
+					File:      link.FilePath,
+					Line:      link.Line,
+					Type:      "internal",
+					LinkValue: link.Value,
+					LinkText:  link.Text,
+					Reason:    fmt.Sprintf("file not found: %s", resolvedPath),
+				})
+			}
+		} else {
+			externalURLs[link.Value] = append(externalURLs[link.Value], link)
+		}
+	}
+
+	// Check external links with limited concurrency (max 5 simultaneous)
+	semaphore := make(chan struct{}, 5)
+	type urlCheckResult struct {
+		url    string
+		ok     bool
+		code   int
+		reason string
+	}
+
+	checkDone := make(chan urlCheckResult, len(externalURLs))
+	for url, locations := range externalURLs {
+		semaphore <- struct{}{}
+		go func(u string, locs []linkInfo) {
+			defer func() { <-semaphore }()
+
+			client := &http.Client{
+				Timeout: time.Duration(timeoutSeconds) * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+
+			req, err := http.NewRequestWithContext(context.Background(), "HEAD", u, nil)
+			if err != nil {
+				for _, loc := range locs {
+					brokenLinks = append(brokenLinks, brokenLink{
+						File:     loc.FilePath,
+						Line:     loc.Line,
+						Type:     "external",
+						LinkValue: u,
+						LinkText: loc.Text,
+						Reason:   fmt.Sprintf("invalid URL: %v", err),
+					})
+				}
+				checkDone <- urlCheckResult{url: u, ok: true}
+				return
+			}
+
+			req.Header.Set("User-Agent", "coding-agent/1.0")
+			resp, err := client.Do(req)
+			if err != nil {
+				// Try GET as fallback
+				req, err = http.NewRequestWithContext(context.Background(), "GET", u, nil)
+				if err != nil {
+					for _, loc := range locs {
+						brokenLinks = append(brokenLinks, brokenLink{
+							File:     loc.FilePath,
+							Line:     loc.Line,
+							Type:     "external",
+							LinkValue: u,
+							LinkText: loc.Text,
+							Reason:   fmt.Sprintf("request failed: %v", err),
+						})
+					}
+					checkDone <- urlCheckResult{url: u, ok: true}
+					return
+				}
+				resp, err = client.Do(req)
+				if err != nil {
+					for _, loc := range locs {
+						brokenLinks = append(brokenLinks, brokenLink{
+							File:     loc.FilePath,
+							Line:     loc.Line,
+							Type:     "external",
+							LinkValue: u,
+							LinkText: loc.Text,
+							Reason:   fmt.Sprintf("request failed: %v", err),
+						})
+					}
+					checkDone <- urlCheckResult{url: u, ok: true}
+					return
+				}
+			}
+			resp.Body.Close()
+
+			if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+				externalOk++
+			} else {
+				externalBroken++
+				for _, loc := range locs {
+					brokenLinks = append(brokenLinks, brokenLink{
+						File:       loc.FilePath,
+						Line:       loc.Line,
+						Type:       "external",
+						LinkValue:  u,
+						LinkText:   loc.Text,
+						StatusCode: resp.StatusCode,
+						Reason:     fmt.Sprintf("HTTP %d %s", resp.StatusCode, resp.Status),
+					})
+				}
+			}
+			checkDone <- urlCheckResult{url: u, ok: true}
+		}(url, locations)
+	}
+
+	// Wait for all checks to complete
+	for i := 0; i < len(externalURLs); i++ {
+		<-checkDone
+	}
+
+	// Format output
+	var output strings.Builder
+	totalLinks := internalOk + internalBroken + externalOk + externalBroken
+
+	output.WriteString(fmt.Sprintf("Link check complete: %d link(s) found across %d file(s)\n\n", totalLinks, len(targetFiles)))
+	output.WriteString("Summary:\n")
+	output.WriteString(fmt.Sprintf("  Internal links: %d ok, %d broken\n", internalOk, internalBroken))
+	output.WriteString(fmt.Sprintf("  External links: %d ok, %d broken\n\n", externalOk, externalBroken))
+
+	if len(brokenLinks) > 0 {
+		output.WriteString("Broken links:\n")
+		for _, bl := range brokenLinks {
+			displayText := bl.LinkText
+			if displayText == "" {
+				displayText = bl.LinkValue
+			}
+			output.WriteString(fmt.Sprintf("  [%s] %s:%d: %s\n", bl.Type, bl.File, bl.Line, bl.LinkValue))
+			if displayText != bl.LinkValue {
+				output.WriteString(fmt.Sprintf("    Text: %s\n", displayText))
+			}
+			output.WriteString(fmt.Sprintf("    Reason: %s\n", bl.Reason))
+		}
+	} else {
+		output.WriteString("All links are valid! ✓\n")
+	}
+
+	result := &ToolResult{
+		Success:  internalBroken == 0 && externalBroken == 0,
+		Output:   output.String(),
+		Extra: map[string]interface{}{
+			"tool":                "check_links",
+			"totalLinksFound":     totalLinks,
+			"totalFilesScanned":   len(targetFiles),
+			"internalLinksOk":     internalOk,
+			"internalLinksBroken": internalBroken,
+			"externalLinksOk":     externalOk,
+			"externalLinksBroken": externalBroken,
+		},
+	}
+
+	if len(brokenLinks) > 0 {
+		result.Extra["brokenLinks"] = brokenLinks
+	}
+
+	return result
+}
+
+// scanFileForLinks scans a single file for links (both internal and external).
+func scanFileForLinks(filePath string, fileTypes []string) []linkInfo {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+
+	var lowerFileTypes []string
+	for _, ft := range fileTypes {
+		lowerFileTypes = append(lowerFileTypes, strings.ToLower(ft))
+	}
+
+	isMarkdown := false
+	for _, ft := range lowerFileTypes {
+		if ft == ".md" || ft == ".markdown" || ft == ".mdown" {
+			isMarkdown = true
+			break
+		}
+	}
+
+	isHTML := false
+	for _, ft := range lowerFileTypes {
+		if ft == ".html" || ft == ".htm" {
+			isHTML = true
+			break
+		}
+	}
+
+	var links []linkInfo
+	lines := strings.Split(string(content), "\n")
+
+	for lineNum, line := range lines {
+		if isMarkdown {
+			links = append(links, scanMarkdownLine(line, lineNum+1)...)
+		}
+		if isHTML {
+			links = append(links, scanHTMLLine(line, lineNum+1)...)
+		}
+	}
+
+	return links
+}
+
+// scanMarkdownLine scans a single markdown line for links.
+func scanMarkdownLine(line string, lineNum int) []linkInfo {
+	var links []linkInfo
+
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "<!--") || strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "<code>") {
+		return links
+	}
+
+	// Skip code fences
+	if strings.HasPrefix(trimmed, "```") {
+		return links
+	}
+
+	// Match [text](url) or ![alt](url) - but not inline code
+	// Use a more careful regex that avoids code blocks
+	re := regexp.MustCompile(`\[(?:[^\]]*)\]\(([^)]+)\)`)
+	matches := re.FindAllStringSubmatch(line, -1)
+	for _, m := range matches {
+		linkValue := strings.TrimSpace(m[1])
+
+		// Clean up title in parentheses if present
+		if idx := strings.LastIndex(linkValue, `" `); idx > 0 {
+			linkValue = linkValue[:idx]
+		} else if idx := strings.LastIndex(linkValue, `' `); idx > 0 {
+			linkValue = linkValue[:idx]
+		} else if idx := strings.LastIndex(linkValue, ` (`); idx > 0 {
+			linkValue = linkValue[:idx]
+		}
+
+		var linkText string
+		idx := strings.Index(line, "[")
+		if idx >= 0 {
+			// Find the matching ]
+			rest := line[idx:]
+			bracketEnd := strings.Index(rest, "]")
+			if bracketEnd > 0 {
+				linkText = rest[:bracketEnd+1]
+			}
+		}
+
+		if isExternalLink(linkValue) {
+			links = append(links, linkInfo{
+				FilePath: "",
+				Line:     lineNum,
+				Type:     "external",
+				Value:    linkValue,
+				Text:     linkText,
+			})
+		} else {
+			links = append(links, linkInfo{
+				FilePath: "",
+				Line:     lineNum,
+				Type:     "internal",
+				Value:    linkValue,
+				Text:     linkText,
+			})
+		}
+	}
+
+	return links
+}
+
+// scanHTMLLine scans a single HTML line for links.
+func scanHTMLLine(line string, lineNum int) []linkInfo {
+	var links []linkInfo
+
+	// Match <a href="..."> or <a href='...'>
+	aRe := regexp.MustCompile(`<a\s+[^>]*href\s*=\s*["']([^"']+)["']`)
+	aMatches := aRe.FindAllStringSubmatch(line, -1)
+	for _, m := range aMatches {
+		linkValue := m[1]
+		if isExternalLink(linkValue) {
+			links = append(links, linkInfo{
+				Line:    lineNum,
+				Type:    "external",
+				Value:   linkValue,
+				Text:    "",
+			})
+		} else {
+			links = append(links, linkInfo{
+				Line:    lineNum,
+				Type:    "internal",
+				Value:   linkValue,
+				Text:    "",
+			})
+		}
+	}
+
+	// Match <img src="...">
+	imgRe := regexp.MustCompile(`<img\s+[^>]*src\s*=\s*["']([^"']+)["']`)
+	imgMatches := imgRe.FindAllStringSubmatch(line, -1)
+	for _, m := range imgMatches {
+		linkValue := m[1]
+		if isExternalLink(linkValue) {
+			links = append(links, linkInfo{
+				Line:    lineNum,
+				Type:    "external",
+				Value:   linkValue,
+				Text:    "",
+			})
+		} else {
+			links = append(links, linkInfo{
+				Line:    lineNum,
+				Type:    "internal",
+				Value:   linkValue,
+				Text:    "",
+			})
+		}
+	}
+
+	return links
+}
+
+// isExternalLink checks if a link value is an external URL.
+func isExternalLink(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "//")
 }
