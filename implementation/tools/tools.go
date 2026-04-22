@@ -174,6 +174,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeJsonTransformer(tc.Parameters)
 	case "project_diagnostics":
 		result = te.executeProjectDiagnostics(tc.Parameters)
+	case "run_lint":
+		result = te.executeRunLint(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -6918,4 +6920,296 @@ func formatDiagnosticsResult(result projectDiagnosticsResult) string {
 	}
 
 	return output.String()
+}
+
+// executeRunLint runs linters for the current project and returns structured results.
+// Auto-detects project type and runs appropriate linters.
+func (te *ToolExecutor) executeRunLint(params map[string]interface{}) *ToolResult {
+	startTime := time.Now()
+
+	// Determine lint command
+	command, hasCommand := params["command"].(string)
+	if !hasCommand || command == "" {
+		// Auto-detect project type and linters
+		command = te.detectLintCommand()
+	}
+
+	if command == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "no project type detected. Supported project types: Go (go.mod), Python (requirements.txt, pyproject.toml, setup.py), Node.js (package.json), Shell scripts. Provide a custom 'command' parameter to override.",
+		}
+	}
+
+	// Build arguments
+	var args []string
+	if argsParam, hasArgs := params["args"]; hasArgs {
+		switch v := argsParam.(type) {
+		case []interface{}:
+			for _, a := range v {
+				args = append(args, fmt.Sprintf("%v", a))
+			}
+		case string:
+			args = append(args, v)
+		}
+	}
+
+	// Determine timeout (default: 60 seconds)
+	timeoutSeconds := 60
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Build full command
+	fullCmd := command
+	if len(args) > 0 {
+		fullCmd = command + " " + strings.Join(args, " ")
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", fullCmd)
+
+	// Set working directory
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+
+	// Execute command
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Extract exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	}
+
+	// Truncate output if too long
+	maxOutputLen := 10000
+	if len(outputStr) > maxOutputLen {
+		outputStr = outputStr[:maxOutputLen] + "\n... [output truncated, exceeded 10000 character limit]"
+	}
+
+	linted := exitCode == 0
+
+	// Generate summary
+	summary := te.generateLintSummary(outputStr, linted, command)
+
+	result := &ToolResult{
+		Success:  linted,
+		ExitCode: exitCode,
+		Output:   outputStr,
+		Extra: map[string]interface{}{
+			"tool":    "run_lint",
+			"linted":  linted,
+			"command": command,
+			"summary": summary,
+			"duration": time.Since(startTime).String(),
+		},
+	}
+
+	return result
+}
+
+// detectLintCommand auto-detects the lint command based on project files.
+func (te *ToolExecutor) detectLintCommand() string {
+	cwd, _ := os.Getwd()
+
+	// Check for Go project
+	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+		// Try go vet first, then gofmt
+		cmd := exec.Command("go", "vet", "./...")
+		cmd.Dir = cwd
+		if _, err := cmd.CombinedOutput(); err == nil {
+			return "go vet ./..."
+		}
+		// Fall back to gofmt
+		cmd = exec.Command("gofmt", "-l", ".")
+		cmd.Dir = cwd
+		if _, err := cmd.CombinedOutput(); err == nil {
+			return "gofmt -l ."
+		}
+		return "go vet ./..."
+	}
+
+	// Check for Python project
+	if _, err := os.Stat(filepath.Join(cwd, "requirements.txt")); err == nil {
+		// Try flake8 first
+		cmd := exec.Command("which", "flake8")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "flake8 ."
+		}
+		// Fall back to pylint
+		cmd = exec.Command("which", "pylint")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "pylint ."
+		}
+		return "flake8 ."
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "pyproject.toml")); err == nil {
+		cmd := exec.Command("which", "flake8")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "flake8 ."
+		}
+		cmd = exec.Command("which", "pylint")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "pylint ."
+		}
+		return "flake8 ."
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "setup.py")); err == nil {
+		cmd := exec.Command("which", "flake8")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "flake8 ."
+		}
+		cmd = exec.Command("which", "pylint")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "pylint ."
+		}
+		return "flake8 ."
+	}
+
+	// Check for Node.js project
+	if _, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil {
+		// Check if eslint is available
+		cmd := exec.Command("which", "eslint")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "eslint ."
+		}
+		// Check for npm test script with lint
+		content, _ := os.ReadFile(filepath.Join(cwd, "package.json"))
+		if bytes.Contains(content, []byte("\"lint\"")) || bytes.Contains(content, []byte("\"lint:fix\"")) {
+			return "npm run lint"
+		}
+		return "eslint ."
+	}
+
+	// Check for shell scripts
+	hasShell := false
+	matches, _ := te.globRecursive("*.sh", 10)
+	for _, f := range matches {
+		if shouldIncludeFile(f) {
+			hasShell = true
+			break
+		}
+	}
+	if hasShell {
+		cmd := exec.Command("which", "shellcheck")
+		if output, err := cmd.CombinedOutput(); err == nil && strings.TrimSpace(string(output)) != "" {
+			return "shellcheck *.sh"
+		}
+	}
+
+	return ""
+}
+
+// generateLintSummary creates a human-readable summary of lint results.
+func (te *ToolExecutor) generateLintSummary(output string, linted bool, command string) string {
+	var summary strings.Builder
+
+	if linted {
+		summary.WriteString("Linting passed successfully.")
+	} else {
+		summary.WriteString("Linting found issues.")
+	}
+
+	// Count issues based on output patterns
+	issueCount := 0
+
+	// Go vet: "command goes here" or "flag provided but not defined"
+	if strings.Contains(command, "go vet") || strings.Contains(command, "gofmt") {
+		// Count lines that look like issue reports
+		lines := strings.Split(output, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, ":") && !strings.HasPrefix(strings.TrimSpace(line), "-") {
+				// Could be a file:line: message or just a file name
+				if strings.HasSuffix(line, ".go") || strings.Contains(line, "go: download") {
+					continue
+				}
+				issueCount++
+			}
+		}
+		// gofmt -l outputs file names when files need formatting
+		if strings.Contains(command, "gofmt") {
+			issueCount = strings.Count(output, "\n")
+			if issueCount > 0 && !strings.HasSuffix(output, "\n") {
+				issueCount++
+			}
+			if issueCount == 0 && len(strings.TrimSpace(output)) == 0 {
+				return "Linting passed: no formatting issues found."
+			}
+			summary.WriteString(fmt.Sprintf(" Found %d file(s) needing formatting.", issueCount))
+			return summary.String()
+		}
+	}
+
+	// Python linters
+	if strings.Contains(command, "flake8") || strings.Contains(command, "pylint") {
+		// flake8: "file.py:line:col: E501 line too long"
+		flake8Pattern := regexp.MustCompile(`^[^:]+:\d+:\d+:\s*\w+\d+`)
+		for _, line := range strings.Split(output, "\n") {
+			if flake8Pattern.MatchString(line) {
+				issueCount++
+			}
+		}
+	}
+
+	if strings.Contains(command, "pylint") {
+		// pylint: "file.py:line: [msg_type] message"
+		pylintPattern := regexp.MustCompile(`^[^:]+:\d+:\s*\[?\w+\]?\s*\d+:\d+`)
+		for _, line := range strings.Split(output, "\n") {
+			if pylintPattern.MatchString(line) {
+				issueCount++
+			}
+		}
+	}
+
+	// ESLint
+	if strings.Contains(command, "eslint") {
+		eslintPattern := regexp.MustCompile(`^[^:]+:\d+:\d+\s+(warning|error)\s+`)
+		for _, line := range strings.Split(output, "\n") {
+			if eslintPattern.MatchString(line) {
+				issueCount++
+			}
+		}
+		// Also check summary line: "X problem(s)"
+		if strings.Contains(output, "problem") {
+			issueCount = 0
+			summary.WriteString(fmt.Sprintf(" ESLint reported issues in the output above. Command: %s", command))
+			return summary.String()
+		}
+	}
+
+	// ShellCheck
+	if strings.Contains(command, "shellcheck") {
+		shellCheckPattern := regexp.MustCompile(`^[^:]+:\d+:\d+:\s*\w+\s+:`)
+		for _, line := range strings.Split(output, "\n") {
+			if shellCheckPattern.MatchString(line) {
+				issueCount++
+			}
+		}
+	}
+
+	if !linted && issueCount > 0 {
+		summary.WriteString(fmt.Sprintf(" Found approximately %d issue(s).", issueCount))
+	} else if !linted && issueCount == 0 {
+		summary.WriteString(" Check the output above for details.")
+	}
+
+	summary.WriteString(fmt.Sprintf("\nCommand: %s", command))
+
+	return summary.String()
 }

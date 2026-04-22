@@ -1519,6 +1519,16 @@ AVAILABLE TOOLS:
     Example use case: project_diagnostics() to scan the current directory, project_diagnostics(paths=['src/']) to scan only the source directory, project_diagnostics(mode='full') for a comprehensive scan.
     Note: Checks include TODO/FIXME/HACK/WARN/XXX markers, empty files, large files, hardcoded secrets, and more. Severity levels: low, medium, high, critical.
 
+28. run_lint
+    Description: Run linters for the current project and report structured results. Auto-detects project type (Go, Python, Node.js, Shell) and runs appropriate linters (gofmt, go vet, flake8, pylint, eslint, shellcheck).
+    Parameters:
+      - command (string, optional): Custom lint command to run (e.g., 'go vet ./...', 'flake8 src/', 'eslint .'). If omitted, auto-detects from project files.
+      - args (array, optional): Additional arguments for the lint command (e.g., ['-v', '--max-line-length=120'] or '-v').
+      - timeout (integer, optional): Maximum execution time in seconds (default: 60).
+    How to call: Use run_lint to check code for style issues, potential bugs, and quality problems. Returns structured results including exit code, pass/fail status, and a summary of issues.
+    Example use case: run_lint() to auto-detect and lint the current project, run_lint(command='go vet ./...') to run go vet specifically, run_lint(command='eslint .', args=['--fix']) to auto-fix ESLint issues.
+    Note: Auto-detection runs 'go vet ./...' or 'gofmt -l .' for Go projects, 'flake8 .' or 'pylint .' for Python projects, 'eslint .' for Node.js projects.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2394,6 +2404,31 @@ func buildTools() []inference.ToolDefinition {
 						"mode": {
 							Type:        "string",
 							Description: "Scan mode: 'full' (default, all checks), 'basic' (TODOs and empty files only). Currently supported: full, basic.",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "run_lint",
+				Description: "Run linters for the current project and report structured results. Auto-detects project type (Go, Python, Node.js) and runs appropriate linters (gofmt, go vet, flake8, pylint, eslint, shellcheck).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "Custom lint command to run (e.g., 'go vet ./...', 'flake8 src/', 'eslint .'). If omitted, auto-detects from project files.",
+						},
+						"args": {
+							Type:        "array",
+							Description: "Additional arguments for the lint command. Can be an array of strings or a single space-separated string.",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum execution time in seconds (default: 60)",
 						},
 					},
 					Required: []string{},

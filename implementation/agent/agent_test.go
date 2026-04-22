@@ -1029,6 +1029,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"check_links":     {},
 		"json_transformer": {"command"},
 		"project_diagnostics": {},
+		"run_lint": {},
 	}
 
 	for _, tool := range toolDefs {

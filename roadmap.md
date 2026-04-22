@@ -111,8 +111,11 @@
 ### Project Quality
 - **#052: Project Diagnostics Tool** - Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys patterns. Returns structured report with severity levels (low, medium, high, critical) and recommendations. Supports configurable scan depth and path scoping.
 
+### Code Quality
+- **#053: Run Lint Tool** - Run linters for the current project and report structured results. Auto-detects project type (Go, Python, Node.js, Shell) and runs appropriate linters (gofmt, go vet, flake8, pylint, eslint, shellcheck). Supports custom commands, arguments, and timeouts. Returns pass/fail status with formatted output.
+
 ## Completed Feature Count
 
-**52 / 52 features implemented**
+**53 / 53 features implemented**
 
 ## Upcoming Features
