@@ -209,6 +209,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeTestGen(tc.Parameters)
 	case "code_review":
 		result = te.executeCodeReview(tc.Parameters)
+	case "interactive_session":
+		result = te.executeInteractiveSession(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{

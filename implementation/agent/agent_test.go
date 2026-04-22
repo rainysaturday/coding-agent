@@ -1046,6 +1046,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"dependency_audit": {},
 		"testgen":        {"path"},
 		"code_review":    {"path"},
+		"interactive_session": {"action"},
 	}
 
 	for _, tool := range toolDefs {

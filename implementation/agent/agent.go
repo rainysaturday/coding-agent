@@ -3152,6 +3152,43 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "interactive_session",
+				Description: "Manage interactive terminal sessions (REPLs, interactive programs). Allows starting, sending input to, and stopping long-running interactive processes like python3, node, sqlite3, etc. Different from 'bash' because sessions maintain state across interactions.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'start' (begin a session), 'send' (send input to a session), 'stop' (terminate a session), or 'list' (show active sessions)",
+						},
+						"command": {
+							Type:        "string",
+							Description: "Command to run when starting a session (e.g., 'python3', 'node', 'sqlite3', 'bash', 'zsh')",
+						},
+						"args": {
+							Type:        "array",
+							Description: "Arguments for the command when starting a session",
+						},
+						"session": {
+							Type:        "string",
+							Description: "Session ID for send/stop actions (returned by start action, e.g., 'session-1')",
+						},
+						"input": {
+							Type:        "string",
+							Description: "Input text to send to the session (required for send action)",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum wait time in seconds for send action (default: 10)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
 	}
 }
 

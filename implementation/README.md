@@ -28,6 +28,7 @@ This project implements a coding agent that can:
 3. **write_file** - Write content to files
 4. **read_lines** - Read specific line ranges from files
 5. **insert_lines** - Insert lines at specific positions
+6. **interactive_session** - Start and interact with REPLs (python3, node, sqlite3, etc.)
 
 ### Technical Features
 

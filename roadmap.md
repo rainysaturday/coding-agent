@@ -156,8 +156,11 @@
 ### Dependency Management
 - **#067: Dependency Audit Tool** - Scan project dependency files (go.mod, package.json, requirements.txt, Cargo.toml, Gemfile, etc.) for outdated versions, lock file mismatches, and dependency issues. Auto-detects project type. Returns structured results with dependency name, current version, and upgrade recommendations. Uses only Go stdlib - zero external dependencies.
 
+### Interactive Sessions
+- **#070: Interactive Terminal Session Tool** - Start, interact with, and manage long-running interactive terminal sessions (REPLs). Supports actions: start (begin session), send (send input), stop (terminate session), list (show active sessions). Useful for python3, node, sqlite3, and other interactive programs.
+
 ## Completed Feature Count
 
-**69 / 69 features implemented**
+**70 / 70 features implemented**
 
 ## Upcoming Features
