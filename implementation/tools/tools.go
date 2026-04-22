@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -137,6 +138,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitAdd(tc.Parameters)
 	case "git_commit":
 		result = te.executeGitCommit(tc.Parameters)
+	case "find":
+		result = te.executeFind(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -1637,6 +1640,176 @@ func (te *ToolExecutor) executeGitAdd(params map[string]interface{}) *ToolResult
 			"mode":    "specific",
 			"files":   files,
 			"message": fmt.Sprintf("Staged %d file(s)", len(files)),
+		},
+	}
+}
+
+// findMatch represents a single match in a file search result.
+type findMatch struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+	Content string `json:"content"`
+}
+
+// executeFind searches file contents for matching patterns.
+func (te *ToolExecutor) executeFind(params map[string]interface{}) *ToolResult {
+	pattern, ok := params["pattern"].(string)
+	if !ok || pattern == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: pattern",
+		}
+	}
+
+	// Optional: search within specific files/directories using glob patterns
+	pathsParam, hasPaths := params["paths"]
+	var pathPatterns []string
+	if hasPaths {
+		switch v := pathsParam.(type) {
+		case []interface{}:
+			pathPatterns = make([]string, len(v))
+			for i, p := range v {
+				pathPatterns[i] = fmt.Sprintf("%v", p)
+			}
+		case string:
+			// Single pattern or comma-separated
+			if strings.Contains(v, ",") {
+				for _, p := range strings.Split(v, ",") {
+					pathPatterns = append(pathPatterns, strings.TrimSpace(p))
+				}
+			} else {
+				pathPatterns = []string{v}
+			}
+		}
+	}
+
+	// Case sensitivity
+	caseInsensitive := false
+	if ci, ok := params["case_insensitive"].(bool); ok {
+		caseInsensitive = ci
+	}
+
+	// Max results limit
+	maxResultsParam, hasMaxResults := params["max_results"]
+	maxResults := 50 // Default limit to prevent context overflow
+	if hasMaxResults {
+		switch v := maxResultsParam.(type) {
+		case float64:
+			maxResults = int(v)
+		case int:
+			maxResults = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxResults = n
+			}
+		}
+	}
+
+	// Compile the regex pattern
+	flags := ""
+	if caseInsensitive {
+		flags = "(?i)"
+	}
+	re, err := regexp.Compile(flags + pattern)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid regex pattern: %v", err),
+		}
+	}
+
+	// Determine which files to search
+	var targetFiles []string
+	if hasPaths {
+		// Search in files matching the given glob patterns
+		for _, p := range pathPatterns {
+			matches, err := te.globRecursive(p, maxResults*10) // Allow more candidates
+			if err != nil {
+				continue
+			}
+			targetFiles = append(targetFiles, matches...)
+		}
+	} else {
+		// Default: search all files recursively
+		matches, err := te.globRecursive("**", maxResults*10)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to discover files: %v", err),
+			}
+		}
+		targetFiles = matches
+	}
+
+	if len(targetFiles) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("No files found to search (pattern: %s)", pattern),
+			Extra: map[string]interface{}{
+				"pattern":     pattern,
+				"filesSearched": 0,
+				"matchesFound":  0,
+			},
+		}
+	}
+
+	// Search through files for matches
+	var allMatches []findMatch
+	var filesSearched int
+
+	for _, filePath := range targetFiles {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // Skip unreadable files
+		}
+
+		filesSearched++
+		lines := strings.Split(string(content), "\n")
+
+		// Handle trailing newline
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+
+		for lineNum, line := range lines {
+			if re.MatchString(line) {
+				allMatches = append(allMatches, findMatch{
+					Path:    filePath,
+					Line:    lineNum + 1, // 1-indexed
+					Content: line,
+				})
+
+				if len(allMatches) >= maxResults {
+					goto doneSearching
+				}
+			}
+		}
+	}
+
+doneSearching:
+	// Format output
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Found %d match(es) in %d file(s) for pattern '%s':\n\n",
+		len(allMatches), filesSearched, pattern))
+
+	for _, m := range allMatches {
+		// Escape content for display (handle control characters)
+		displayContent := m.Content
+		if len(displayContent) > 200 {
+			displayContent = displayContent[:200] + "..."
+		}
+		output.WriteString(fmt.Sprintf("  %s:%d: %s\n", m.Path, m.Line, displayContent))
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"pattern":       pattern,
+			"caseInsensitive": caseInsensitive,
+			"filesSearched": filesSearched,
+			"matchesFound":  len(allMatches),
+			"maxResults":    maxResults,
 		},
 	}
 }

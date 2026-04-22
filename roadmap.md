@@ -58,6 +58,9 @@
 - **#017: TUI Tool Feedback** - Visual tool call/status feedback
 - **#018: LLM Error Feedback** - Detailed error messages to LLM
 
+### Content Search
+- **#038: Find Tool** - Search file contents with regex patterns, structured output with file/line/content
+
 ### Inference
 - **#010: Streaming Inference** - Real-time token streaming, configurable timeout
 
@@ -78,4 +81,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**37 / 37 features implemented**
+**38 / 38 features implemented**

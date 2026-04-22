@@ -1191,6 +1191,16 @@ AVAILABLE TOOLS:
     How to call: Use git_commit after git_add to save changes. Provide a clear, descriptive commit message.
     Example use case: "git_commit message='Add new authentication module'" or "git_commit message='Fix login bug' amend=true"
 
+17. find
+    Description: Search file contents for matches to a regex pattern. Returns file paths, line numbers, and matching content.
+    Parameters:
+      - pattern (string, required): Regular expression pattern to search for (Go regex syntax)
+      - paths (array, optional): Glob patterns to restrict search (e.g., ['*.go', 'src/**']). If omitted, searches all files.
+      - case_insensitive (boolean, optional): Ignore case when matching (default: false)
+      - max_results (integer, optional): Maximum results to return (default: 50)
+    How to call: Use find to search for patterns across the codebase. Returns structured results with file, line, and content.
+    Example use case: find(pattern='func.*HandleRequest', paths=['*.go']) or find(pattern='TODO', case_insensitive=true)
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -1590,6 +1600,35 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "find",
+				Description: "Search file contents for matches to a regex pattern. Returns file paths, line numbers, and matching content.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"pattern": {
+							Type:        "string",
+							Description: "Regular expression pattern to search for (Go regex syntax)",
+						},
+						"paths": {
+							Type:        "array",
+							Description: "Glob patterns to restrict search to specific files/directories (e.g., ['*.go', 'src/**']). If not provided, searches all files recursively.",
+						},
+						"case_insensitive": {
+							Type:        "boolean",
+							Description: "Ignore case when matching (default: false)",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum number of results to return (default: 50)",
+						},
+					},
+					Required: []string{"pattern"},
 				},
 			},
 		},
