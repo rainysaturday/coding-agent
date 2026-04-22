@@ -2621,6 +2621,31 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "file_compare",
+				Description: "Compare two text files and return a structured diff showing added, removed, and unchanged lines with line numbers and context.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"file1": {
+							Type:        "string",
+							Description: "Path to the first (original) file",
+						},
+						"file2": {
+							Type:        "string",
+							Description: "Path to the second (modified) file",
+						},
+						"context": {
+							Type:        "integer",
+							Description: "Number of context lines around changes (default: 3)",
+						},
+					},
+					Required: []string{"file1", "file2"},
+				},
+			},
+		},
 	}
 }
 

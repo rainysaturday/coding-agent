@@ -2887,3 +2887,264 @@ func TestExecuteProjectTree_NotADirectory(t *testing.T) {
 		t.Errorf("Expected 'not a directory' error, got: %s", result.Error)
 	}
 }
+
+func TestExecuteFileCompare_MissingFile1(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file2": "some/path",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for missing file1")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: file1") {
+		t.Errorf("Expected 'missing required parameter: file1' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_MissingFile2(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": "some/path",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for missing file2")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: file2") {
+		t.Errorf("Expected 'missing required parameter: file2' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_File1NotFound(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": "/nonexistent/file1.txt",
+		"file2": "some/path",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for missing file1")
+	}
+	if !strings.Contains(result.Error, "file not found") {
+		t.Errorf("Expected 'file not found' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_File2NotFound(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	os.WriteFile(file1, []byte("content"), 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": "/nonexistent/file2.txt",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for missing file2")
+	}
+	if !strings.Contains(result.Error, "file not found") {
+		t.Errorf("Expected 'file not found' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_IdenticalFiles(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	content := "line1\nline2\nline3\n"
+	os.WriteFile(file1, []byte(content), 0644)
+	os.WriteFile(file2, []byte(content), 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Files are identical") {
+		t.Errorf("Expected 'Files are identical' in output, got: %s", result.Output)
+	}
+	extra := result.Extra
+	if extra["added_lines"].(int) != 0 {
+		t.Errorf("Expected 0 added lines, got %d", extra["added_lines"])
+	}
+	if extra["removed_lines"].(int) != 0 {
+		t.Errorf("Expected 0 removed lines, got %d", extra["removed_lines"])
+	}
+}
+
+func TestExecuteFileCompare_SimpleDiff(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	os.WriteFile(file1, []byte("line1\nline2\nline3\n"), 0644)
+	os.WriteFile(file2, []byte("line1\nchanged\nline3\n"), 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "-line2") {
+		t.Errorf("Expected '-line2' in output, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "+changed") {
+		t.Errorf("Expected '+changed' in output, got: %s", result.Output)
+	}
+	if extra := result.Extra; extra["added_lines"].(int) != 1 || extra["removed_lines"].(int) != 1 {
+		t.Errorf("Expected 1 added and 1 removed, got added=%d removed=%d", extra["added_lines"], extra["removed_lines"])
+	}
+}
+
+func TestExecuteFileCompare_AdditionsOnly(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	os.WriteFile(file1, []byte("line1\nline3\n"), 0644)
+	os.WriteFile(file2, []byte("line1\nline2\nline3\n"), 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+	if extra := result.Extra; extra["added_lines"].(int) != 1 {
+		t.Errorf("Expected 1 added line, got %d", extra["added_lines"])
+	}
+}
+
+func TestExecuteFileCompare_DeletionsOnly(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	os.WriteFile(file1, []byte("line1\nline2\nline3\n"), 0644)
+	os.WriteFile(file2, []byte("line1\nline3\n"), 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+	if extra := result.Extra; extra["removed_lines"].(int) != 1 {
+		t.Errorf("Expected 1 removed line, got %d", extra["removed_lines"])
+	}
+}
+
+func TestExecuteFileCompare_BinaryFile(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "binary1.bin")
+	file2 := filepath.Join(testDir, "binary2.bin")
+	os.WriteFile(file1, []byte{0x00, 0x01, 0x02, 0x03}, 0644)
+	os.WriteFile(file2, []byte{0x04, 0x05, 0x06, 0x07}, 0644)
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	})
+
+	if result.Success {
+		t.Error("Expected failure for binary files")
+	}
+	if !strings.Contains(result.Error, "binary") {
+		t.Errorf("Expected 'binary' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_DirectoryTraversal(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1": "../../etc/passwd",
+		"file2": "some/path",
+	})
+
+	if result.Success {
+		t.Error("Expected failure for directory traversal")
+	}
+	if !strings.Contains(result.Error, "directory traversal") {
+		t.Errorf("Expected 'directory traversal' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteFileCompare_ContextParameter(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	// Create files with multiple lines
+	lines1 := make([]string, 20)
+	lines2 := make([]string, 20)
+	for i := 0; i < 20; i++ {
+		lines1[i] = fmt.Sprintf("line%d", i+1)
+		lines2[i] = lines1[i]
+	}
+	lines2[10] = "modified"
+	os.WriteFile(file1, []byte(strings.Join(lines1, "\n")+"\n"), 0644)
+	os.WriteFile(file2, []byte(strings.Join(lines2, "\n")+"\n"), 0644)
+
+	// Test with context=1
+	result := te.executeFileCompare(map[string]interface{}{
+		"file1":   file1,
+		"file2":   file2,
+		"context": 1.0,
+	})
+
+	if !result.Success {
+		t.Errorf("Expected success, got error: %s", result.Error)
+	}
+	if extra := result.Extra; extra["hunks"].(int) != 1 {
+		t.Errorf("Expected 1 hunk, got %d", extra["hunks"])
+	}
+}
+
+func TestExecuteFileCompare_Stats(t *testing.T) {
+	te := NewToolExecutor()
+
+	testDir := t.TempDir()
+	file1 := filepath.Join(testDir, "file1.txt")
+	file2 := filepath.Join(testDir, "file2.txt")
+	os.WriteFile(file1, []byte("original\n"), 0644)
+	os.WriteFile(file2, []byte("modified\n"), 0644)
+
+	te.Execute(&ToolCall{Name: "file_compare", Parameters: map[string]interface{}{
+		"file1": file1,
+		"file2": file2,
+	}})
+
+	stats := te.Stats()
+	if stats.TotalCalls != 1 {
+		t.Errorf("Expected 1 total call, got %d", stats.TotalCalls)
+	}
+	if stats.FailedCalls != 0 {
+		t.Errorf("Expected 0 failed calls, got %d", stats.FailedCalls)
+	}
+}

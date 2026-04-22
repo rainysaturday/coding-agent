@@ -184,6 +184,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeProcessManagement(tc.Parameters)
 	case "env_var":
 		result = te.executeEnvVar(tc.Parameters)
+	case "file_compare":
+		result = te.executeFileCompare(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -8824,3 +8826,399 @@ func (te *ToolExecutor) envVarSource(params map[string]interface{}) *ToolResult 
 		},
 	}
 }
+
+// executeFileCompare compares two files and returns a structured diff.
+func (te *ToolExecutor) executeFileCompare(params map[string]interface{}) *ToolResult {
+	src1, ok := params["file1"].(string)
+	if !ok || src1 == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: file1",
+		}
+	}
+
+	src2, ok := params["file2"].(string)
+	if !ok || src2 == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: file2",
+		}
+	}
+
+	// Optional context lines (default: 3)
+	contextLines := 3
+	if ctx, ok := params["context"].(float64); ok {
+		contextLines = int(ctx)
+	}
+
+	// Clean paths to prevent directory traversal
+	cleanPath1 := filepath.Clean(src1)
+	cleanPath2 := filepath.Clean(src2)
+
+	// Prevent directory traversal
+	for _, p := range []string{cleanPath1, cleanPath2} {
+		if strings.HasPrefix(p, "..") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+	}
+
+	// Read file 1
+	data1, err := os.ReadFile(cleanPath1)
+	if os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("file not found: %s", cleanPath1),
+		}
+	}
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot read file1: %v", err),
+		}
+	}
+
+	// Read file 2
+	data2, err := os.ReadFile(cleanPath2)
+	if os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("file not found: %s", cleanPath2),
+		}
+	}
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot read file2: %v", err),
+		}
+	}
+
+	// Check for binary content
+	isBinary1 := isBinaryContent(data1)
+	isBinary2 := isBinaryContent(data2)
+	if isBinary1 || isBinary2 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot compare binary files (file1=%v, file2=%v)", isBinary1, isBinary2),
+		}
+	}
+
+	// Split files into lines
+	lines1 := splitLines(data1)
+	lines2 := splitLines(data2)
+
+	// Compute diff using LCS-based algorithm
+	diff := computeDiff(lines1, lines2, contextLines)
+
+	// Count statistics
+	addedLines := 0
+	removedLines := 0
+	unchangedLines := 0
+	for _, h := range diff.Hunks {
+		for _, line := range h.Lines {
+			switch line.Type {
+			case "+":
+				addedLines++
+			case "-":
+				removedLines++
+			case " ":
+				unchangedLines++
+			}
+		}
+	}
+
+	// Build output
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("--- %s\n", cleanPath1))
+	output.WriteString(fmt.Sprintf("+++ %s\n", cleanPath2))
+	output.WriteString(fmt.Sprintf("\nFiles differ: %d lines added, %d lines removed, %d lines unchanged\n", addedLines, removedLines, unchangedLines))
+	output.WriteString("\n")
+
+	for _, hunk := range diff.Hunks {
+		output.WriteString(fmt.Sprintf("@@ -%d,%d +%d,%d @@\n", hunk.Start1, hunk.Count1, hunk.Start2, hunk.Count2))
+		for _, line := range hunk.Lines {
+			prefix := " "
+			switch line.Type {
+			case "+":
+				prefix = "+"
+			case "-":
+				prefix = "-"
+			}
+			output.WriteString(fmt.Sprintf("%s%s\n", prefix, line.Text))
+		}
+		output.WriteString("\n")
+	}
+
+	if diff.TotalHunks == 0 {
+		output.WriteString("Files are identical\n")
+	}
+
+	return &ToolResult{
+		Success:  true,
+		Output:   output.String(),
+		Extra: map[string]interface{}{
+			"file1":           cleanPath1,
+			"file2":           cleanPath2,
+			"added_lines":     addedLines,
+			"removed_lines":   removedLines,
+			"unchanged_lines": unchangedLines,
+			"hunks":           diff.TotalHunks,
+		},
+	}
+}
+
+// diffLine represents a single line in a diff output.
+type diffLine struct {
+	Type string // "+", "-", " "
+	Text string
+}
+
+// diffHunk represents a contiguous block of changes.
+type diffHunk struct {
+	Start1 int // starting line in file1
+	Count1 int // number of lines from file1
+	Start2 int // starting line in file2
+	Count2 int // number of lines from file2
+	Lines  []diffLine
+}
+
+// diffResult represents the result of a file comparison.
+type diffResult struct {
+	TotalHunks int
+	Hunks      []diffHunk
+}
+
+// computeDiff computes a diff between two sets of lines using a simple LCS algorithm.
+// It supports context lines for unified diff output.
+func computeDiff(lines1, lines2 []string, context int) *diffResult {
+	m := len(lines1)
+	n := len(lines2)
+
+	// If files are identical, return no hunks
+	if m == n {
+		for i := 0; i < m; i++ {
+			if lines1[i] != lines2[i] {
+				goto notIdentical
+			}
+		}
+		return &diffResult{}
+	}
+
+notIdentical:
+	// Compute LCS table
+	lcs := make([][]int, m+1)
+	for i := range lcs {
+		lcs[i] = make([]int, n+1)
+	}
+
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if lines1[i-1] == lines2[j-1] {
+				lcs[i][j] = lcs[i-1][j-1] + 1
+			} else {
+				if lcs[i-1][j] >= lcs[i][j-1] {
+					lcs[i][j] = lcs[i-1][j]
+				} else {
+					lcs[i][j] = lcs[i][j-1]
+				}
+			}
+		}
+	}
+
+	// Traceback to find edit operations
+	var edits []editOp
+	i, j := m, n
+	for i > 0 || j > 0 {
+		if i > 0 && j > 0 && lines1[i-1] == lines2[j-1] {
+			edits = append(edits, editOp{type_: " ", line1: i, line2: j, text: lines1[i-1]})
+			i--
+			j--
+		} else if j > 0 && (i == 0 || lcs[i][j-1] >= lcs[i-1][j]) {
+			edits = append(edits, editOp{type_: "+", line1: 0, line2: j, text: lines2[j-1]})
+			j--
+		} else {
+			edits = append(edits, editOp{type_: "-", line1: i, line2: 0, text: lines1[i-1]})
+			i--
+		}
+	}
+
+	// Reverse edits
+	for i, j := 0, len(edits)-1; i < j; i, j = i+1, j-1 {
+		edits[i], edits[j] = edits[j], edits[i]
+	}
+
+	// Group edits into hunks with context
+	return groupIntoHunks(edits, context)
+}
+
+// editOp represents a single edit operation.
+type editOp struct {
+	type_  string
+	line1  int
+	line2  int
+	text   string
+}
+
+// groupIntoHunks groups edit operations into hunk blocks with context lines.
+func groupIntoHunks(edits []editOp, context int) *diffResult {
+	if len(edits) == 0 {
+		return &diffResult{}
+	}
+
+	// Find ranges of non-context edits
+	var nonContextRanges []struct{ start, end int }
+	var lastNCStart, lastNCEnd int
+	foundFirst := false
+
+	for i, e := range edits {
+		if e.type_ != " " {
+			if !foundFirst {
+				lastNCStart = i
+				foundFirst = true
+			}
+			lastNCEnd = i
+		} else {
+			if foundFirst {
+				nonContextRanges = append(nonContextRanges, struct{ start, end int }{lastNCStart, lastNCEnd})
+				foundFirst = false
+			}
+		}
+	}
+	if foundFirst {
+		nonContextRanges = append(nonContextRanges, struct{ start, end int }{lastNCStart, lastNCEnd})
+	}
+
+	// Build hunks by merging nearby ranges
+	var rawHunks []struct{ start, end int }
+	if len(nonContextRanges) == 0 {
+		return &diffResult{}
+	}
+
+	curStart := nonContextRanges[0].start - context
+	curEnd := nonContextRanges[0].end + context
+	if curStart < 0 {
+		curStart = 0
+	}
+	if curEnd >= len(edits) {
+		curEnd = len(edits) - 1
+	}
+
+	for i := 1; i < len(nonContextRanges); i++ {
+		rngStart := nonContextRanges[i].start - context
+		rngEnd := nonContextRanges[i].end + context
+		if rngStart <= curEnd+1 {
+			// Merge
+			if rngEnd > curEnd {
+				curEnd = rngEnd
+			}
+		} else {
+			rawHunks = append(rawHunks, struct{ start, end int }{curStart, curEnd})
+			curStart = rngStart
+			if curStart < 0 {
+				curStart = 0
+			}
+			curEnd = rngEnd
+			if curEnd >= len(edits) {
+				curEnd = len(edits) - 1
+			}
+		}
+	}
+	rawHunks = append(rawHunks, struct{ start, end int }{curStart, curEnd})
+
+	// Build result hunks
+	var result diffResult
+	for _, rng := range rawHunks {
+		var hunk diffHunk
+
+		// Collect lines for this hunk
+		for i := rng.start; i <= rng.end && i < len(edits); i++ {
+			e := edits[i]
+			hunk.Lines = append(hunk.Lines, diffLine{
+				Type: e.type_,
+				Text: e.text,
+			})
+
+			if e.type_ != " " {
+				if e.line1 > 0 {
+					if hunk.Start1 == 0 {
+						hunk.Start1 = e.line1 - (rng.start - i)
+						if hunk.Start1 < 1 {
+							hunk.Start1 = 1
+						}
+					}
+				}
+				if e.line2 > 0 {
+					if hunk.Start2 == 0 {
+						hunk.Start2 = e.line2 - (rng.start - i)
+						if hunk.Start2 < 1 {
+							hunk.Start2 = 1
+						}
+					}
+				}
+			}
+			if e.type_ == "-" {
+				hunk.Count1++
+			}
+			if e.type_ == " " {
+				hunk.Count1++
+				if hunk.Start1 == 0 {
+					hunk.Start1 = e.line1
+				}
+			}
+			if e.type_ == "+" {
+				hunk.Count2++
+			}
+			if e.type_ == " " {
+				hunk.Count2++
+				if hunk.Start2 == 0 {
+					hunk.Start2 = e.line2
+				}
+			}
+		}
+
+		// Fixup start positions
+		if hunk.Start1 == 0 {
+			hunk.Start1 = 1
+		}
+		if hunk.Start2 == 0 {
+			hunk.Start2 = 1
+		}
+
+		result.Hunks = append(result.Hunks, hunk)
+	}
+
+	result.TotalHunks = len(result.Hunks)
+	return &result
+}
+
+// isBinaryContent checks if data appears to be binary content.
+func isBinaryContent(data []byte) bool {
+	// Check for null bytes (common binary indicator)
+	nullCount := 0
+	total := len(data)
+	if total > 8192 {
+		total = 8192
+	}
+	for i := 0; i < total; i++ {
+		if data[i] == 0 {
+			nullCount++
+		}
+	}
+	return nullCount > 0 && float64(nullCount)/float64(total) > 0.01
+}
+
+// splitLines splits raw file data into individual lines.
+func splitLines(data []byte) []string {
+	text := string(data)
+	// Remove trailing newline for consistent line counting
+	if len(text) > 0 && text[len(text)-1] == '\n' {
+		text = text[:len(text)-1]
+	}
+	if text == "" {
+		return []string{}
+	}
+	return strings.Split(text, "\n")
+}
+

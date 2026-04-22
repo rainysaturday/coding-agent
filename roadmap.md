@@ -123,8 +123,11 @@
 ### Environment Variables
 - **#056: Environment Variable Manager Tool** - Read and manage environment variables with five actions: get (read a variable), set (set a variable), unset (remove a variable), list (list all or filtered variables), and source (load variables from a .env file). Uses only Go stdlib - zero external dependencies.
 
+### File Comparison
+- **#057: File Compare Tool** - Compare two text files and return a structured unified diff showing added, removed, and unchanged lines with line numbers and context. Supports configurable context lines, binary file detection, and directory traversal protection. Uses only Go stdlib (LCS algorithm) - zero external dependencies.
+
 ## Completed Feature Count
 
-**56 / 56 features implemented**
+**57 / 57 features implemented**
 
 ## Upcoming Features

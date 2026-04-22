@@ -1033,6 +1033,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"run_lint": {},
 		"process_management": {"action"},
 		"env_var": {"action"},
+		"file_compare": {"file1", "file2"},
 	}
 
 	for _, tool := range toolDefs {
