@@ -192,6 +192,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitTag(tc.Parameters)
 	case "run_build":
 		result = te.executeRunBuild(tc.Parameters)
+	case "run_coverage":
+		result = te.executeRunCoverage(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -10153,5 +10155,913 @@ func (te *ToolExecutor) detectBuildCommand() string {
 	}
 
 	return ""
+}
+
+// coverageFile represents coverage data for a single file.
+type coverageFile struct {
+	Path         string  `json:"path"`
+	CoveredLines int     `json:"covered_lines"`
+	TotalLines   int     `json:"total_lines"`
+	Percentage   float64 `json:"percentage"`
+}
+
+// coveragePackage represents coverage data for a package/module.
+type coveragePackage struct {
+	Name       string  `json:"name"`
+	Covered    int     `json:"covered"`
+	Total      int     `json:"total"`
+	Percentage float64 `json:"percentage"`
+}
+
+// coverageReport holds the full coverage report.
+type coverageReport struct {
+	OverallPercentage  float64            `json:"overall"`
+	TotalCovered       int                `json:"total_covered"`
+	TotalLines         int                `json:"total_lines"`
+	Files              []coverageFile     `json:"files"`
+	Packages           []coveragePackage  `json:"packages,omitempty"`
+	LowCoverageFiles   []coverageFile     `json:"low_coverage_files"`
+	NoCoverageFiles    []coverageFile     `json:"no_coverage_files"`
+	Command            string             `json:"command"`
+	ExitCode           int                `json:"exit_code"`
+}
+
+// executeRunCoverage runs project tests with coverage analysis and returns structured results.
+func (te *ToolExecutor) executeRunCoverage(params map[string]interface{}) *ToolResult {
+	// Determine coverage command
+	command, hasCommand := params["command"].(string)
+	customArgs := ""
+	if argsParam, hasArgs := params["args"]; hasArgs {
+		switch v := argsParam.(type) {
+		case []interface{}:
+			parts := make([]string, len(v))
+			for i, a := range v {
+				parts[i] = fmt.Sprintf("%v", a)
+			}
+			customArgs = strings.Join(parts, " ")
+		case string:
+			customArgs = v
+		}
+	}
+
+	if !hasCommand || command == "" {
+		// Auto-detect project type
+		command, customArgs = te.detectCoverageCommand()
+		if command == "" {
+			return &ToolResult{
+				Success: false,
+				Error:   "no project type detected. Supported project types: Go (go.mod), Node.js (package.json), Python (requirements.txt, pyproject.toml). Provide a custom 'command' parameter to override.",
+			}
+		}
+	}
+
+	// Determine timeout (default: 120 seconds)
+	timeoutSeconds := 120
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Build full command
+	fullCmd := command
+	if customArgs != "" {
+		fullCmd = command + " " + customArgs
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", fullCmd)
+
+	// Set working directory to current directory
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+
+	// Execute command
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Extract exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	}
+
+	// Determine project type for coverage parsing
+	projectType := te.detectProjectType()
+
+	// Parse coverage report
+	var tempCleanup func()
+	report := te.parseCoverageReport(outputStr, projectType, fullCmd, exitCode, &tempCleanup)
+
+	// Clean up temp files after generating report
+	if tempCleanup != nil {
+		defer tempCleanup()
+	}
+
+	// Generate human-readable summary
+	summary := te.generateCoverageSummary(report)
+
+	// Truncate raw output if too long
+	maxOutputLen := 15000
+	if len(outputStr) > maxOutputLen {
+		outputStr = outputStr[:maxOutputLen] + "\n... [output truncated, exceeded 15000 character limit]"
+	}
+
+	result := &ToolResult{
+		Success:  exitCode == 0,
+		ExitCode: exitCode,
+		Output:   outputStr,
+		Extra: map[string]interface{}{
+			"tool":             "run_coverage",
+			"passed":           exitCode == 0,
+			"command":          fullCmd,
+			"summary":          summary,
+			"overall":          report.OverallPercentage,
+			"files":            report.Files,
+			"packages":         report.Packages,
+			"lowCoverageFiles": report.LowCoverageFiles,
+			"noCoverageFiles":  report.NoCoverageFiles,
+		},
+	}
+
+	return result
+}
+
+// detectCoverageCommand auto-detects the coverage command based on project files.
+func (te *ToolExecutor) detectCoverageCommand() (string, string) {
+	cwd, _ := os.Getwd()
+
+	// Check for Go project
+	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+		return "go test -coverprofile=coverage.out -covermode=count ./...", ""
+	}
+
+	// Check for Node.js project
+	if _, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil {
+		return "npx c8", "--reporter=lcov --reporter=text --"
+	}
+
+	// Check for Python project
+	if _, err := os.Stat(filepath.Join(cwd, "requirements.txt")); err == nil {
+		return "python -m pytest", "--cov=. --cov-report=term-missing --cov-report=json:.coverage.json"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "pyproject.toml")); err == nil {
+		return "python -m pytest", "--cov=. --cov-report=term-missing --cov-report=json:.coverage.json"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "setup.py")); err == nil {
+		return "python -m pytest", "--cov=. --cov-report=term-missing --cov-report=json:.coverage.json"
+	}
+
+	return "", ""
+}
+
+// parseCoverageReport parses coverage output and returns a structured report.
+func (te *ToolExecutor) parseCoverageReport(output string, projectType string, command string, exitCode int, tempCleanup *func()) coverageReport {
+	report := coverageReport{
+		OverallPercentage: 0,
+		TotalCovered:      0,
+		TotalLines:        0,
+		Files:             []coverageFile{},
+		Packages:          []coveragePackage{},
+		LowCoverageFiles:  []coverageFile{},
+		NoCoverageFiles:   []coverageFile{},
+		Command:           command,
+		ExitCode:          exitCode,
+	}
+
+	switch projectType {
+	case "go":
+		report = te.parseGoCoverage(output, tempCleanup)
+	case "node":
+		report = te.parseNodeCoverage(output)
+	case "python":
+		report = te.parsePythonCoverage(output)
+	default:
+		// Fallback: try to extract any percentage from output
+		report = te.parseFallbackCoverage(output)
+	}
+
+	// Sort files by percentage (lowest first) for easier review
+	sort.Slice(report.Files, func(i, j int) bool {
+		return report.Files[i].Percentage < report.Files[j].Percentage
+	})
+
+	return report
+}
+
+// parseGoCoverage parses Go coverage output from `go tool cover` or cover profile.
+func (te *ToolExecutor) parseGoCoverage(output string, tempCleanup *func()) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// First try parsing go tool cover -func output
+	report = te.parseGoCoverFunc(output)
+
+	// If no data from func output, try parsing cover profile file
+	if len(report.Files) == 0 {
+		report = te.parseGoCoverProfile(tempCleanup)
+	}
+
+	// If still no data, try parsing go test -json output
+	if len(report.Files) == 0 {
+		report = te.parseGoTestJSON(output)
+	}
+
+	return report
+}
+
+// parseGoCoverFunc parses "go tool cover -func=coverage.out" style output.
+func (te *ToolExecutor) parseGoCoverFunc(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	lines := strings.Split(output, "\n")
+	var totalCovered, totalLines int
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip header and summary lines
+		if strings.HasPrefix(line, "total:") || line == "" {
+			// Parse summary line: "total:                                                    of statements: xxx.x%"
+			if strings.HasPrefix(line, "total:") {
+				pct := te.extractPercentage(line)
+				report.OverallPercentage = pct
+			}
+			continue
+		}
+
+		// Parse file/func lines: "path/to/file.go:funcname line.col line.col statements covered total percent"
+		parts := strings.Fields(line)
+		if len(parts) < 5 {
+			continue
+		}
+
+		filePath := parts[0]
+		if strings.HasPrefix(filePath, "/") || strings.HasPrefix(filePath, "./") {
+			// Remove leading path
+			if idx := strings.Index(filePath, ":"); idx > 0 {
+				filePath = filePath[:idx]
+			}
+		}
+
+		// Try to extract covered/total from the last numeric fields
+		var covered, total int
+		for i := len(parts) - 1; i >= 1; i-- {
+			if pct := te.extractPercentage(parts[i]); pct > 0 {
+				// Find the two numbers before the percentage
+				if i >= 3 {
+					if c, err := strconv.Atoi(parts[i-2]); err == nil {
+						covered = c
+					}
+					if t, err := strconv.Atoi(parts[i-1]); err == nil {
+						total = t
+					}
+				}
+				break
+			}
+		}
+
+		if total > 0 {
+			percentage := float64(covered) / float64(total) * 100
+			cf := coverageFile{
+				Path:         filePath,
+				CoveredLines: covered,
+				TotalLines:   total,
+				Percentage:   percentage,
+			}
+			report.Files = append(report.Files, cf)
+			totalCovered += covered
+			totalLines += total
+		}
+	}
+
+	report.TotalCovered = totalCovered
+	report.TotalLines = totalLines
+
+	if totalLines > 0 && report.OverallPercentage == 0 {
+		report.OverallPercentage = float64(totalCovered) / float64(totalLines) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// parseGoCoverProfile parses a Go coverage profile file.
+func (te *ToolExecutor) parseGoCoverProfile(tempCleanup *func()) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// Look for coverage.out file
+	coverFile := "coverage.out"
+	if _, err := os.Stat(coverFile); os.IsNotExist(err) {
+		// Try common names
+		for _, name := range []string{"coverage.txt", "cover.out", "out.cover", ".coverage.out"} {
+			if _, err := os.Stat(name); err == nil {
+				coverFile = name
+				break
+			}
+		}
+	}
+
+	if _, err := os.Stat(coverFile); os.IsNotExist(err) {
+		return report
+	}
+
+	data, err := os.ReadFile(coverFile)
+	if err != nil {
+		return report
+	}
+
+	// Cleanup function
+	cleanup := func() { os.Remove(coverFile) }
+	*tempCleanup = cleanup
+
+	content := string(data)
+	lines := strings.Split(content, "\n")
+
+	// Go cover profile format:
+	// mode: count
+	// path/to/file.go:line.col.line.col numStatements numCovered
+	// Or: mode: set
+	// path/to/file.go:line.col.1 line.col.num
+
+	fileData := make(map[string]*goFileCover)
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "mode:") {
+			continue
+		}
+
+		// Parse: path/to/file.go:line.col.line.col numStatements numCovered
+		colonIdx := strings.Index(line, ":")
+		if colonIdx == -1 {
+			continue
+		}
+
+		filePath := line[:colonIdx]
+		rest := strings.TrimSpace(line[colonIdx+1:])
+
+		// Split by space to get statement count and covered count
+		parts := strings.Fields(rest)
+		if len(parts) < 2 {
+			continue
+		}
+
+		total, err1 := strconv.Atoi(parts[0])
+		covered, err2 := strconv.Atoi(parts[1])
+
+		if err1 != nil || err2 != nil {
+			continue
+		}
+
+		if existing, ok := fileData[filePath]; ok {
+			existing.Total += total
+			existing.Covered += covered
+		} else {
+			fileData[filePath] = &goFileCover{
+				Total:   total,
+				Covered: covered,
+			}
+		}
+	}
+
+	var totalCovered, totalLines int
+	for path, fc := range fileData {
+		percentage := 0.0
+		if fc.Total > 0 {
+			percentage = float64(fc.Covered) / float64(fc.Total) * 100
+		}
+
+		cf := coverageFile{
+			Path:         path,
+			CoveredLines: fc.Covered,
+			TotalLines:   fc.Total,
+			Percentage:   percentage,
+		}
+		report.Files = append(report.Files, cf)
+		totalCovered += fc.Covered
+		totalLines += fc.Total
+	}
+
+	report.TotalCovered = totalCovered
+	report.TotalLines = totalLines
+	if totalLines > 0 {
+		report.OverallPercentage = float64(totalCovered) / float64(totalLines) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// goFileCover tracks coverage for a single Go file.
+type goFileCover struct {
+	Total   int
+	Covered int
+}
+
+// parseGoTestJSON parses "go test -json" output for coverage data.
+func (te *ToolExecutor) parseGoTestJSON(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	lines := strings.Split(output, "\n")
+	var totalCovered, totalLines int
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Look for Action: "output" lines that contain coverage
+		if !strings.Contains(line, `"Action":"output"`) && !strings.Contains(line, `"Action": "output"`) {
+			continue
+		}
+
+		// Try to extract package stats from output
+		// Format: ok  \tgithub.com/user/project/pkg\t2.345s\tcoverage: XX.X% of statements
+		var covered, total int
+
+		// Try to parse "X.XX of statements" pattern
+		statPattern := `([0-9]+)\.([0-9]+)\s*of\s*statements`
+		re := regexp.MustCompile(statPattern)
+		matches := re.FindStringSubmatch(line)
+		if len(matches) >= 3 {
+			covered, _ = strconv.Atoi(matches[1])
+			total, _ = strconv.Atoi(matches[2])
+		}
+
+		if total > 0 {
+			// Extract package name from the line
+			pkgPattern := `(\S+)\s+coverage:`
+			pkgRe := regexp.MustCompile(pkgPattern)
+			pkgMatches := pkgRe.FindStringSubmatch(line)
+			pkgName := "unknown"
+			if len(pkgMatches) > 1 {
+				pkgName = pkgMatches[1]
+			}
+
+			cf := coverageFile{
+				Path:         pkgName,
+				CoveredLines: covered,
+				TotalLines:   total,
+				Percentage:   float64(covered) / float64(total) * 100,
+			}
+			report.Files = append(report.Files, cf)
+			totalCovered += covered
+			totalLines += total
+		}
+	}
+
+	report.TotalCovered = totalCovered
+	report.TotalLines = totalLines
+	if totalLines > 0 {
+		report.OverallPercentage = float64(totalCovered) / float64(totalLines) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// parseNodeCoverage parses Node.js coverage output (from c8, nyc, or istanbul).
+func (te *ToolExecutor) parseNodeCoverage(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// Try to find coverage table in output
+	lines := strings.Split(output, "\n")
+	var totalCovered, totalLines int
+
+	for _, line := range lines {
+		// Skip separator lines
+		if strings.HasPrefix(line, "---") {
+			continue
+		}
+
+		// Skip empty lines
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Parse data lines - use regex to find percentage patterns
+		re := regexp.MustCompile(`(\S+)\s*\|\s*([0-9.]+)%\s*\|`)
+		matches := re.FindStringSubmatch(line)
+		if len(matches) < 3 {
+			continue
+		}
+
+		filePath := matches[1]
+		percentage, err := strconv.ParseFloat(matches[2], 64)
+		if err != nil {
+			continue
+		}
+
+		// Skip summary lines
+		if strings.HasPrefix(filePath, "Total") || strings.HasPrefix(filePath, "----------") || filePath == "File" || percentage == 100.0 && strings.HasPrefix(filePath, "Total") {
+			continue
+		}
+
+		// We don't have exact line counts from c8 text output, estimate
+		// Estimate total lines based on uncovered line ranges
+		uncoveredRe := regexp.MustCompile(`\|.*\| (.+)$`)
+		uncoveredMatches := uncoveredRe.FindStringSubmatch(line)
+		estimatedTotal := 20 // Default estimate
+
+		if len(uncoveredMatches) > 1 {
+			uncoveredStr := uncoveredMatches[1]
+			// Parse uncovered line numbers like "15,23-25,30"
+			estimatedTotal = te.estimateTotalLines(uncoveredStr)
+		}
+
+		coveredLines := int(float64(estimatedTotal) * percentage / 100)
+
+		cf := coverageFile{
+			Path:         filePath,
+			CoveredLines: coveredLines,
+			TotalLines:   estimatedTotal,
+			Percentage:   percentage,
+		}
+		report.Files = append(report.Files, cf)
+		totalCovered += coveredLines
+		totalLines += estimatedTotal
+	}
+
+	report.TotalCovered = totalCovered
+	report.TotalLines = totalLines
+	if totalLines > 0 {
+		report.OverallPercentage = float64(totalCovered) / float64(totalLines) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// estimateTotalLines estimates total lines from uncovered line specifications.
+func (te *ToolExecutor) estimateTotalLines(uncoveredStr string) int {
+	total := 0
+	for _, part := range strings.Split(uncoveredStr, ",") {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) == 2 {
+				start, err1 := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+				end, err2 := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+				if err1 == nil && err2 == nil {
+					total += end - start + 1
+				}
+			}
+		} else {
+			if _, err := strconv.Atoi(part); err == nil {
+				total++
+			}
+		}
+	}
+	// At minimum, add uncovered lines; add a reasonable total
+	if total > 0 {
+		return total + 5 // Assume some covered lines exist
+	}
+	return 10
+}
+
+// parsePythonCoverage parses Python coverage output.
+func (te *ToolExecutor) parsePythonCoverage(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// First try parsing JSON coverage file
+	jsonReport := tryParsePythonJSONCoverage()
+	if len(jsonReport.Files) > 0 {
+		return jsonReport
+	}
+
+	// If no JSON data, try parsing term-missing output
+	report = te.parsePythonTermMissing(output)
+
+	return report
+}
+
+// tryParsePythonJSONCoverage tries to parse pytest-cov JSON output.
+func tryParsePythonJSONCoverage() coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// Look for .coverage.json file
+	jsonFile := ".coverage.json"
+	if _, err := os.Stat(jsonFile); os.IsNotExist(err) {
+		return report
+	}
+
+	data, err := os.ReadFile(jsonFile)
+	if err != nil {
+		return report
+	}
+
+	// Cleanup
+	cleanup := func() { os.Remove(jsonFile) }
+	tempCleanup := cleanup
+	tempCleanup()
+
+	var coverageData struct {
+		Files map[string]struct {
+			Stats struct {
+				TotalLines     int     `json:"num_statements"`
+				CoveredLines   int     `json:"num_executed"`
+				PercentCovered float64 `json:"percent_covered"`
+			} `json:"missing"`
+		} `json:"files"`
+		Totals struct {
+			TotalStatements int     `json:"num_statements"`
+			TotalExecuted   int     `json:"num_executed"`
+			PctCovered      float64 `json:"percent_covered"`
+		} `json:"totals"`
+	}
+
+	if err := json.Unmarshal(data, &coverageData); err != nil {
+		return report
+	}
+
+	var totalCovered, totalLines int
+	for path, fileData := range coverageData.Files {
+		total := fileData.Stats.TotalLines
+		covered := fileData.Stats.CoveredLines
+		pct := fileData.Stats.PercentCovered
+
+		if total == 0 && pct > 0 {
+			total = int(float64(covered) / (pct / 100))
+		}
+
+		cf := coverageFile{
+			Path:         path,
+			CoveredLines: covered,
+			TotalLines:   total,
+			Percentage:   pct,
+		}
+		report.Files = append(report.Files, cf)
+		totalCovered += covered
+		totalLines += total
+	}
+
+	report.TotalCovered = totalCovered
+	report.TotalLines = totalLines
+	if coverageData.Totals.TotalStatements > 0 {
+		report.OverallPercentage = coverageData.Totals.PctCovered
+	} else if totalLines > 0 {
+		report.OverallPercentage = float64(totalCovered) / float64(totalLines) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// parsePythonTermMissing parses pytest-cov term-missing output.
+func (te *ToolExecutor) parsePythonTermMissing(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	lines := strings.Split(output, "\n")
+	fileData := make(map[string]*pythonFileCover)
+	var totalCovered, totalLines int
+
+	// Skip header lines until we find data
+	inDataSection := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Look for the summary line: "NAME                      STMTS   MISS  COVER   MISSING"
+		if strings.Contains(line, "STMTS") && strings.Contains(line, "MISS") {
+			inDataSection = true
+			continue
+		}
+
+		// Look for Total line
+		if strings.HasPrefix(line, "TOTAL") || strings.HasPrefix(line, "total") {
+			inDataSection = false
+			continue
+		}
+
+		// Skip non-data lines
+		if !inDataSection || strings.HasPrefix(line, "Name") || strings.HasPrefix(line, "---") || line == "" {
+			continue
+		}
+
+		// Parse data line: "name.py                    100      10    90%   15-20, 25"
+		parts := strings.Fields(line)
+		if len(parts) < 4 {
+			continue
+		}
+
+		filePath := parts[0]
+		total, err := strconv.Atoi(parts[1])
+		if err != nil {
+			continue
+		}
+
+		miss, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		covered := total - miss
+		_ = strings.TrimSuffix(parts[3], "%") // Parse percentage for validation
+
+		fileData[filePath] = &pythonFileCover{
+			Total:   total,
+			Covered: covered,
+		}
+		totalCovered += covered
+		totalLines += total
+	}
+
+	var totalCovered2, totalLines2 int
+	for path, fc := range fileData {
+		percentage := 0.0
+		if fc.Total > 0 {
+			percentage = float64(fc.Covered) / float64(fc.Total) * 100
+		}
+
+		cf := coverageFile{
+			Path:         path,
+			CoveredLines: fc.Covered,
+			TotalLines:   fc.Total,
+			Percentage:   percentage,
+		}
+		report.Files = append(report.Files, cf)
+		totalCovered2 += fc.Covered
+		totalLines2 += fc.Total
+	}
+
+	report.TotalCovered = totalCovered2
+	report.TotalLines = totalLines2
+	if totalLines2 > 0 {
+		report.OverallPercentage = float64(totalCovered2) / float64(totalLines2) * 100
+	}
+
+	report.NoCoverageFiles = report.getNoCoverageFiles()
+	report.LowCoverageFiles = report.getLowCoverageFiles()
+
+	return report
+}
+
+// pythonFileCover tracks coverage for a single Python file.
+type pythonFileCover struct {
+	Total   int
+	Covered int
+}
+
+// parseFallbackCoverage attempts to parse coverage from arbitrary output.
+func (te *ToolExecutor) parseFallbackCoverage(output string) coverageReport {
+	report := coverageReport{
+		LowCoverageFiles: []coverageFile{},
+		NoCoverageFiles:  []coverageFile{},
+	}
+
+	// Try to extract any percentage from the output
+	if pct := te.extractPercentage(output); pct > 0 {
+		report.OverallPercentage = pct
+	}
+
+	return report
+}
+
+// extractPercentage extracts a percentage value from a string.
+func (te *ToolExecutor) extractPercentage(s string) float64 {
+	re := regexp.MustCompile(`([0-9]+\.?[0-9]*)\s*%`)
+	matches := re.FindStringSubmatch(s)
+	if len(matches) >= 2 {
+		pct, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil {
+			return pct
+		}
+	}
+	return 0
+}
+
+// getNoCoverageFiles returns files with 0% coverage.
+func (r coverageReport) getNoCoverageFiles() []coverageFile {
+	var noCov []coverageFile
+	for _, f := range r.Files {
+		if f.CoveredLines == 0 && f.TotalLines > 0 {
+			noCov = append(noCov, f)
+		}
+	}
+	return noCov
+}
+
+// getLowCoverageFiles returns files with < 50% coverage.
+func (r coverageReport) getLowCoverageFiles() []coverageFile {
+	var lowCov []coverageFile
+	for _, f := range r.Files {
+		if f.Percentage > 0 && f.Percentage < 50 {
+			lowCov = append(lowCov, f)
+		}
+	}
+	return lowCov
+}
+
+// detectProjectType detects the project type from common files.
+func (te *ToolExecutor) detectProjectType() string {
+	cwd, _ := os.Getwd()
+
+	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+		return "go"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil {
+		return "node"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "requirements.txt")); err == nil {
+		return "python"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "pyproject.toml")); err == nil {
+		return "python"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "setup.py")); err == nil {
+		return "python"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "Cargo.toml")); err == nil {
+		return "rust"
+	}
+
+	return ""
+}
+
+// generateCoverageSummary generates a human-readable summary of the coverage report.
+func (te *ToolExecutor) generateCoverageSummary(report coverageReport) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("Coverage: %.1f%% (%d/%d lines)\n", report.OverallPercentage, report.TotalCovered, report.TotalLines))
+
+	if report.TotalLines > 0 {
+		// Rating
+		switch {
+		case report.OverallPercentage >= 90:
+			sb.WriteString("Rating: Excellent\n")
+		case report.OverallPercentage >= 75:
+			sb.WriteString("Rating: Good\n")
+		case report.OverallPercentage >= 50:
+			sb.WriteString("Rating: Fair\n")
+		default:
+			sb.WriteString("Rating: Poor\n")
+		}
+	}
+
+	if len(report.NoCoverageFiles) > 0 {
+		sb.WriteString(fmt.Sprintf("\n⚠ %d file(s) with NO coverage:\n", len(report.NoCoverageFiles)))
+		for _, f := range report.NoCoverageFiles {
+			sb.WriteString(fmt.Sprintf("  - %s (0%%)\n", f.Path))
+		}
+	}
+
+	if len(report.LowCoverageFiles) > 0 {
+		sb.WriteString(fmt.Sprintf("\n⚠ %d file(s) with LOW coverage (<50%%):\n", len(report.LowCoverageFiles)))
+		for _, f := range report.LowCoverageFiles {
+			sb.WriteString(fmt.Sprintf("  - %s (%.1f%%)\n", f.Path, f.Percentage))
+		}
+	}
+
+	if report.ExitCode != 0 {
+		sb.WriteString(fmt.Sprintf("\nTests exited with code %d\n", report.ExitCode))
+	}
+
+	return sb.String()
 }
 

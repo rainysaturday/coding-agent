@@ -1037,6 +1037,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"changelog":     {},
 		"git_tag":       {"action"},
 		"run_build":     {},
+		"run_coverage":  {},
 	}
 
 	for _, tool := range toolDefs {

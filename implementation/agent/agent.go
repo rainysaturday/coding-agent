@@ -2774,6 +2774,31 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "run_coverage",
+				Description: "Run project tests with coverage analysis and return structured coverage results. Auto-detects project type (Go, Node.js, Python) and runs appropriate coverage commands. Reports overall coverage percentage, per-file coverage, highlights low-coverage files (<50%), and files with no coverage (0%). Supports custom commands, arguments, and timeout.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "Custom coverage command to run (e.g., 'go test -coverprofile=coverage.out ./...', 'npx c8', 'pytest --cov=.'). If omitted, auto-detects from project files.",
+						},
+						"args": {
+							Type:        "array",
+							Description: "Additional arguments for the coverage command. Can be an array of strings or a single space-separated string.",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum execution time in seconds (default: 120)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
 	}
 }
 

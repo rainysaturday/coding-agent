@@ -135,8 +135,11 @@
 ### Build Execution
 - **#060: Run Build Tool** - Execute project build commands with auto-detection of project type (Go, Node.js, Rust, Java/Maven, Java/Gradle, Python). Supports custom command override, arguments, and configurable timeout. Returns structured results with exit code and output.
 
+### Test Coverage
+- **#061: Test Coverage Analysis Tool** - Run project tests with coverage analysis and return structured coverage results. Auto-detects project type (Go, Node.js, Python) and reports overall coverage percentage, per-file coverage, and highlights low-coverage files (<50%) and files with no coverage (0%). Uses only Go stdlib for parsing - zero external dependencies.
+
 ## Completed Feature Count
 
-**60 / 60 features implemented**
+**61 / 61 features implemented**
 
 ## Upcoming Features
