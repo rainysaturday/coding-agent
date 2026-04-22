@@ -78,10 +78,13 @@
 ### External Access
 - **#039: Web Fetch Tool** - HTTP GET requests to fetch web content, configurable timeout and max response size
 
+### File Management
+- **#040: Move File Tool** - Move or rename files within the filesystem, with directory creation support and path validation
+
 ## Upcoming Features
 
 _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**39 / 39 features implemented**
+**40 / 40 features implemented**

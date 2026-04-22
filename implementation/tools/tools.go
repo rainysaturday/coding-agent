@@ -145,6 +145,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeFind(tc.Parameters)
 	case "web_fetch":
 		result = te.executeWebFetch(tc.Parameters)
+	case "move_file":
+		result = te.executeMoveFile(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -2074,4 +2076,73 @@ func (te *ToolExecutor) executeWebFetch(params map[string]interface{}) *ToolResu
 	}
 
 	return result
+}
+
+// executeMoveFile moves or renames a file from source to destination.
+func (te *ToolExecutor) executeMoveFile(params map[string]interface{}) *ToolResult {
+	src, ok := params["source"].(string)
+	if !ok || src == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: source",
+		}
+	}
+
+	dest, ok := params["destination"].(string)
+	if !ok || dest == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: destination",
+		}
+	}
+
+	// Clean paths to prevent directory traversal
+	cleanSrc := filepath.Clean(src)
+	cleanDest := filepath.Clean(dest)
+
+	// Validate source exists
+	if _, err := os.Stat(cleanSrc); os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source file not found: %s", cleanSrc),
+		}
+	}
+
+	// Prevent directory traversal on source
+	if strings.HasPrefix(cleanSrc, "..") {
+		return &ToolResult{
+			Success: false,
+			Error:   "invalid source path: directory traversal not allowed",
+		}
+	}
+
+	// Create parent directories for destination if needed
+	destDir := filepath.Dir(cleanDest)
+	if destDir != "" && destDir != "." {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create destination directory: %v", err),
+			}
+		}
+	}
+
+	// Perform the move
+	err := os.Rename(cleanSrc, cleanDest)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to move file: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Moved '%s' -> '%s'", cleanSrc, cleanDest),
+		Extra: map[string]interface{}{
+			"source":     cleanSrc,
+			"destination": cleanDest,
+			"operation":  "move",
+		},
+	}
 }

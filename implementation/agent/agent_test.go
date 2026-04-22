@@ -1015,6 +1015,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_commit":    {},
 		"find":          {"pattern"},
 		"web_fetch":     {"url"},
+		"move_file":     {"source", "destination"},
 	}
 
 	for _, tool := range toolDefs {

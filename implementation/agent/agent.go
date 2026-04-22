@@ -743,6 +743,16 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		msg = fmt.Sprintf("\n%s[Git] add (staging files)%s\n", ColorCyan, ColorReset)
 	case "git_commit":
 		msg = fmt.Sprintf("\n%s[Git] commit%s\n", ColorCyan, ColorReset)
+	case "move_file":
+		src := ""
+		dst := ""
+		if s, ok := params["source"].(string); ok {
+			src = s
+		}
+		if d, ok := params["destination"].(string); ok {
+			dst = d
+		}
+		msg = fmt.Sprintf("\n%s[Moving] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -983,6 +993,16 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				return fmt.Sprintf("%s[Success] amended last commit%s\n", ColorGreen, ColorReset)
 			}
 			return fmt.Sprintf("%s[Success] committed changes%s\n", ColorGreen, ColorReset)
+		case "move_file":
+			source := ""
+			destination := ""
+			if s, ok := result.Extra["source"].(string); ok {
+				source = s
+			}
+			if d, ok := result.Extra["destination"].(string); ok {
+				destination = d
+			}
+			return fmt.Sprintf("%s[Success] moved '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1200,6 +1220,23 @@ AVAILABLE TOOLS:
       - max_results (integer, optional): Maximum results to return (default: 50)
     How to call: Use find to search for patterns across the codebase. Returns structured results with file, line, and content.
     Example use case: find(pattern='func.*HandleRequest', paths=['*.go']) or find(pattern='TODO', case_insensitive=true)
+
+18. web_fetch
+    Description: Fetch content from a URL using HTTP GET. Useful for looking up documentation, API specs, or any publicly accessible web resource.
+    Parameters:
+      - url (string, required): The URL to fetch (http or https only)
+      - timeout (integer, optional): Maximum time in seconds to wait for the request (default: 30)
+      - max_size (integer, optional): Maximum response size in bytes (default: 10240)
+    How to call: Use web_fetch to retrieve content from the web, such as documentation or API references.
+    Example use case: web_fetch(url='https://example.com/docs')
+
+19. move_file
+    Description: Move or rename a file from source to destination path. Creates parent directories for the destination if they don't already exist.
+    Parameters:
+      - source (string, required): Source file path to move/rename
+      - destination (string, required): Destination file path (new location and/or name)
+    How to call: Use move_file when you need to relocate a file within the filesystem or rename it.
+    Example use case: move_file(source='old_name.go', destination='new_name.go') or move_file(source='temp/foo.txt', destination='docs/foo.txt')
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1654,6 +1691,27 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "move_file",
+				Description: "Move or rename a file from source to destination path. Creates parent directories for destination if they don't exist.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"source": {
+							Type:        "string",
+							Description: "Source file path to move/rename",
+						},
+						"destination": {
+							Type:        "string",
+							Description: "Destination file path (new location and/or name)",
+						},
+					},
+					Required: []string{"source", "destination"},
 				},
 			},
 		},
