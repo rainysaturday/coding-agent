@@ -786,6 +786,16 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			dst = d
 		}
 		msg = fmt.Sprintf("\n%s[Moving] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
+	case "file_rename":
+		src := ""
+		dst := ""
+		if s, ok := params["source"].(string); ok {
+			src = s
+		}
+		if d, ok := params["destination"].(string); ok {
+			dst = d
+		}
+		msg = fmt.Sprintf("\n%s[Rename] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
 	case "copy_file":
 		src := ""
 		dst := ""
@@ -1143,6 +1153,19 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				destination = d
 			}
 			return fmt.Sprintf("%s[Success] moved '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
+		case "file_rename":
+			source := ""
+			destination := ""
+			if s, ok := result.Extra["source"].(string); ok {
+				source = s
+			}
+			if d, ok := result.Extra["destination"].(string); ok {
+				destination = d
+			}
+			if refs, ok := result.Extra["referencesUpdated"].([]string); ok && len(refs) > 0 {
+				return fmt.Sprintf("%s[Success] renamed '%s' -> '%s' (updated %d reference(s))%s\n", ColorGreen, source, destination, len(refs), ColorReset)
+			}
+			return fmt.Sprintf("%s[Success] renamed '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
 		case "copy_file":
 			source := ""
 			destination := ""
@@ -1440,6 +1463,16 @@ AVAILABLE TOOLS:
       - overwrite (boolean, optional): Allow overwriting existing destination file (default: false)
     How to call: Use copy_file when you need to duplicate a file within the filesystem. The source file is preserved.
     Example use case: copy_file(source='config.go', destination='config_backup.go') or copy_file(source='app.go', destination='dist/app.go') overwrite=true
+
+20. file_rename
+    Description: Rename or move a file and automatically update all code references (imports, includes, requires, etc.) across the codebase. This tool combines file renaming with intelligent reference detection and replacement.
+    Parameters:
+      - source (string, required): Source file path to rename/move
+      - destination (string, required): Destination file path (new location and/or name)
+      - search_paths (array, optional): Glob patterns or paths to limit where references are searched. If omitted, searches all code files recursively from the current directory.
+    How to call: Use file_rename when you need to rename a file AND update all import/reference statements that point to it. This is the preferred tool over move_file when references need updating.
+    Example use case: file_rename(source='utils/helper.go', destination='utils/helpers.go') to rename and update imports, file_rename(source='src/old_module.py', destination='src/new_module.py', search_paths=['src/**/*.py']) to limit search scope.
+    Note: The tool automatically detects and replaces references in common source file types (Go, Python, JS/TS, C/C++, etc.).
 
 21. list_dir
     Description: List directory contents with metadata (file type, size, modification time). Supports recursive listing and hidden file filtering.
@@ -2086,6 +2119,31 @@ func buildTools() []inference.ToolDefinition {
 						"destination": {
 							Type:        "string",
 							Description: "Destination file path (new location and/or name)",
+						},
+					},
+					Required: []string{"source", "destination"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "file_rename",
+				Description: "Rename or move a file and automatically update all code references (imports, includes, requires, etc.) across the codebase. Combines file system rename with reference detection and replacement.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"source": {
+							Type:        "string",
+							Description: "Source file path to rename/move",
+						},
+						"destination": {
+							Type:        "string",
+							Description: "Destination file path (new location and/or name)",
+						},
+						"search_paths": {
+							Type:        "array",
+							Description: "Glob patterns or paths to limit where references are searched. If omitted, searches all code files recursively.",
 						},
 					},
 					Required: []string{"source", "destination"},

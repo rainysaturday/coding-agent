@@ -114,8 +114,11 @@
 ### Code Quality
 - **#053: Run Lint Tool** - Run linters for the current project and report structured results. Auto-detects project type (Go, Python, Node.js, Shell) and runs appropriate linters (gofmt, go vet, flake8, pylint, eslint, shellcheck). Supports custom commands, arguments, and timeouts. Returns pass/fail status with formatted output.
 
+### File Management
+- **#054: File Rename with Reference Update** - Rename or move a file and automatically update all code references (imports, includes, requires, etc.) across the codebase. Supports custom search paths to limit the scope of reference updates. Uses only Go stdlib (no external dependencies).
+
 ## Completed Feature Count
 
-**53 / 53 features implemented**
+**54 / 54 features implemented**
 
 ## Upcoming Features

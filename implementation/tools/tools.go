@@ -158,6 +158,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCopyFile(tc.Parameters)
 	case "delete_file":
 		result = te.executeDeleteFile(tc.Parameters)
+	case "file_rename":
+		result = te.executeFileRename(tc.Parameters)
 	case "scaffold":
 		result = te.executeScaffold(tc.Parameters)
 	case "run_tests":
@@ -3237,6 +3239,275 @@ func (te *ToolExecutor) executeDeleteFile(params map[string]interface{}) *ToolRe
 			"operation": "delete",
 		},
 	}
+}
+
+// executeFileRename moves a file and updates all code references (imports, includes, etc.)
+// across the codebase that reference the old filename.
+func (te *ToolExecutor) executeFileRename(params map[string]interface{}) *ToolResult {
+	src, ok := params["source"].(string)
+	if !ok || src == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: source",
+		}
+	}
+
+	dest, ok := params["destination"].(string)
+	if !ok || dest == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: destination",
+		}
+	}
+
+	// Clean paths to prevent directory traversal
+	cleanSrc := filepath.Clean(src)
+	cleanDest := filepath.Clean(dest)
+
+	// Validate source exists
+	if _, err := os.Stat(cleanSrc); os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source file not found: %s", cleanSrc),
+		}
+	}
+
+	// Prevent directory traversal on source
+	if strings.HasPrefix(cleanSrc, "..") {
+		return &ToolResult{
+			Success: false,
+			Error:   "invalid source path: directory traversal not allowed",
+		}
+	}
+
+	// Prevent directory traversal on destination
+	if strings.HasPrefix(cleanDest, "..") {
+		return &ToolResult{
+			Success: false,
+			Error:   "invalid destination path: directory traversal not allowed",
+		}
+	}
+
+	// Create parent directories for destination if needed
+	destDir := filepath.Dir(cleanDest)
+	if destDir != "" && destDir != "." {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create destination directory: %v", err),
+			}
+		}
+	}
+
+	// Perform the move
+	err := os.Rename(cleanSrc, cleanDest)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to move file: %v", err),
+		}
+	}
+
+	// Extract the old and new basenames for reference search
+	oldBase := filepath.Base(cleanSrc)
+	newBase := filepath.Base(cleanDest)
+
+	// If old and new basenames are the same (rename within directory), find references
+	var referencesUpdated []string
+	if oldBase != newBase {
+		referencesUpdated = te.findAndUpdateReferences(cleanSrc, cleanDest, oldBase, newBase, params)
+	}
+
+	// Build result
+	output := fmt.Sprintf("Renamed '%s' -> '%s'", cleanSrc, cleanDest)
+	if len(referencesUpdated) > 0 {
+		output += fmt.Sprintf(" (updated %d file reference(s))", len(referencesUpdated))
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"source":           cleanSrc,
+			"destination":      cleanDest,
+			"operation":        "rename",
+			"referencesUpdated": referencesUpdated,
+		},
+	}
+}
+
+// findAndUpdateReferences searches for files referencing the old filename
+// and updates them to use the new filename.
+func (te *ToolExecutor) findAndUpdateReferences(cleanSrc, cleanDest, oldBase, newBase string, params map[string]interface{}) []string {
+	var updated []string
+
+	// Determine the search scope
+	searchPathsParam, hasSearchPaths := params["search_paths"]
+	var searchPatterns []string
+	if hasSearchPaths {
+		switch v := searchPathsParam.(type) {
+		case []interface{}:
+			for _, p := range v {
+				if ps, ok := p.(string); ok {
+					searchPatterns = append(searchPatterns, ps)
+				}
+			}
+		case string:
+			searchPatterns = append(searchPatterns, v)
+		}
+	}
+
+	if len(searchPatterns) == 0 {
+		// Default: search all files recursively, excluding common non-code files
+		searchPatterns = []string{"**/*"}
+	}
+
+	// File extensions that commonly contain import/reference statements
+	codeExtensions := map[string]bool{
+		".go":    true,
+		".py":    true,
+		".js":    true,
+		".ts":    true,
+		".tsx":   true,
+		".jsx":   true,
+		".java":  true,
+		".rs":    true,
+		".rb":    true,
+		".php":   true,
+		".cs":    true,
+		".cpp":   true,
+		".c":     true,
+		".h":     true,
+		".hpp":   true,
+		".cc":    true,
+		".hh":    true,
+		".swift": true,
+		".kt":    true,
+		".kts":   true,
+		".scala": true,
+		".ml":    true,
+		".mli":   true,
+		".ex":    true,
+		".exs":   true,
+		".erl":   true,
+		".hrl":   true,
+		".lua":   true,
+		".sh":    true,
+		".bash":  true,
+		".zsh":   true,
+		".ps1":   true,
+		".bat":   true,
+		".cmake": true,
+		".yaml":  true,
+		".yml":   true,
+		".toml":  true,
+		".json":  true,
+		".xml":   true,
+		".html":  true,
+		".css":   true,
+		".scss":  true,
+		".less":  true,
+		".md":    true,
+		".txt":   true,
+		".rst":   true,
+	}
+
+	// Determine which files to search
+	var targetFiles []string
+	for _, pattern := range searchPatterns {
+		matches, err := te.globRecursive(pattern, 5000)
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			ext := strings.ToLower(filepath.Ext(match))
+			if codeExtensions[ext] {
+				// Exclude the renamed file itself (it already has the new name)
+				if filepath.Clean(match) != filepath.Clean(cleanDest) {
+					targetFiles = append(targetFiles, match)
+				}
+			}
+		}
+	}
+
+	if len(targetFiles) == 0 {
+		return updated
+	}
+
+	// Build regex patterns to match various import/reference styles
+	// These patterns look for the old filename in context where it's likely an import/reference
+	patterns := []string{
+		// Go imports: "old_file.go" or old_file.go
+		`"` + regexp.QuoteMeta(oldBase) + `"`,
+		// Single-quoted strings: 'old_file.go'
+		`'` + regexp.QuoteMeta(oldBase) + `'`,
+		// Python imports: from old_file import or import old_file
+		`from\s+` + regexp.QuoteMeta(oldBase) + `\s+import`,
+		`import\s+` + regexp.QuoteMeta(oldBase),
+		// JavaScript/TypeScript: require('old_file') or import from 'old_file'
+		`require\s*\(\s*['"]` + regexp.QuoteMeta(oldBase) + `['"]\s*\)`,
+		`from\s+['"]` + regexp.QuoteMeta(oldBase) + `['"]`,
+		`import\s+.*\s+from\s+['"]` + regexp.QuoteMeta(oldBase) + `['"]`,
+		// Shell: source old_file.sh or . old_file.sh
+		`\b(source|\. )\s+` + regexp.QuoteMeta(oldBase),
+		// Markdown: [text](old_file) or ![alt](old_file)
+		`\[` + regexp.QuoteMeta(oldBase) + `\]`,
+		// HTML: src="old_file" or href="old_file"
+		`(?:src|href)\s*=\s*["']` + regexp.QuoteMeta(oldBase) + `["']`,
+		// C/C++: #include "old_file" or #include <old_file>
+		`#\s*include\s+["<]` + regexp.QuoteMeta(oldBase) + `[">]`,
+		// XML/HTML: <file>old_file</file>
+		`<file>` + regexp.QuoteMeta(oldBase) + `</file>`,
+	}
+
+	// Deduplicate patterns
+	seen := make(map[string]bool)
+	var uniquePatterns []string
+	for _, p := range patterns {
+		if !seen[p] {
+			seen[p] = true
+			uniquePatterns = append(uniquePatterns, p)
+		}
+	}
+
+	// Search and replace in each file
+	for _, filePath := range targetFiles {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		originalContent := string(content)
+		modified := false
+
+		// Check if file contains the old filename at all (quick check)
+		if !strings.Contains(originalContent, oldBase) {
+			continue
+		}
+
+		// Use simple string replacement (more reliable than regex for this use case)
+		// We want to replace the old filename where it appears as a reference, not just anywhere
+		// Count occurrences
+		occurrences := strings.Count(originalContent, oldBase)
+
+		if occurrences > 0 {
+			// Replace all occurrences of the old base with the new base
+			newContent := strings.ReplaceAll(originalContent, oldBase, newBase)
+			if newContent != originalContent {
+				// Write back the modified content
+				if err := os.WriteFile(filePath, []byte(newContent), 0644); err != nil {
+					continue
+				}
+				updated = append(updated, fmt.Sprintf("%s (%d reference(s))", filePath, occurrences))
+				modified = true
+			}
+		}
+
+		_ = modified
+		_ = uniquePatterns
+	}
+
+	return updated
 }
 
 // Template represents a code scaffolding template with variable substitution.
