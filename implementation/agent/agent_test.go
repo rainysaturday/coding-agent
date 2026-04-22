@@ -1047,6 +1047,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"testgen":        {"path"},
 		"code_review":    {"path"},
 		"interactive_session": {"action"},
+		"http_request":   {"url"},
 	}
 
 	for _, tool := range toolDefs {

@@ -1683,6 +1683,23 @@ AVAILABLE TOOLS:
     How to call: Use code_review to analyze code quality and identify issues before committing. Review entire directories or specific files. Results include severity levels, categories, and improvement suggestions.
     Example use case: code_review(path='src/'), code_review(path='src/main.go', rules=['security']), code_review(path='.', languages=['go', 'python'])
 
+37. http_request
+    Description: Send HTTP requests with full method support (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Supports custom headers, authentication (Bearer, Basic, API key), request body handling, response validation, and automatic redirect following. Use this for API testing and web requests.
+    Parameters:
+      - url (string, required): The URL to send the request to (http or https only)
+      - method (string, optional): HTTP method - 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS' (default: 'GET')
+      - headers (object, optional): Custom HTTP headers as key-value pairs (e.g., {'Authorization': 'Bearer token', 'Content-Type': 'application/json'})
+      - body (string, optional): Request body content (for POST, PUT, PATCH requests)
+      - content_type (string, optional): Content-Type header value (auto-detected from body if not specified)
+      - auth (object, optional): Authentication settings - {'type': 'bearer', 'token': '...'} or {'type': 'basic', 'username': '...', 'password': '...'} or {'type': 'api_key', 'api_key': '...', 'key_name': 'X-API-Key'}
+      - timeout (integer, optional): Request timeout in seconds (default: 30)
+      - max_size (integer, optional): Maximum response body size in bytes (default: 10MB)
+      - expected_status (integer, optional): Validate response status code (e.g., 200, 201, 404)
+      - expected_status_range (string, optional): Validate status against a range (e.g., '2xx', '4xx', '200-299')
+      - expected_content_type (string, optional): Validate Content-Type contains this string (e.g., 'application/json')
+    How to call: Use http_request to test APIs, fetch resources, or make web requests. Supports all standard HTTP methods with full header and body control. Results include status code, headers, body, content type, and timing.
+    Example use case: http_request(url='https://api.example.com/users', method='GET', headers={'Authorization': 'Bearer token'}), http_request(url='https://api.example.com/users', method='POST', body='{"name": "new user"}', content_type='application/json'), http_request(url='https://api.example.com/items/42', method='DELETE', expected_status=204)
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -3186,6 +3203,63 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "http_request",
+				Description: "Send HTTP requests with full method support (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS). Supports custom headers, authentication (Bearer, Basic, API key), request body handling, response validation, and automatic redirect following. Use this for API testing and web requests.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"url": {
+							Type:        "string",
+							Description: "The URL to send the request to (http or https only)",
+						},
+						"method": {
+							Type:        "string",
+							Description: "HTTP method: 'GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS' (default: 'GET')",
+						},
+						"headers": {
+							Type:        "object",
+							Description: "Custom HTTP headers as key-value pairs (e.g., {'Authorization': 'Bearer token', 'Content-Type': 'application/json'})",
+						},
+						"body": {
+							Type:        "string",
+							Description: "Request body content (for POST, PUT, PATCH requests). Can be JSON string, form data, or raw text.",
+						},
+						"content_type": {
+							Type:        "string",
+							Description: "Content-Type header value (auto-detected from body if not specified)",
+						},
+						"auth": {
+							Type:        "object",
+							Description: "Authentication settings: {'type': 'bearer', 'token': '...'} or {'type': 'basic', 'username': '...', 'password': '...'} or {'type': 'api_key', 'api_key': '...', 'key_name': 'X-API-Key'}",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Request timeout in seconds (default: 30)",
+						},
+						"max_size": {
+							Type:        "integer",
+							Description: "Maximum response body size in bytes (default: 10485760 / 10MB)",
+						},
+						"expected_status": {
+							Type:        "integer",
+							Description: "Validate response status code (e.g., 200, 201, 404). Tool fails if status doesn't match.",
+						},
+						"expected_status_range": {
+							Type:        "string",
+							Description: "Validate response status against a range (e.g., '2xx' for success, '4xx' for client errors, '200-299')",
+						},
+						"expected_content_type": {
+							Type:        "string",
+							Description: "Validate response Content-Type contains this string (e.g., 'application/json')",
+						},
+					},
+					Required: []string{"url"},
 				},
 			},
 		},

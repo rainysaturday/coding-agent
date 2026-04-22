@@ -159,8 +159,11 @@
 ### Interactive Sessions
 - **#070: Interactive Terminal Session Tool** - Start, interact with, and manage long-running interactive terminal sessions (REPLs). Supports actions: start (begin session), send (send input), stop (terminate session), list (show active sessions). Useful for python3, node, sqlite3, and other interactive programs.
 
+### Network / API Testing
+- **#071: HTTP Request Testing Tool** - Full HTTP request testing with support for all methods (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS), custom headers, authentication (Bearer, Basic, API key), request body handling, response validation (status code, status range, content-type), and automatic redirect following. Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**70 / 70 features implemented**
+**71 / 71 features implemented**
 
 ## Upcoming Features
