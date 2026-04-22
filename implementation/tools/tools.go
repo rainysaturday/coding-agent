@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +143,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitCommit(tc.Parameters)
 	case "find":
 		result = te.executeFind(tc.Parameters)
+	case "web_fetch":
+		result = te.executeWebFetch(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -1939,6 +1944,133 @@ func (te *ToolExecutor) executeGitCommit(params map[string]interface{}) *ToolRes
 			"amend":  amend,
 			"hasMsg": hasMessage,
 		},
+	}
+
+	return result
+}
+
+// executeWebFetch fetches content from a URL using HTTP GET.
+func (te *ToolExecutor) executeWebFetch(params map[string]interface{}) *ToolResult {
+	rawURL, ok := params["url"].(string)
+	if !ok || rawURL == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: url",
+		}
+	}
+
+	// Validate URL
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid URL: %v", err),
+		}
+	}
+
+	// Only allow http and https schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unsupported URL scheme: %s (only http and https are allowed)", parsedURL.Scheme),
+		}
+	}
+
+	// Determine timeout (default: 30 seconds)
+	timeoutSeconds := 30
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Determine max response size (default: 10KB = 10240 bytes)
+	maxSize := 10240
+	if maxParam, hasMax := params["max_size"]; hasMax {
+		switch v := maxParam.(type) {
+		case float64:
+			maxSize = int(v)
+		case int:
+			maxSize = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxSize = n
+			}
+		}
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: time.Duration(timeoutSeconds) * time.Second,
+	}
+
+	// Create request
+	req, err := http.NewRequestWithContext(context.Background(), "GET", rawURL, nil)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create request: %v", err),
+		}
+	}
+
+	// Set User-Agent header
+	req.Header.Set("User-Agent", "coding-agent/1.0")
+
+	// Perform request
+	resp, err := client.Do(req)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("request failed: %v", err),
+		}
+	}
+	defer resp.Body.Close()
+
+	// Check for HTTP errors
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Try to read error body
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))),
+		}
+	}
+
+	// Read response body with size limit
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxSize)))
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read response body: %v", err),
+		}
+	}
+
+	// Check if response was truncated
+	truncated := false
+	if int64(len(body)) >= int64(maxSize) {
+		truncated = true
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  string(body),
+		Extra: map[string]interface{}{
+			"status_code":   resp.StatusCode,
+			"content_type":  resp.Header.Get("Content-Type"),
+			"content_length": len(body),
+			"truncated":     truncated,
+		},
+	}
+
+	if truncated {
+		result.Output += "\n... [response truncated, exceeded max_size limit]"
 	}
 
 	return result

@@ -75,10 +75,13 @@
   - Streaming tool-call assembly (merge by index, normalize type)
   - GitHub Models API support (`https://models.github.ai`)
 
+### External Access
+- **#039: Web Fetch Tool** - HTTP GET requests to fetch web content, configurable timeout and max response size
+
 ## Upcoming Features
 
 _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**38 / 38 features implemented**
+**39 / 39 features implemented**

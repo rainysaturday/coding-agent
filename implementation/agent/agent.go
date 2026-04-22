@@ -1632,6 +1632,31 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "web_fetch",
+				Description: "Fetch content from a URL using HTTP GET. Useful for looking up documentation, API specs, or any publicly accessible web resource.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"url": {
+							Type:        "string",
+							Description: "The URL to fetch (http or https only)",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum time in seconds to wait for the request (default: 30)",
+						},
+						"max_size": {
+							Type:        "integer",
+							Description: "Maximum response size in bytes (default: 10240)",
+						},
+					},
+					Required: []string{"url"},
+				},
+			},
+		},
 	}
 }
 

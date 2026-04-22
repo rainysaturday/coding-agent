@@ -1013,6 +1013,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_show":      {"path"},
 		"git_add":       {},
 		"git_commit":    {},
+		"find":          {"pattern"},
+		"web_fetch":     {"url"},
 	}
 
 	for _, tool := range toolDefs {
