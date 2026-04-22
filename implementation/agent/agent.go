@@ -1572,7 +1572,30 @@ AVAILABLE TOOLS:
     How to call: Use json_transformer to work with JSON data. Extract a specific field, set a value at a path, merge multiple JSON sources, validate structure, format for readability, or convert between JSON and YAML/ENV formats.
     Example use case: json_transformer(command='extract', file_path='config.json', path='.database.host') to extract a field, json_transformer(command='set', file_path='config.json', path='.database.port', value='5432') to set a value, json_transformer(command='format', file_path='data.json', indent=4) to beautify JSON, json_transformer(command='convert_to_yaml', file_path='config.json') to convert to YAML.
 
-27. project_diagnostics
+27. csv_transformer
+    Description: Transform CSV/TSV data with multiple operations: read, filter, select, sort, aggregate, to_json, to_yaml, format, rename_columns, add_column. Auto-detects delimiter (comma, semicolon, tab, pipe).
+    Parameters:
+      - command (string, required): Operation to perform: 'read', 'filter', 'select', 'sort', 'aggregate', 'to_json', 'to_yaml', 'format', 'rename_columns', 'add_column'
+      - file_path (string, optional): Path to a CSV file to operate on (alternative to csv_string)
+      - csv_string (string, optional): Raw CSV string to operate on (alternative to file_path)
+      - delimiter (string, optional): Field delimiter (default: auto-detect). Specify 'tab' for tab-delimited.
+      - conditions (array, optional): Filter conditions for 'filter' command. Each condition has 'column', 'operator', and 'value'.
+      - mode (string, optional): Filter logic: 'and' (default) or 'or'.
+      - columns (array, optional): Column names to select (for 'select' command).
+      - column (string, optional): Column to sort/filter by (for 'sort' or 'filter' command).
+      - direction (string, optional): Sort direction: 'asc' or 'desc' (default: 'asc').
+      - group_by (string, optional): Column to group by (for 'aggregate' command).
+      - value_column (string, optional): Numeric column to aggregate (for 'aggregate' command).
+      - functions (array, optional): Aggregation functions: 'count', 'sum', 'avg', 'min', 'max' (default: count, sum, avg).
+      - quoting (string, optional): Quoting mode for 'format': 'auto', 'all', 'nonnumeric', 'none' (default: 'auto').
+      - renames (object, optional): Column name mapping for 'rename_columns'.
+      - column_name (string, optional): Name for new column (for 'add_column' command).
+      - formula (string, optional): Expression with {{column_name}} placeholders (for 'add_column' command).
+      - source_columns (array, optional): Source columns for 'add_column' to copy/concatenate.
+    How to call: Use csv_transformer to work with CSV data. Read and inspect CSV files, filter rows by conditions, select specific columns, sort by a column, aggregate numeric data by groups, or convert CSV to JSON/YAML format. Supports auto-detection of delimiters (comma, semicolon, tab, pipe).
+    Example use case: csv_transformer(command='read', file_path='data.csv') to inspect data, csv_transformer(command='filter', file_path='data.csv', conditions=[{'column': 'status', 'operator': 'eq', 'value': 'active'}]) to filter rows, csv_transformer(command='to_json', file_path='data.csv') to convert to JSON.
+
+28. project_diagnostics
     Description: Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys, and more. Returns a structured report with severity levels and recommendations.
     Parameters:
       - paths (array, optional): Paths to scan (glob patterns or directory paths). If omitted, scans the current directory.
@@ -2620,6 +2643,87 @@ func buildTools() []inference.ToolDefinition {
 						"indent": {
 							Type:        "integer",
 							Description: "Number of spaces for formatting (default: 2, for 'format' command)",
+						},
+					},
+					Required: []string{"command"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "csv_transformer",
+				Description: "Transform CSV/TSV data with multiple operations: read, filter, select, sort, aggregate, to_json, to_yaml, format, rename_columns, add_column. Operates on CSV from a file path or raw CSV string. Auto-detects delimiter (comma, semicolon, tab, pipe).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "The operation to perform: 'read', 'filter', 'select', 'sort', 'aggregate', 'to_json', 'to_yaml', 'format', 'rename_columns', 'add_column'",
+						},
+						"file_path": {
+							Type:        "string",
+							Description: "Path to a CSV file to operate on (alternative to csv_string)",
+						},
+						"csv_string": {
+							Type:        "string",
+							Description: "Raw CSV string to operate on (alternative to file_path)",
+						},
+						"delimiter": {
+							Type:        "string",
+							Description: "Field delimiter character (default: auto-detect comma, semicolon, tab, or pipe). Specify 'tab' for tab-delimited.",
+						},
+						"conditions": {
+							Type:        "array",
+							Description: "Array of filter conditions for 'filter' command. Each condition has 'column', 'operator', and 'value'.",
+						},
+						"mode": {
+							Type:        "string",
+							Description: "Logic mode for filter conditions: 'and' (default) or 'or'.",
+						},
+						"columns": {
+							Type:        "array",
+							Description: "Array of column names to select (for 'select' command).",
+						},
+						"column": {
+							Type:        "string",
+							Description: "Column name to sort by (for 'sort' command) or filter by.",
+						},
+						"direction": {
+							Type:        "string",
+							Description: "Sort direction: 'asc' or 'desc' (for 'sort' command, default: 'asc').",
+						},
+						"group_by": {
+							Type:        "string",
+							Description: "Column name to group by (for 'aggregate' command).",
+						},
+						"value_column": {
+							Type:        "string",
+							Description: "Numeric column to aggregate (for 'aggregate' command).",
+						},
+						"functions": {
+							Type:        "array",
+							Description: "Aggregation functions to apply (for 'aggregate' command): 'count', 'sum', 'avg', 'min', 'max'. Default: count, sum, avg.",
+						},
+						"quoting": {
+							Type:        "string",
+							Description: "Quoting mode for format command: 'auto', 'all', 'nonnumeric', 'none' (default: 'auto').",
+						},
+						"renames": {
+							Type:        "object",
+							Description: "Object mapping old column names to new names (for 'rename_columns' command).",
+						},
+						"column_name": {
+							Type:        "string",
+							Description: "Name for the new column (for 'add_column' command).",
+						},
+						"formula": {
+							Type:        "string",
+							Description: "Formula expression with {{column_name}} placeholders for computed values (for 'add_column' command). Supports arithmetic like {{price}} * {{quantity}}.",
+						},
+						"source_columns": {
+							Type:        "array",
+							Description: "Source column names for add_column (for copying or concatenating existing columns).",
 						},
 					},
 					Required: []string{"command"},

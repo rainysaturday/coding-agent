@@ -120,6 +120,9 @@
 ### Data/Format Tools
 - **#051: JSON Transformer Tool** - Transform JSON data with multiple operations: extract value by path using dot notation, set/modify fields at arbitrary paths, merge multiple JSON files/sources, validate required fields, format/beautify with configurable indentation, convert to YAML, and convert to environment variable format. Uses only Go stdlib (encoding/json) - zero external dependencies.
 
+### Data/Format Tools
+- **#072: CSV Transformer Tool** - Transform CSV/TSV data with multiple operations: read, filter, select, sort, aggregate, to_json, to_yaml, format, rename_columns, add_column. Auto-detects delimiter (comma, semicolon, tab, pipe). Supports filtering with conditions (eq, neq, gt, lt, gte, lte, contains, startswith, endswith, regex, in, not_in) in AND/OR modes, aggregation by group columns (count, sum, avg, min, max), computed columns with formula support ({{col_name}} placeholders with arithmetic), and format/export capabilities. Uses only Go stdlib - zero external dependencies.
+
 ### Project Quality
 - **#052: Project Diagnostics Tool** - Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys patterns. Returns structured report with severity levels (low, medium, high, critical) and recommendations. Supports configurable scan depth and path scoping.
 
@@ -164,6 +167,6 @@
 
 ## Completed Feature Count
 
-**71 / 71 features implemented**
+**72 / 72 features implemented**
 
 ## Upcoming Features

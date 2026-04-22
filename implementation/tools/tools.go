@@ -213,6 +213,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeInteractiveSession(tc.Parameters)
 	case "http_request":
 		result = te.executeHttpRequest(tc.Parameters)
+	case "csv_transformer":
+		result = te.executeCsvTransformer(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
