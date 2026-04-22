@@ -1019,6 +1019,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"move_file":     {"source", "destination"},
 		"copy_file":     {"source", "destination"},
 		"list_dir":      {},
+		"delete_file":   {"path"},
 	}
 
 	for _, tool := range toolDefs {

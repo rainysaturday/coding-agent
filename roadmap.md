@@ -84,11 +84,12 @@
 
 ### Directory Management
 - **#041: List Directory Tool** - List directory contents with metadata (file type, size, modification time), recursive mode, hidden files support
+- **#043: Delete File Tool** - Delete files from the filesystem with path validation and error handling
 
-## Upcoming Features
+### Upcoming Features
 
 _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**42 / 42 features implemented**
+**43 / 43 features implemented**

@@ -1811,6 +1811,23 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "delete_file",
+				Description: "Delete a file from the filesystem. Removes the specified file permanently. Does not work on directories.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to delete",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
 	}
 }
 

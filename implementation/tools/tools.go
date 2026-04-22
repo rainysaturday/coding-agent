@@ -151,6 +151,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeListDir(tc.Parameters)
 	case "copy_file":
 		result = te.executeCopyFile(tc.Parameters)
+	case "delete_file":
+		result = te.executeDeleteFile(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -2508,4 +2510,80 @@ func formatFileSize(size int64) string {
 		i++
 	}
 	return fmt.Sprintf("%d %s", size, units[i])
+}
+
+// executeDeleteFile deletes a file from the filesystem.
+func (te *ToolExecutor) executeDeleteFile(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	// Clean path to prevent directory traversal
+	cleanPath := filepath.Clean(path)
+
+	// Prevent directory traversal to system directories
+	if strings.Contains(path, "..") {
+		if filepath.IsAbs(cleanPath) && (strings.HasPrefix(cleanPath, "/etc") || strings.HasPrefix(cleanPath, "/root") || strings.HasPrefix(cleanPath, "/home") || cleanPath == "/") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+		if strings.HasPrefix(cleanPath, "..") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+	}
+
+	// Check if file exists
+	info, err := os.Stat(cleanPath)
+	if os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("file not found: %s", cleanPath),
+		}
+	}
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot access file: %v", err),
+		}
+	}
+
+	// Prevent deleting directories
+	if info.IsDir() {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path is a directory, not a file: %s (use rmdir or rm for directories)", cleanPath),
+		}
+	}
+
+	// Check permissions before attempting deletion
+	if err := os.Remove(cleanPath); err != nil {
+		if os.IsPermission(err) {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("permission denied: cannot delete %s", cleanPath),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to delete file: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Deleted file: %s", cleanPath),
+		Path:    cleanPath,
+		Extra: map[string]interface{}{
+			"operation": "delete",
+		},
+	}
 }
