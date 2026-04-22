@@ -2353,3 +2353,402 @@ func TestExecuteCopyFile_Stats(t *testing.T) {
 	}
 }
 
+
+func TestExecuteScaffold_MissingTemplate(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{},
+	})
+
+	if result.Success {
+		t.Error("Expected failure for missing template parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: template") {
+		t.Errorf("Expected 'missing required parameter: template' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteScaffold_UnknownTemplate(t *testing.T) {
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template": "nonexistent_template",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure for unknown template")
+	}
+	if !strings.Contains(result.Error, "unknown template: nonexistent_template") {
+		t.Errorf("Expected 'unknown template' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteScaffold_GoStruct(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "go_struct",
+			"name":        "User",
+			"package":     "users",
+			"description": "A user account",
+			"fields": []interface{}{
+				map[string]interface{}{
+					"name":      "ID",
+					"type":      "string",
+					"json_tag":  "id",
+				},
+				map[string]interface{}{
+					"name":      "Name",
+					"type":      "string",
+					"json_tag":  "name",
+				},
+				map[string]interface{}{
+					"name":      "Email",
+					"type":      "string",
+					"json_tag":  "email",
+				},
+			},
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "User.go"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "package users") {
+		t.Error("Expected 'package users' in generated file")
+	}
+	if !strings.Contains(contentStr, "type User struct") {
+		t.Error("Expected 'type User struct' in generated file")
+	}
+	if !strings.Contains(contentStr, "ID string") {
+		t.Error("Expected 'ID string' in generated file")
+	}
+	if !strings.Contains(contentStr, "Name string") {
+		t.Error("Expected 'Name string' in generated file")
+	}
+	if !strings.Contains(contentStr, "Email string") {
+		t.Error("Expected 'Email string' in generated file")
+	}
+	if !strings.Contains(contentStr, "json:\"id\"") {
+		t.Error("Expected 'json:\"id\"' in generated file")
+	}
+	if !strings.Contains(contentStr, "NewUser()") {
+		t.Error("Expected 'NewUser()' in generated file")
+	}
+}
+
+func TestExecuteScaffold_PythonClass(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "python_class",
+			"name":        "UserService",
+			"package":     "services",
+			"description": "A service for managing users",
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "UserService.py"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "class UserService:") {
+		t.Error("Expected 'class UserService:' in generated file")
+	}
+}
+
+func TestExecuteScaffold_Protobuf(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "proto_message",
+			"name":        "UserMessage",
+			"package":     "users",
+			"description": "User message for gRPC",
+			"go_package":  "github.com/example/users/pb",
+			"fields": []interface{}{
+				map[string]interface{}{
+					"name":        "id",
+					"type_proto":  "string",
+					"number":      1,
+					"description": "Unique identifier",
+				},
+				map[string]interface{}{
+					"name":        "name",
+					"type_proto":  "string",
+					"number":      2,
+					"description": "Full name",
+				},
+			},
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "UserMessage.proto"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "message UserMessage") {
+		t.Error("Expected 'message UserMessage' in generated file")
+	}
+	if !strings.Contains(contentStr, "string id = 1;") {
+		t.Error("Expected 'string id = 1;' in generated file")
+	}
+	if !strings.Contains(contentStr, "string name = 2;") {
+		t.Error("Expected 'string name = 2;' in generated file")
+	}
+	if !strings.Contains(contentStr, `go_package = "github.com/example/users/pb"`) {
+		t.Error("Expected go_package in generated file")
+	}
+}
+
+func TestExecuteScaffold_OpenAPI(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "openapi_schema",
+			"name":        "Product",
+			"description": "Product resource",
+			"plural_name": "products",
+			"fields": []interface{}{
+				map[string]interface{}{
+					"name":        "id",
+					"schema_type": "string",
+					"description": "Product ID",
+				},
+				map[string]interface{}{
+					"name":        "name",
+					"schema_type": "string",
+					"description": "Product name",
+				},
+				map[string]interface{}{
+					"name":        "price",
+					"schema_type": "number",
+					"description": "Price in USD",
+				},
+			},
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "Product_schema.yaml"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, `title: "Product"`) {
+		t.Error("Expected title in generated file")
+	}
+	if !strings.Contains(contentStr, "/products:") {
+		t.Error("Expected /products path in generated file")
+	}
+	if !strings.Contains(contentStr, "id:") {
+		t.Error("Expected 'id:' field in generated file")
+	}
+}
+
+func TestExecuteScaffold_GoTest(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "go_test",
+			"name":        "UserService",
+			"package":     "users",
+			"description": "User service tests",
+			"tests": []interface{}{
+				map[string]interface{}{
+					"name":        "CreateUser",
+					"description": "creating a new user",
+					"call":        `svc.CreateUser(ctx, &req)`,
+					"assert":      `assert.NoError(t, err)`,
+				},
+				map[string]interface{}{
+					"name":        "CreateUserInvalidEmail",
+					"description": "creating user with invalid email",
+					"setup":       `req.Email = "not-an-email"`,
+					"call":        `svc.CreateUser(ctx, &req)`,
+					"assert":      `assert.Error(t, err)`,
+				},
+			},
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "UserService_test.go"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "package users") {
+		t.Error("Expected 'package users' in generated file")
+	}
+	if !strings.Contains(contentStr, "func TestCreateUser") {
+		t.Error("Expected TestCreateUser function in generated file")
+	}
+	if !strings.Contains(contentStr, "func TestCreateUserInvalidEmail") {
+		t.Error("Expected TestCreateUserInvalidEmail function in generated file")
+	}
+	if !strings.Contains(contentStr, "svc.CreateUser(ctx, &req)") {
+		t.Error("Expected CreateUser call in generated file")
+	}
+}
+
+func TestExecuteScaffold_GoService(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":           "go_service",
+			"name":               "UserService",
+			"package":            "users",
+			"description":        "Service for user operations",
+			"method_name":        "CreateUser",
+			"method_description": "Creates a new user",
+			"request_type":       "CreateUserRequest",
+			"response_type":      "CreateUserResponse",
+			"fields": []interface{}{
+				map[string]interface{}{
+					"name": "DB",
+					"type": "*sql.DB",
+				},
+			},
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "UserService.go"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "package users") {
+		t.Error("Expected 'package users' in generated file")
+	}
+	if !strings.Contains(contentStr, "type UserServiceService struct") {
+		t.Error("Expected 'type UserServiceService struct' in generated file")
+	}
+	if !strings.Contains(contentStr, "func (s *UserServiceService) CreateUser") {
+		t.Error("Expected CreateUser method in generated file")
+	}
+	if !strings.Contains(contentStr, "*sql.DB") {
+		t.Error("Expected *sql.DB field in generated file")
+	}
+}
+
+func TestExecuteScaffold_CustomBody(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(originalDir)
+
+	te := NewToolExecutor()
+
+	result := te.Execute(&ToolCall{
+		Name: "scaffold",
+		Parameters: map[string]interface{}{
+			"template":    "go_handler",
+			"name":        "HealthCheck",
+			"package":     "handlers",
+			"description": "Health check endpoint",
+			"method":      "GET",
+			"body":        `w.WriteHeader(http.StatusOK)`,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify file was created
+	content, err := os.ReadFile(filepath.Join(tmpDir, "HealthCheck.go"))
+	if err != nil {
+		t.Fatalf("Failed to read generated file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "w.WriteHeader(http.StatusOK)") {
+		t.Error("Expected custom body in generated file")
+	}
+}

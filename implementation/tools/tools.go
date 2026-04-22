@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -153,6 +154,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCopyFile(tc.Parameters)
 	case "delete_file":
 		result = te.executeDeleteFile(tc.Parameters)
+	case "scaffold":
+		result = te.executeScaffold(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -2586,4 +2589,545 @@ func (te *ToolExecutor) executeDeleteFile(params map[string]interface{}) *ToolRe
 			"operation": "delete",
 		},
 	}
+}
+
+// Template represents a code scaffolding template with variable substitution.
+type Template struct {
+	Name        string
+	Description string
+	Files       map[string]string // file path -> content
+}
+
+// backtick returns a backtick character for use in templates.
+const backtickChar = "`"
+
+// builtInTemplates contains all built-in scaffolding templates.
+var builtInTemplates = map[string]Template{
+	"go_struct": {
+		Name:        "go_struct",
+		Description: "Generate a Go struct definition with JSON tags and common methods",
+		Files: map[string]string{
+			"{{.Name}}.go": `// Package {{.Package}} provides {{.Description}}.
+package {{.Package}}
+
+// {{.Name}} represents {{.Description}}.
+type {{.Name}} struct {
+{{range $i, $field := .Fields}}	{{ $field.Name }} {{ $field.Type }} {{- if $field.JSONTag }} {{backtick}}json:"{{ $field.JSONTag }}"{{backtick}}{{- end }}
+{{end}}}
+
+// New{{.Name}} creates a new {{.Name}} instance.
+func New{{.Name}}() *{{.Name}} {
+	return &{{.Name}}{}
+}
+
+// Get{{.Name}} returns the {{.Name}} as a pointer.
+func (r *{{.Name}}) Get{{.Name}}() *{{.Name}} {
+	return r
+}
+`,
+		},
+	},
+	"go_handler": {
+		Name:        "go_handler",
+		Description: "Generate a Go HTTP handler function with context support",
+		Files: map[string]string{
+			"{{.Name}}.go": `package {{.Package}}
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// {{.Name}}Handler handles HTTP {{.Method}} requests for {{.Description}}.
+func {{.Name}}Handler(w http.ResponseWriter, r *http.Request) {
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse request body
+	var req {{.RequestType}}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Process the request
+	{{.Body}}
+
+	// Send response
+	resp := {{.ResponseType}}{}
+	json.NewEncoder(w).Encode(resp)
+}
+
+// {{.Name}}Request represents the request body.
+type {{.RequestType}} struct {
+{{range $i, $field := .Fields}}	{{ $field.Name }} {{ $field.Type }} {{- if $field.JSONTag }} {{backtick}}json:"{{ $field.JSONTag }}"{{backtick}}{{- end }}
+{{end}}}
+
+// {{.Response}}Response represents the response body.
+type {{.ResponseType}} struct {
+{{range $i, $field := .Fields}}	{{ $field.Name }} {{ $field.Type }} {{- if $field.JSONTag }} {{backtick}}json:"{{ $field.JSONTag }}"{{backtick}}{{- end }}
+{{end}}}
+`,
+		},
+	},
+	"go_service": {
+		Name:        "go_service",
+		Description: "Generate a Go service struct with a method",
+		Files: map[string]string{
+			"{{.Name}}.go": `package {{.Package}}
+
+import (
+	"context"
+	"fmt"
+)
+
+// {{.Name}}Service handles {{.Description}}.
+type {{.Name}}Service struct {
+{{range $i, $field := .Fields}}	{{ $field.Name }} {{ $field.Type }}
+{{end}}}
+
+// New{{.Name}}Service creates a new {{.Name}}Service instance.
+func New{{.Name}}Service() *{{.Name}}Service {
+	return &{{.Name}}Service{}
+}
+
+// {{.MethodName}} {{.MethodDescription}}.
+func (s *{{.Name}}Service) {{.MethodName}}(ctx context.Context, req *{{.RequestType}}) (*{{.ResponseType}}, error) {
+	// Validate input
+	if req == nil {
+		return nil, fmt.Errorf("invalid request: nil")
+	}
+
+	{{.Body}}
+
+	return &{{.ResponseType}}{
+{{range $i, $field := .Fields}}		{{ $field.Name }}: req.{{ $field.Name }},
+{{end}}	}, nil
+}
+`,
+		},
+	},
+	"python_class": {
+		Name:        "python_class",
+		Description: "Generate a Python class with __init__, __repr__, and a method",
+		Files: map[string]string{
+			"{{.Name}}.py": `"""Module for {{.Description}}."""
+
+from __future__ import annotations
+
+
+class {{.Name}}:
+	"""{{.Description}}."""
+
+	def __init__(self{{range $i, $field := .Fields}}, {{ $field.Name }}: {{ $field.Type }}{{end}}) -> None:
+		"""Initialize {{.Name}}."""
+{{range $i, $field := .Fields}}		self.{{ $field.Name }} = {{ $field.Name }}
+{{end}}		self._{{.PrivateVar}} = None
+
+	def __repr__(self) -> str:
+		"""Return string representation of {{.Name}}."""
+		return f"{self.__class__.__name__}(...)"
+
+{{range $i, $field := .Fields}}
+	def get_{{ $field.Name }}(self) -> {{ $field.Type }}:
+		"""Get {{ $field.Name }}."""
+		return self.{{ $field.Name }}
+
+{{end}}	{{.Body}}
+`,
+		},
+	},
+	"python_dataclass": {
+		Name:        "python_dataclass",
+		Description: "Generate a Python dataclass",
+		Files: map[string]string{
+			"{{.Name}}.py": `"""Module for {{.Description}}."""
+
+from __future__ import annotations
+from dataclasses import dataclass, field
+{{range $i, $field := .Fields}}
+@dataclass
+class {{ $field.Name }}:
+	"""{{ $field.Description }}."""
+{{ $field.Name }}: {{ $field.Type }}
+{{end}}
+@dataclass
+class {{.Name}}:
+	"""{{.Description}}."""
+{{range $i, $field := .Fields}}	{{ $field.Name }}: {{ $field.Type }}
+{{end}}		{{.PrivateVar}}: str = field(default_factory=str)
+`,
+		},
+	},
+	"proto_message": {
+		Name:        "proto_message",
+		Description: "Generate a Protobuf message definition",
+		Files: map[string]string{
+			"{{.Name}}.proto": `syntax = "proto3";
+
+package {{.Package}};
+
+option go_package = "{{.GoPackage}}";
+
+// {{.Description}}
+message {{.Name}} {
+{{range $i, $field := .Fields}}
+	{{ $field.TypeProto }} {{ $field.Name }} = {{ $field.Number }};
+{{end}}}
+`,
+		},
+	},
+	"openapi_schema": {
+		Name:        "openapi_schema",
+		Description: "Generate an OpenAPI schema for a resource",
+		Files: map[string]string{
+			"{{.Name}}_schema.yaml": `openapi: "3.0.3"
+info:
+  title: "{{.Name}}"
+  description: "{{.Description}}"
+  version: "1.0.0"
+paths:
+  /{{.PluralName}}:
+    get:
+      summary: "List {{.PluralName}}"
+      responses:
+        "200":
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/{{.Name}}"
+    post:
+      summary: "Create {{.Name}}"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/{{.Name}}Input"
+      responses:
+        "201":
+          description: "Created"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/{{.Name}}"
+components:
+  schemas:
+    {{.Name}}:
+      type: object
+      required:
+{{range $i, $field := .Fields}}        - {{ $field.Name }}
+{{end}}      properties:
+{{range $i, $field := .Fields}}        {{ $field.Name }}:
+          type: {{ $field.SchemaType }}
+{{end}}    {{.Name}}Input:
+      type: object
+      required:
+{{range $i, $field := .Fields}}        - {{ $field.Name }}
+{{end}}      properties:
+{{range $i, $field := .Fields}}        {{ $field.Name }}:
+          type: {{ $field.SchemaType }}
+{{end}}
+`,
+		},
+	},
+	"go_test": {
+		Name:        "go_test",
+		Description: "Generate a Go test file with table-driven tests",
+		Files: map[string]string{
+			"{{.Name}}_test.go": `package {{.Package}}
+
+import (
+	"testing"
+)
+
+{{range $i, $test := .Tests}}
+// Test{{ $test.Name }} tests {{ $test.Description }}.
+func Test{{ $test.Name }}(t *testing.T) {
+	t.Parallel()
+{{if $test.Setup}}	// Setup
+	{{ $test.Setup }}
+{{end}}	// Execute
+	result := {{ $test.Call }}
+{{if $test.Assert}}	// Assert
+	{{ $test.Assert }}
+{{end}}}
+
+{{end}}func TestMain(m *testing.M) {
+	// TODO: Add test setup/teardown
+	m.Run()
+}
+`,
+		},
+	},
+}
+
+// templateField represents a field in a scaffolding template.
+type templateField struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	JSONTag     string `json:"json_tag,omitempty"`
+	TypeProto   string `json:"type_proto,omitempty"`
+	Number      int    `json:"number,omitempty"`
+	SchemaType  string `json:"schema_type,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// templateTest represents a test case in the go_test template.
+type templateTest struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Setup       string `json:"setup,omitempty"`
+	Call        string `json:"call"`
+	Assert      string `json:"assert,omitempty"`
+}
+
+// executeScaffold generates code from built-in templates with variable substitution.
+func (te *ToolExecutor) executeScaffold(params map[string]interface{}) *ToolResult {
+	templateName, ok := params["template"].(string)
+	if !ok || templateName == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: template",
+		}
+	}
+
+	template, exists := builtInTemplates[templateName]
+	if !exists {
+		available := make([]string, 0, len(builtInTemplates))
+		for k := range builtInTemplates {
+			available = append(available, k)
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown template: %s. Available templates: %v", templateName, available),
+		}
+	}
+
+	// Parse fields (struct fields, method fields, etc.)
+	var fields []templateField
+	if fieldsParam, hasFields := params["fields"]; hasFields {
+		switch v := fieldsParam.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if fieldMap, ok := item.(map[string]interface{}); ok {
+					field := templateField{}
+					if name, ok := fieldMap["name"].(string); ok {
+						field.Name = name
+					}
+					if t, ok := fieldMap["type"].(string); ok {
+						field.Type = t
+					}
+					if tag, ok := fieldMap["json_tag"].(string); ok {
+						field.JSONTag = tag
+					}
+					if tp, ok := fieldMap["type_proto"].(string); ok {
+						field.TypeProto = tp
+					}
+					if n, ok := fieldMap["number"].(float64); ok {
+						field.Number = int(n)
+					} else if n, ok := fieldMap["number"].(int); ok {
+						field.Number = n
+					} else if n, ok := fieldMap["number"].(int64); ok {
+						field.Number = int(n)
+					}
+					if st, ok := fieldMap["schema_type"].(string); ok {
+						field.SchemaType = st
+					}
+					if desc, ok := fieldMap["description"].(string); ok {
+						field.Description = desc
+					}
+					fields = append(fields, field)
+				}
+			}
+		}
+	}
+
+	// Parse tests (for go_test template)
+	var tests []templateTest
+	if testsParam, hasTests := params["tests"]; hasTests {
+		switch v := testsParam.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if testMap, ok := item.(map[string]interface{}); ok {
+					test := templateTest{}
+					if name, ok := testMap["name"].(string); ok {
+						test.Name = name
+					}
+					if desc, ok := testMap["description"].(string); ok {
+						test.Description = desc
+					}
+					if setup, ok := testMap["setup"].(string); ok {
+						test.Setup = setup
+					}
+					if call, ok := testMap["call"].(string); ok {
+						test.Call = call
+					}
+					if assert, ok := testMap["assert"].(string); ok {
+						test.Assert = assert
+					}
+					tests = append(tests, test)
+				}
+			}
+		}
+	}
+
+	// Build template data map
+	data := map[string]interface{}{
+		"Package":      "default",
+		"Name":         "MyStruct",
+		"Description":  "A generated struct",
+		"Fields":       fields,
+		"Tests":        tests,
+		"Method":       "GET",
+		"Body":         "// TODO: implement business logic",
+		"RequestType":  "Request",
+		"ResponseType": "Response",
+		"PrivateVar":   "data",
+		"GoPackage":    "github.com/example/pkg",
+		"PluralName":   "items",
+	}
+
+	// Override with explicit parameters
+	if pkg, ok := params["package"].(string); ok && pkg != "" {
+		data["Package"] = pkg
+	}
+	if name, ok := params["name"].(string); ok && name != "" {
+		data["Name"] = name
+	}
+	if desc, ok := params["description"].(string); ok && desc != "" {
+		data["Description"] = desc
+	}
+	if method, ok := params["method"].(string); ok && method != "" {
+		data["Method"] = method
+	}
+	if body, ok := params["body"].(string); ok && body != "" {
+		data["Body"] = body
+	}
+	if reqType, ok := params["request_type"].(string); ok && reqType != "" {
+		data["RequestType"] = reqType
+	}
+	if respType, ok := params["response_type"].(string); ok && respType != "" {
+		data["ResponseType"] = respType
+	}
+	if methodName, ok := params["method_name"].(string); ok && methodName != "" {
+		data["MethodName"] = methodName
+	}
+	if methodDesc, ok := params["method_description"].(string); ok && methodDesc != "" {
+		data["MethodDescription"] = methodDesc
+	}
+	if goPkg, ok := params["go_package"].(string); ok && goPkg != "" {
+		data["GoPackage"] = goPkg
+	}
+	if plural, ok := params["plural_name"].(string); ok && plural != "" {
+		data["PluralName"] = plural
+	}
+
+	// Process each template file with text/template
+	var generatedFiles []map[string]interface{}
+	for filePath, content := range template.Files {
+		// Apply template substitution
+		processedFile, err := processTemplate(content, data)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("template processing error in %s: %v", filePath, err),
+			}
+		}
+
+		// Resolve the file path (also may contain template vars)
+		resolvedPath, err := processTemplate(filePath, data)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("template processing error for path %s: %v", filePath, err),
+			}
+		}
+
+		// Create parent directories
+		dir := filepath.Dir(resolvedPath)
+		if dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("cannot create directory %s: %v", dir, err),
+				}
+			}
+		}
+
+		// Write the file
+		if err := os.WriteFile(resolvedPath, []byte(processedFile), 0644); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to write %s: %v", resolvedPath, err),
+			}
+		}
+
+		generatedFiles = append(generatedFiles, map[string]interface{}{
+			"path":     resolvedPath,
+			"size":     len(processedFile),
+			"template": filepath.Base(filePath),
+		})
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Generated %d file(s) from template '%s':\n", len(generatedFiles), templateName),
+		Extra: map[string]interface{}{
+			"tool":      "scaffold",
+			"template":  templateName,
+			"files":     generatedFiles,
+			"filesList": extractPaths(generatedFiles),
+		},
+	}
+}
+
+// processTemplate applies Go text/template substitution to a string with the given data.
+func processTemplate(tmpl string, data map[string]interface{}) (string, error) {
+	t, err := parseTemplate(tmpl)
+	if err != nil {
+		return "", fmt.Errorf("parse error: %v", err)
+	}
+
+	var buf strings.Builder
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute error: %v", err)
+	}
+
+	return buf.String(), nil
+}
+
+// templateCache caches parsed templates to avoid re-parsing.
+var templateCache = make(map[string]*TemplateParser)
+var templateCacheMu struct{}
+
+// TemplateParser wraps a compiled template.
+type TemplateParser struct {
+	tmpl *template.Template
+}
+
+// parseTemplate compiles and caches a template.
+func parseTemplate(tmpl string) (*template.Template, error) {
+	// Simple caching: check if we've seen this exact template before
+	// Since Go doesn't have sync.Map in stdlib without imports, we'll use a simple map
+	// In production, use sync.Map. For now, re-parse each time (templates are small).
+	return template.New("").Funcs(template.FuncMap{
+		"backtick": func() string { return backtickChar },
+		"lower":    strings.ToLower,
+		"upper":    strings.ToUpper,
+	}).Parse(tmpl)
+}
+
+// extractPaths extracts file paths from the generated files list.
+func extractPaths(files []map[string]interface{}) []string {
+	var paths []string
+	for _, f := range files {
+		if p, ok := f["path"].(string); ok {
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }

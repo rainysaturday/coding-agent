@@ -1828,6 +1828,67 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "scaffold",
+				Description: "Generate code from built-in templates. Templates support variable substitution with Go template syntax. Available templates: go_struct, go_handler, go_service, python_class, python_dataclass, proto_message, openapi_schema, go_test",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"template": {
+							Type:        "string",
+							Description: "Template name to use (e.g., 'go_struct', 'go_handler', 'python_class', 'proto_message')",
+						},
+						"name": {
+							Type:        "string",
+							Description: "Name for the generated entity (struct, class, etc.)",
+						},
+						"package": {
+							Type:        "string",
+							Description: "Package name for Go templates or module name",
+						},
+						"description": {
+							Type:        "string",
+							Description: "Description of the generated entity",
+						},
+						"fields": {
+							Type:        "array",
+							Description: "Fields for the generated entity. Each field is an object with 'name', 'type', and optional 'json_tag' fields",
+						},
+						"method": {
+							Type:        "string",
+							Description: "HTTP method for go_handler template (GET, POST, etc.)",
+						},
+						"body": {
+							Type:        "string",
+							Description: "Custom method body for go_handler or go_service templates",
+						},
+						"request_type": {
+							Type:        "string",
+							Description: "Request type name for go_handler template",
+						},
+						"response_type": {
+							Type:        "string",
+							Description: "Response type name for go_handler template",
+						},
+						"method_name": {
+							Type:        "string",
+							Description: "Method name for go_service template",
+						},
+						"go_package": {
+							Type:        "string",
+							Description: "Full Go import path for proto_message template",
+						},
+						"plural_name": {
+							Type:        "string",
+							Description: "Plural name for openapi_schema template",
+						},
+					},
+					Required: []string{"template"},
+				},
+			},
+		},
 	}
 }
 

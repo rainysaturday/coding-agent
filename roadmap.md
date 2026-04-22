@@ -86,10 +86,13 @@
 - **#041: List Directory Tool** - List directory contents with metadata (file type, size, modification time), recursive mode, hidden files support
 - **#043: Delete File Tool** - Delete files from the filesystem with path validation and error handling
 
+### Code Scaffolding
+- **#044: Scaffold Tool** - Generate code from built-in templates with variable substitution. Templates: go_struct, go_handler, go_service, python_class, python_dataclass, proto_message, openapi_schema, go_test
+
 ### Upcoming Features
 
 _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**43 / 43 features implemented**
+**44 / 44 features implemented**
