@@ -35,7 +35,8 @@ type ToolCall struct {
 
 // ToolExecutor handles tool execution.
 type ToolExecutor struct {
-	stats *Stats
+	stats    *Stats
+	readOnly bool
 }
 
 // Stats holds tool execution statistics.
@@ -49,6 +50,12 @@ func NewToolExecutor() *ToolExecutor {
 	return &ToolExecutor{
 		stats: &Stats{},
 	}
+}
+
+// SetReadOnly sets whether the executor is in read-only mode.
+// In read-only mode, only read_file and list_files tools are allowed.
+func (te *ToolExecutor) SetReadOnly(readOnly bool) {
+	te.readOnly = readOnly
 }
 
 // Stats returns the current statistics.
@@ -102,6 +109,18 @@ func ParseToolCall(raw string) (*ToolCall, error) {
 func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 	te.stats.TotalCalls++
 
+	// Check if tool is allowed in read-only mode
+	if te.readOnly && !isReadOnlyTool(tc.Name) {
+		te.stats.FailedCalls++
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("Tool '%s' is not available in read-only mode", tc.Name),
+			Extra: map[string]interface{}{
+				"tool_name": tc.Name,
+			},
+		}
+	}
+
 	var result *ToolResult
 
 	switch tc.Name {
@@ -134,6 +153,11 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 	}
 
 	return result
+}
+
+// isReadOnlyTool checks if a tool is allowed in read-only mode.
+func isReadOnlyTool(name string) bool {
+	return name == "read_file" || name == "list_files"
 }
 
 // executeBash executes a bash command.

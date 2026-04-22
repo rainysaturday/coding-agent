@@ -126,6 +126,7 @@ func displayHelp() {
 	fmt.Println("      --api-key string       API key for authentication")
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
+	fmt.Println("      --read-only          Enable read-only mode (only read_file and list_files available)")
 	fmt.Println("      --output file        Write results to file")
 	fmt.Println("      --no-stream          Disable streaming output")
 	fmt.Println("  -h, --help               Show this help message")

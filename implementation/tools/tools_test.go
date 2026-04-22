@@ -1384,6 +1384,254 @@ func TestExecute_ListFiles_EntriesListedCount(t *testing.T) {
 		t.Errorf("Expected 3 entries listed, got %v", result.Extra["entriesListed"])
 	}
 }
+func TestToolExecutor_ReadOnly_BashBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo test",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected bash to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+	if result.Extra == nil || result.Extra["tool_name"] != "bash" {
+		t.Errorf("Expected tool_name in Extra, got: %v", result.Extra)
+	}
+}
+
+func TestToolExecutor_ReadOnly_WriteFileBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "write_file",
+		Parameters: map[string]interface{}{
+			"path":    "/tmp/test.txt",
+			"content": "test",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected write_file to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_ListFilesAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "list_files",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected list_files to succeed in read-only mode, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_ReadFileAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("content"), 0644)
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "read_file",
+		Parameters: map[string]interface{}{
+			"path": testFile,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected read_file to succeed in read-only mode, got: %s", result.Error)
+	}
+	if result.Output != "content" {
+		t.Errorf("Expected 'content', got: %s", result.Output)
+	}
+}
+
+func TestToolExecutor_ReadOnly_PatchBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "patch",
+		Parameters: map[string]interface{}{
+			"path": "/tmp/test.txt",
+			"diff": "--- a/test\n+++ b/test\n@@ -1 +1 @@\n-old\n+new\n",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected patch to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_InsertLinesBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "insert_lines",
+		Parameters: map[string]interface{}{
+			"path":  "/tmp/test.txt",
+			"line":  1.0,
+			"lines": "new line",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected insert_lines to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_ReplaceTextBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "replace_text",
+		Parameters: map[string]interface{}{
+			"path":    "/tmp/test.txt",
+			"search":  "old",
+			"replace": "new",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected replace_text to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_ReadLinesBlocked(t *testing.T) {
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "read_lines",
+		Parameters: map[string]interface{}{
+			"path":  "/tmp/test.txt",
+			"start": 1.0,
+			"end":   10.0,
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected read_lines to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	}
+}
+
+func TestToolExecutor_ReadOnly_Statistics(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("content"), 0644)
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	// Successful read operation
+	te.Execute(&ToolCall{
+		Name: "read_file",
+		Parameters: map[string]interface{}{
+			"path": testFile,
+		},
+	})
+
+	// Blocked write operation
+	te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo test",
+		},
+	})
+
+	// Another successful read operation
+	te.Execute(&ToolCall{
+		Name: "list_files",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+
+	stats := te.Stats()
+	if stats.TotalCalls != 3 {
+		t.Errorf("Expected 3 total calls, got %d", stats.TotalCalls)
+	}
+	if stats.FailedCalls != 1 {
+		t.Errorf("Expected 1 failed call, got %d", stats.FailedCalls)
+	}
+}
+
+func TestToolExecutor_ReadOnly_NotSet(t *testing.T) {
+	// When ReadOnly is not set (false), all tools should work normally
+	te := NewToolExecutor()
+	// Not setting SetReadOnly, so readOnly should be false by default
+
+	// Bash should work
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo test",
+		},
+	})
+
+	// Note: bash might succeed or fail depending on environment, but it shouldn't
+	// fail because of read-only mode
+	if result.Error != "" && strings.Contains(result.Error, "read-only") {
+		t.Errorf("bash should not be blocked when readOnly is not set, got: %s", result.Error)
+	}
+}
+
+func TestIsReadOnlyTool(t *testing.T) {
+	// Test allowed tools
+	allowedTools := []string{"read_file", "list_files"}
+	for _, tool := range allowedTools {
+		if !isReadOnlyTool(tool) {
+			t.Errorf("Expected isReadOnlyTool('%s') to return true", tool)
+		}
+	}
+
+	// Test blocked tools
+	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text", "read_lines"}
+	for _, tool := range blockedTools {
+		if isReadOnlyTool(tool) {
+			t.Errorf("Expected isReadOnlyTool('%s') to return false", tool)
+		}
+	}
+
+	// Test unknown tool
+	if isReadOnlyTool("unknown_tool") {
+		t.Error("Expected isReadOnlyTool('unknown_tool') to return false")
+	}
+}
 
 func TestExecute_ListFiles_MultipleFlags(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -18,6 +18,9 @@ type Config struct {
 	ShowVersion bool
 	ConfigFile  string
 
+	// Read-only mode
+	ReadOnly bool
+
 	// Inference settings
 	Model       string
 	Temperature *float64
@@ -194,6 +197,8 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.Verbose = true
 		case "--quiet":
 			cfg.Quiet = true
+		case "--read-only":
+			cfg.ReadOnly = true
 		case "--output":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--output requires an argument")
@@ -365,6 +370,10 @@ func loadEnv(cfg *Config) {
 	}
 	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
 		cfg.DebugLog = val
+	}
+	// Read-only mode can be enabled via environment variable
+	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
+		cfg.ReadOnly = val == "true" || val == "1"
 	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL

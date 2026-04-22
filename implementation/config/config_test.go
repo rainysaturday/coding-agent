@@ -1292,6 +1292,70 @@ func TestValidate_EmptyConfig(t *testing.T) {
 		t.Error("Expected error for empty config")
 	}
 }
+func TestParseArgs_ReadOnly(t *testing.T) {
+	// Test --read-only flag
+	cfg, err := ParseArgs([]string{"--read-only"})
+	if err != nil {
+		t.Fatalf("ParseArgs() error: %v", err)
+	}
+	if !cfg.ReadOnly {
+		t.Error("Expected ReadOnly to be true")
+	}
+}
+
+func TestParseArgs_ReadOnlyCombined(t *testing.T) {
+	// Test --read-only flag combined with other flags
+	cfg, err := ParseArgs([]string{"--read-only", "--prompt", "test prompt", "--model", "test-model"})
+	if err != nil {
+		t.Fatalf("ParseArgs() error: %v", err)
+	}
+	if !cfg.ReadOnly {
+		t.Error("Expected ReadOnly to be true")
+	}
+	if cfg.Prompt != "test prompt" {
+		t.Errorf("Expected Prompt 'test prompt', got '%s'", cfg.Prompt)
+	}
+	if cfg.Model != "test-model" {
+		t.Errorf("Expected Model 'test-model', got '%s'", cfg.Model)
+	}
+}
+
+func TestLoadEnv_ReadOnly(t *testing.T) {
+	os.Setenv("CODING_AGENT_READ_ONLY", "true")
+	defer os.Unsetenv("CODING_AGENT_READ_ONLY")
+
+	cfg := DefaultConfig()
+	loadEnv(cfg)
+
+	if !cfg.ReadOnly {
+		t.Error("Expected ReadOnly to be true")
+	}
+}
+
+func TestLoadEnv_ReadOnlyFalse(t *testing.T) {
+	os.Setenv("CODING_AGENT_READ_ONLY", "false")
+	defer os.Unsetenv("CODING_AGENT_READ_ONLY")
+
+	cfg := DefaultConfig()
+	cfg.ReadOnly = true // Set true, then env should override to false
+	loadEnv(cfg)
+
+	if cfg.ReadOnly {
+		t.Error("Expected ReadOnly to be false")
+	}
+}
+
+func TestLoadEnv_ReadOnlyOne(t *testing.T) {
+	os.Setenv("CODING_AGENT_READ_ONLY", "1")
+	defer os.Unsetenv("CODING_AGENT_READ_ONLY")
+
+	cfg := DefaultConfig()
+	loadEnv(cfg)
+
+	if !cfg.ReadOnly {
+		t.Error("Expected ReadOnly to be true")
+	}
+}
 
 func TestParseArgs_MultipleUnknownFlags(t *testing.T) {
 	_, err := ParseArgs([]string{"--unknown1", "--unknown2"})

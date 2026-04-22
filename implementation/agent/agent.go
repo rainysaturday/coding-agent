@@ -101,8 +101,11 @@ func NewAgent(cfg *config.Config) *Agent {
 		debugLogger:    debugLogger,
 	}
 
-	// Build system prompt
-	agent.systemPrompt = buildSystemPrompt()
+	// Build system prompt and tools based on read-only mode
+	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly)
+
+	// Set read-only mode on tool executor
+	agent.toolExecutor.SetReadOnly(cfg.ReadOnly)
 
 	// Log system prompt if debug is enabled
 	if agent.debugLogger != nil {
@@ -110,7 +113,18 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	// Register tools with inference client
-	agent.inference.SetTools(buildTools())
+	agent.inference.SetTools(buildTools(cfg.ReadOnly))
+
+	// Display read-only mode warning
+	if cfg.ReadOnly {
+		fmt.Fprintln(os.Stderr, "============================================================")
+		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
+		fmt.Fprintln(os.Stderr, "============================================================")
+		fmt.Fprintln(os.Stderr, "  Only read_file and list_files tools are available.")
+		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
+		fmt.Fprintln(os.Stderr, "============================================================")
+		fmt.Fprintln(os.Stderr)
+	}
 
 	return agent
 }
@@ -739,9 +753,14 @@ You can use the agent executable to spawn sub-agents for parallel tasks using th
 }
 
 // buildSystemPrompt builds the system prompt with tool definitions.
-func buildSystemPrompt() string {
+// When readOnly is true, only read-only tools are included.
+func buildSystemPrompt(readOnly bool) string {
 	// Get environment information
 	envInfo := getEnvironmentInfo()
+
+	if readOnly {
+		return buildReadOnlySystemPrompt(envInfo)
+	}
 
 	return fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
 
@@ -857,8 +876,54 @@ Verification Checklist:
 6. No unintended side effects or broken dependencies`, envInfo)
 }
 
+// buildReadOnlySystemPrompt builds a system prompt for read-only mode.
+func buildReadOnlySystemPrompt(envInfo string) string {
+	return fmt.Sprintf(`You are a helpful coding assistant operating in READ-ONLY MODE. You have access only to the following read-only tools.
+
+%s
+
+IMPORTANT: This session is in read-only mode. You can ONLY read files and list directories.
+You CANNOT modify, write, delete, execute, or make any changes to files or the system.
+
+TOOL CALLING FORMAT:
+- When you need to use a tool, the API will return a response containing tool calls
+- Execute each tool call and report the result back as a tool message
+- You do NOT need to construct JSON manually - the tool calling API handles the formatting
+- Each tool has specific parameters that must be provided (marked as "required")
+
+AVAILABLE TOOLS:
+
+1. read_file
+   Description: Read the contents of a file
+   Parameters:
+     - path (string, required): The path to the file to read
+   How to call: Use read_file to view the contents of any file.
+   Example use case: Reading source files, configuration files, documentation
+
+2. list_files
+   Description: List files and directories in a path, similar to the ls command
+   Parameters:
+     - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
+     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)
+   How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
+   Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
+
+
+TOOL CALLING BEST PRACTICES:
+1. Use read_file to view file contents when needed
+2. Use list_files to explore directory structure
+3. Remember: you cannot modify any files or execute commands
+
+NOTE: If the user asks you to write, modify, delete, or execute anything, explain that you are in read-only mode and cannot perform write operations.`, envInfo)
+}
+
 // buildTools builds the tool definitions for the OpenAI API.
-func buildTools() []inference.ToolDefinition {
+// When readOnly is true, only read-only tools (read_file, list_files) are returned.
+func buildTools(readOnly bool) []inference.ToolDefinition {
+	if readOnly {
+		return buildReadOnlyTools()
+	}
+
 	return []inference.ToolDefinition{
 		{
 			Type: "function",
@@ -1012,6 +1077,52 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "diff"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "list_files",
+				Description: "List files and directories in a path, similar to the ls command",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file or directory to list (defaults to current directory if not specified)",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// buildReadOnlyTools returns only the read-only tool definitions.
+func buildReadOnlyTools() []inference.ToolDefinition {
+	return []inference.ToolDefinition{
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "read_file",
+				Description: "Read the contents of a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to read",
+						},
+					},
+					Required: []string{"path"},
 				},
 			},
 		},

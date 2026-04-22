@@ -186,7 +186,7 @@ func TestAddAssistantMessage(t *testing.T) {
 }
 
 func TestBuildTools_AllToolsPresent(t *testing.T) {
-	tools := buildTools()
+	tools := buildTools(false)
 
 	expectedNames := []string{
 		"bash",
@@ -214,7 +214,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_Sections(t *testing.T) {
-	prompt := buildSystemPrompt()
+	prompt := buildSystemPrompt(false)
 
 	sections := []string{
 		"AVAILABLE TOOLS:",
@@ -237,7 +237,7 @@ func TestBuildSystemPrompt_Sections(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
-	prompt := buildSystemPrompt()
+	prompt := buildSystemPrompt(false)
 
 	toolDescriptions := []struct {
 		name        string
@@ -261,7 +261,7 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_IncludesEnvInfo(t *testing.T) {
-	prompt := buildSystemPrompt()
+	prompt := buildSystemPrompt(false)
 
 	// Should include environment information
 	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
@@ -671,7 +671,7 @@ func TestGetContextSize_AfterClear(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
-	prompt := buildSystemPrompt()
+	prompt := buildSystemPrompt(false)
 
 	// Count occurrences of key phrases
 	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch", "list_files"}
@@ -752,7 +752,7 @@ func TestFormatToolStatus_ReadLinesTruncation(t *testing.T) {
 }
 
 func TestBuildTools_Parameters(t *testing.T) {
-	toolDefs := buildTools()
+	toolDefs := buildTools(false)
 
 	expectedParams := map[string][]string{
 		"bash":         {"command"},
@@ -833,4 +833,71 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 	}
 }
 
+func TestBuildTools_ReadOnly(t *testing.T) {
+	tools := buildTools(true)
+
+	// In read-only mode, should only have read_file and list_files
+	expectedNames := []string{"read_file", "list_files"}
+
+	if len(tools) != len(expectedNames) {
+		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))
+	}
+
+	for _, expected := range expectedNames {
+		found := false
+		for _, tool := range tools {
+			if tool.Function.Name == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Tool '%s' not found in read-only buildTools()", expected)
+		}
+	}
+
+	// Verify that bash is NOT in read-only mode
+	for _, tool := range tools {
+		if tool.Function.Name == "bash" {
+			t.Error("bash should not be in read-only mode")
+		}
+		if tool.Function.Name == "write_file" {
+			t.Error("write_file should not be in read-only mode")
+		}
+	}
+}
+
+func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
+	prompt := buildSystemPrompt(true)
+
+	// Should mention read-only mode
+	if !strings.Contains(prompt, "READ-ONLY MODE") {
+		t.Error("Read-only system prompt should mention READ-ONLY MODE")
+	}
+
+	// Should only mention read_file and list_files
+	if !strings.Contains(prompt, "1. read_file") {
+		t.Error("Read-only system prompt should list read_file")
+	}
+	if !strings.Contains(prompt, "2. list_files") {
+		t.Error("Read-only system prompt should list list_files")
+	}
+
+	// Should NOT mention write tools
+	if strings.Contains(prompt, "bash") {
+		t.Error("Read-only system prompt should not mention bash")
+	}
+	if strings.Contains(prompt, "write_file") {
+		t.Error("Read-only system prompt should not mention write_file")
+	}
+}
+
+func TestBuildSystemPrompt_ReadOnlyNotices(t *testing.T) {
+	prompt := buildSystemPrompt(true)
+
+	// Should warn about limitations
+	if !strings.Contains(prompt, "CANNOT modify") && !strings.Contains(prompt, "CANNOT write") {
+		t.Error("Read-only system prompt should warn about not being able to modify/write")
+	}
+}
 
