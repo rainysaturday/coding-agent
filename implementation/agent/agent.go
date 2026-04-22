@@ -1736,6 +1736,16 @@ AVAILABLE TOOLS:
     How to call: Use http_request to test APIs, fetch resources, or make web requests. Supports all standard HTTP methods with full header and body control. Results include status code, headers, body, content type, and timing.
     Example use case: http_request(url='https://api.example.com/users', method='GET', headers={'Authorization': 'Bearer token'}), http_request(url='https://api.example.com/users', method='POST', body='{"name": "new user"}', content_type='application/json'), http_request(url='https://api.example.com/items/42', method='DELETE', expected_status=204)
 
+38. git_commit_msg
+    Description: Analyze git staged changes and generate a conventional commit message. Creates structured commit messages with type (feat/fix/docs/refactor/test/chore/ci/perf/revert), optional scope, subject line, and body based on the content of the diff.
+    Parameters:
+      - action (string, optional): Action to perform: 'generate' or 'suggest' (default: 'generate')
+      - max_diff_lines (integer, optional): Maximum number of diff lines to analyze (default: 300)
+      - convention (string, optional): Commit convention: 'conventional' (default), 'angular', 'simple'
+    How to call: Use git_commit_msg to generate descriptive commit messages from staged changes. The tool analyzes what changed and suggests an appropriate conventional commit message.
+    Example use case: git_commit_msg() to generate a message for all staged changes, git_commit_msg(max_diff_lines=500) to analyze more changes.
+    Note: Returns the generated commit message with type, scope, subject, body, and a confidence score. Use git_commit after reviewing and accepting the generated message.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -3418,6 +3428,31 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_commit_msg",
+				Description: "Analyze git staged changes and generate a conventional commit message. Generates a structured commit message with type, scope, subject, and body based on the content of staged diffs.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'generate' (analyze staged changes and create a message) or 'suggest' (same as generate, returns the message). Default: 'generate'",
+						},
+						"max_diff_lines": {
+							Type:        "integer",
+							Description: "Maximum number of diff lines to analyze (default: 300)",
+						},
+						"convention": {
+							Type:        "string",
+							Description: "Commit message convention: 'conventional' (default, type(scope): subject), 'angular' (same as conventional), 'simple' (subject only)",
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},

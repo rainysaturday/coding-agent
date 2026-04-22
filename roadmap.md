@@ -60,6 +60,7 @@
 - **#062: Git Merge Tool** - Unified merge management with five actions: merge (standard branch merge with target branch support), abort (cancel in-progress merge), status (check for merge conflicts), squash (squash merge all commits into one), and merge_pr (merge GitHub pull requests via API with merge/squash/rebase methods)
 - **#065: Git Revert Tool** - Revert git changes with five actions: list (recent commits), commit (revert a specific commit by hash creating undo commit), files (revert specific files to last committed state), soft_reset (soft reset to a commit keeping changes staged), and hard_reset (hard reset to a commit discarding all changes); branch protection for main/master; dry-run mode; safety checks for destructive operations
 - **#066: Git Rebase Tool** - Manage git rebases with six actions: list (show commits that would be rebased), start (begin rebase onto target branch/commit), continue (resume after conflicts), abort (cancel rebase and restore original branch), skip (skip current commit), and update (update rebase todo list for interactive rebase); supports keep-empty and allow-empty flags
+- **#074: Git Commit Message Generator** - Analyze git staged changes and generate conventional commit messages with type (feat/fix/docs/refactor/test/chore/ci), optional scope, subject line, and body; supports conventional, angular, and simple conventions
 
 ### Test Generation
 - **#068: Test Generator Tool** - Generate unit tests for source files with language auto-detection (Go, Python, JavaScript/TypeScript). Supports table-driven tests for Go, pytest-parametrized tests for Python, and Jest test suites for JS/TS. Uses only Go stdlib - zero external dependencies.
@@ -167,7 +168,7 @@
 
 ## Completed Feature Count
 
-**73 / 73 features implemented**
+**74 / 74 features implemented**
 
 ## Upcoming Features
 
