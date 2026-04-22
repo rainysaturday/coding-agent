@@ -1715,6 +1715,35 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "list_dir",
+				Description: "List directory contents with metadata including file type, size, and modification time. Supports recursive listing.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Directory path to list (default: current directory)",
+						},
+						"recursive": {
+							Type:        "boolean",
+							Description: "List directory contents recursively (default: false)",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum number of entries to return (default: 100)",
+						},
+						"show_hidden": {
+							Type:        "boolean",
+							Description: "Include hidden files (dotfiles) in output (default: false)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
 	}
 }
 

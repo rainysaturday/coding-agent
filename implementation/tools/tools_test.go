@@ -1880,3 +1880,148 @@ func TestExecute_GitCommit_Amend(t *testing.T) {
 		t.Error("Expected non-nil result")
 	}
 }
+
+func TestExecuteListDir_DefaultPath(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name:       "list_dir",
+		Parameters: map[string]interface{}{},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if result.Output == "" {
+		t.Error("Expected non-empty output")
+	}
+	if result.Extra == nil {
+		t.Fatal("Expected non-nil Extra map")
+	}
+	if result.Extra["directories"] == nil || result.Extra["files"] == nil {
+		t.Error("Expected directories and files counts in Extra")
+	}
+}
+
+func TestExecuteListDir_NonExistentPath(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path": "/nonexistent/path/that/does/not/exist",
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure for non-existent path")
+	}
+	if result.Error == "" {
+		t.Error("Expected error message for non-existent path")
+	}
+}
+
+func TestExecuteListDir_NotADirectory(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path": "go.mod", // This is a file, not a directory
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Success {
+		t.Error("Expected failure when listing a file as directory")
+	}
+	if result.Error == "" {
+		t.Error("Expected error message")
+	}
+}
+
+func TestExecuteListDir_WithMaxResults(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path":        ".",
+			"max_results": 3,
+		},
+	})
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if result.Extra == nil {
+		t.Fatal("Expected non-nil Extra map")
+	}
+	totalItems := result.Extra["total_items"]
+	if totalItems.(int) > 3 {
+		t.Errorf("Expected at most 3 items, got %d", totalItems.(int))
+	}
+}
+
+func TestExecuteListDir_HiddenFiles(t *testing.T) {
+	te := NewToolExecutor()
+	// Without show_hidden, dotfiles should be excluded
+	result1 := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path": ".",
+		},
+	})
+
+	// With show_hidden=true, dotfiles should be included
+	result2 := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path":        ".",
+			"show_hidden": true,
+		},
+	})
+
+	if result1 == nil || result2 == nil {
+		t.Fatal("Expected non-nil results")
+	}
+	if !result1.Success || !result2.Success {
+		t.Fatalf("Expected success for both calls")
+	}
+	// With show_hidden, we should see more items
+	total1 := result1.Extra["total_items"].(int)
+	total2 := result2.Extra["total_items"].(int)
+	if total2 <= total1 {
+		t.Logf("Note: show_hidden=%d vs hidden=%d (may be equal in this directory)", total2, total1)
+	}
+}
+
+func TestExecuteListDir_TypeField(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "list_dir",
+		Parameters: map[string]interface{}{
+			"path":        ".",
+			"max_results": 5,
+		},
+	})
+
+	if result == nil || !result.Success {
+		t.Fatal("Expected non-nil successful result")
+	}
+	// Output should contain type indicators
+	if !strings.Contains(result.Output, "TYPE") {
+		t.Error("Expected output to contain TYPE header")
+	}
+	if !strings.Contains(result.Output, "dir") && !strings.Contains(result.Output, "file") {
+		t.Error("Expected output to contain dir or file type indicators")
+	}
+}
+

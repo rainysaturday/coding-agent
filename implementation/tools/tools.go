@@ -147,6 +147,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeWebFetch(tc.Parameters)
 	case "move_file":
 		result = te.executeMoveFile(tc.Parameters)
+	case "list_dir":
+		result = te.executeListDir(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -2145,4 +2147,235 @@ func (te *ToolExecutor) executeMoveFile(params map[string]interface{}) *ToolResu
 			"operation":  "move",
 		},
 	}
+}
+
+// executeListDir lists directory contents with metadata.
+func (te *ToolExecutor) executeListDir(params map[string]interface{}) *ToolResult {
+	// Determine path (default: current directory)
+	path := "."
+	if p, ok := params["path"].(string); ok && p != "" {
+		path = p
+	}
+
+	// Determine recursive flag
+	recursive := false
+	if r, ok := params["recursive"].(bool); ok && r {
+		recursive = true
+	}
+
+	// Determine max results (default: 100)
+	maxResults := 100
+	if mr, ok := params["max_results"]; ok {
+		switch v := mr.(type) {
+		case float64:
+			maxResults = int(v)
+		case int:
+			maxResults = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxResults = n
+			}
+		}
+	}
+
+	// Determine show hidden flag (default: false)
+	showHidden := false
+	if sh, ok := params["show_hidden"].(bool); ok && sh {
+		showHidden = true
+	}
+
+	// Clean path and check it exists
+	cleanPath := filepath.Clean(path)
+
+	info, err := os.Stat(cleanPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot access directory '%s': %v", cleanPath, err),
+		}
+	}
+
+	if !info.IsDir() {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path is not a directory: %s", cleanPath),
+		}
+	}
+
+	// Collect entries
+	var entries []map[string]interface{}
+	var totalSize int64
+	var dirCount, fileCount int
+
+	if recursive {
+		err = filepath.Walk(cleanPath, func(walkPath string, fileInfo os.FileInfo, err error) error {
+			if err != nil {
+				return nil // Skip inaccessible paths
+			}
+
+			// Skip the root directory itself
+			if walkPath == cleanPath {
+				return nil
+			}
+
+			// Check hidden files/directories
+			baseName := filepath.Base(walkPath)
+			if !showHidden && strings.HasPrefix(baseName, ".") {
+				if fileInfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// Limit results
+			if len(entries) >= maxResults {
+				return filepath.SkipDir
+			}
+
+			// Calculate relative path
+			relPath, _ := filepath.Rel(cleanPath, walkPath)
+
+			entry := map[string]interface{}{
+				"name":         baseName,
+				"path":         relPath,
+				"type":         mapTypeName(fileInfo.IsDir(), fileInfo.Mode()),
+				"size":         fileInfo.Size(),
+				"modified":     fileInfo.ModTime().UTC().Format(time.RFC3339),
+			}
+			entries = append(entries, entry)
+
+			if fileInfo.IsDir() {
+				dirCount++
+			} else {
+				fileCount++
+				totalSize += fileInfo.Size()
+			}
+
+			return nil
+		})
+	} else {
+		dirEntries, err := os.ReadDir(cleanPath)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to read directory '%s': %v", cleanPath, err),
+			}
+		}
+
+		for _, dirEntry := range dirEntries {
+			// Skip hidden files unless explicitly requested
+			if !showHidden && strings.HasPrefix(dirEntry.Name(), ".") {
+				continue
+			}
+
+			// Limit results
+			if len(entries) >= maxResults {
+				break
+			}
+
+			info, err := dirEntry.Info()
+			if err != nil {
+				continue
+			}
+
+			entry := map[string]interface{}{
+				"name":     dirEntry.Name(),
+				"path":     dirEntry.Name(),
+				"type":     mapTypeName(dirEntry.IsDir(), info.Mode()),
+				"size":     info.Size(),
+				"modified": info.ModTime().UTC().Format(time.RFC3339),
+			}
+			entries = append(entries, entry)
+
+			if dirEntry.IsDir() {
+				dirCount++
+			} else {
+				fileCount++
+				totalSize += info.Size()
+			}
+		}
+	}
+
+	// Format output
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Directory: %s\n", cleanPath))
+	output.WriteString(fmt.Sprintf("%-40s %-10s %12s  %s\n", "NAME", "TYPE", "SIZE", "MODIFIED"))
+	output.WriteString(strings.Repeat("-", 80) + "\n")
+
+	for _, entry := range entries {
+		name := entry["name"].(string)
+		entryType := entry["type"].(string)
+		size := entry["size"].(int64)
+		modified := entry["modified"].(string)
+
+		sizeStr := formatFileSize(size)
+		truncName := name
+		if len(name) > 38 {
+			truncName = "…" + name[len(name)-35:]
+		}
+
+		output.WriteString(fmt.Sprintf("%-40s %-10s %12s  %s\n", truncName, entryType, sizeStr, modified))
+	}
+
+	if len(entries) >= maxResults {
+		output.WriteString(fmt.Sprintf("\n... (showing %d of %d+ entries, limited by max_results)\n", maxResults, maxResults+1))
+	}
+
+	// Build summary
+	result := &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"tool":        "list_dir",
+			"path":        cleanPath,
+			"recursive":   recursive,
+			"total_items": len(entries),
+			"directories": dirCount,
+			"files":       fileCount,
+			"total_size":  totalSize,
+		},
+	}
+
+	return result
+}
+
+// mapTypeName returns a string representation of the file type.
+func mapTypeName(isDir bool, mode os.FileMode) string {
+	if isDir {
+		return "dir"
+	}
+	if mode&os.ModeSymlink != 0 {
+		return "symlink"
+	}
+	if mode&os.ModeNamedPipe != 0 {
+		return "pipe"
+	}
+	if mode&os.ModeSocket != 0 {
+		return "socket"
+	}
+	if mode&os.ModeDevice != 0 {
+		if mode&os.ModeCharDevice != 0 {
+			return "char_device"
+		}
+		return "block_device"
+	}
+	return "file"
+}
+
+// formatFileSize formats a file size in bytes to a human-readable string.
+func formatFileSize(size int64) string {
+	const unit = 1024
+	if size == 0 {
+		return "0 B"
+	}
+	if size < 0 {
+		return fmt.Sprintf("%d B", size)
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	for size >= unit && i < len(units)-1 {
+		size /= unit
+		i++
+	}
+	return fmt.Sprintf("%d %s", size, units[i])
 }

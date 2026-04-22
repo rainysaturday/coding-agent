@@ -81,10 +81,13 @@
 ### File Management
 - **#040: Move File Tool** - Move or rename files within the filesystem, with directory creation support and path validation
 
+### Directory Management
+- **#041: List Directory Tool** - List directory contents with metadata (file type, size, modification time), recursive mode, hidden files support
+
 ## Upcoming Features
 
 _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**40 / 40 features implemented**
+**41 / 41 features implemented**

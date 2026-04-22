@@ -198,6 +198,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 		"replace_text",
 		"patch",
 		"replace_lines",
+		"list_dir",
 	}
 
 	for _, expected := range expectedNames {
@@ -1016,6 +1017,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"find":          {"pattern"},
 		"web_fetch":     {"url"},
 		"move_file":     {"source", "destination"},
+		"list_dir":      {},
 	}
 
 	for _, tool := range toolDefs {
