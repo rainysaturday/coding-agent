@@ -120,8 +120,11 @@
 ### Process Management
 - **#055: Process Management Tool** - Manage running processes and check system resources: process_list (list/filter processes), process_kill (kill by PID or name), port_check (check TCP/UDP ports), system_info (CPU/memory/disk usage).
 
+### Environment Variables
+- **#056: Environment Variable Manager Tool** - Read and manage environment variables with five actions: get (read a variable), set (set a variable), unset (remove a variable), list (list all or filtered variables), and source (load variables from a .env file). Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**55 / 55 features implemented**
+**56 / 56 features implemented**
 
 ## Upcoming Features

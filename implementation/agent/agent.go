@@ -1579,6 +1579,19 @@ AVAILABLE TOOLS:
     How to call: Use process_management when you need to manage running processes, check if ports are in use, or view system resource usage.
     Example use case: process_management(action='process_list', filter='python') to find Python processes, process_management(action='port_check', port=8080) to check if port 8080 is in use, process_management(action='system_info') to view CPU/memory/disk usage.
 
+30. env_var
+    Description: Manage environment variables. Supports five actions: get (read a variable), set (set a variable), unset (remove a variable), list (list all or filtered variables), and source (load variables from a .env file).
+    Parameters:
+      - action (string, required): Action to perform: 'get', 'set', 'unset', 'list', or 'source'
+      - name (string, optional): Environment variable name (required for get, set, unset)
+      - value (string, optional): Value to set (required for set)
+      - prefix (string, optional): Filter environment variables by prefix (for list)
+      - show_all (boolean, optional): Include empty/unset variables in list output (for list, default: false)
+      - path (string, optional): Path to .env file to source (required for source)
+      - overwrite (boolean, optional): Overwrite existing variables when sourcing .env file (for source, default: false)
+    How to call: Use env_var to read, set, or manage environment variables. Useful for configuring tools, checking configuration, or loading environment files.
+    Example use case: env_var(action='get', name='HOME') to read the HOME variable, env_var(action='set', name='MY_VAR', value='hello') to set a variable, env_var(action='list', prefix='GOPATH') to list GOPATH-related variables, env_var(action='source', path='.env', overwrite=true) to load a .env file.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2561,6 +2574,47 @@ func buildTools() []inference.ToolDefinition {
 						"format": {
 							Type:        "string",
 							Description: "Output format: 'short' or 'detailed' (for system_info, default: 'short')",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "env_var",
+				Description: "Manage environment variables. Supports five actions: get (read a variable), set (set a variable), unset (remove a variable), list (list all or filtered variables), and source (load variables from a .env file).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'get', 'set', 'unset', 'list', or 'source'",
+						},
+						"name": {
+							Type:        "string",
+							Description: "Environment variable name (required for get, set, unset)",
+						},
+						"value": {
+							Type:        "string",
+							Description: "Value to set (required for set)",
+						},
+						"prefix": {
+							Type:        "string",
+							Description: "Filter environment variables by prefix (for list)",
+						},
+						"show_all": {
+							Type:        "boolean",
+							Description: "Include empty/unset variables in list output (for list, default: false)",
+						},
+						"path": {
+							Type:        "string",
+							Description: "Path to .env file to source (required for source)",
+						},
+						"overwrite": {
+							Type:        "boolean",
+							Description: "Overwrite existing variables when sourcing .env file (for source, default: false)",
 						},
 					},
 					Required: []string{"action"},

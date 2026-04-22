@@ -182,6 +182,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeRunLint(tc.Parameters)
 	case "process_management":
 		result = te.executeProcessManagement(tc.Parameters)
+	case "env_var":
+		result = te.executeEnvVar(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -8519,4 +8521,306 @@ func intSliceToString(ints []int) []string {
 		strs[i] = strconv.Itoa(v)
 	}
 	return strs
+}
+
+// parseEnvFile parses a .env file and returns key-value pairs.
+// Supports KEY=VALUE, # comments, single and double quoted values.
+func parseEnvFile(content string) map[string]string {
+	result := make(map[string]string)
+	lines := strings.Split(content, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Find the first '=' sign
+		eqIdx := strings.Index(line, "=")
+		if eqIdx == -1 {
+			continue // Skip malformed lines
+		}
+
+		key := strings.TrimSpace(line[:eqIdx])
+		value := strings.TrimSpace(line[eqIdx+1:])
+
+		if key == "" {
+			continue // Skip lines with empty keys
+		}
+
+		// Remove surrounding quotes if present
+		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+			(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+			value = value[1 : len(value)-1]
+		}
+
+		result[key] = value
+	}
+
+	return result
+}
+
+// executeEnvVar manages environment variables with get, set, unset, list, and source actions.
+func (te *ToolExecutor) executeEnvVar(params map[string]interface{}) *ToolResult {
+	action, ok := params["action"].(string)
+	if !ok || action == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action (get, set, unset, list, source)",
+		}
+	}
+
+	switch action {
+	case "get":
+		return te.envVarGet(params)
+	case "set":
+		return te.envVarSet(params)
+	case "unset":
+		return te.envVarUnset(params)
+	case "list":
+		return te.envVarList(params)
+	case "source":
+		return te.envVarSource(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s (valid: get, set, unset, list, source)", action),
+		}
+	}
+}
+
+// envVarGet reads a specific environment variable.
+func (te *ToolExecutor) envVarGet(params map[string]interface{}) *ToolResult {
+	name, ok := params["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	value := os.Getenv(name)
+	if value == "" {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Environment variable '%s' is not set", name),
+			Extra: map[string]interface{}{
+				"action": "get",
+				"name":   name,
+				"set":    false,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("%s=%s", name, value),
+		Path:    name,
+		Extra: map[string]interface{}{
+			"action": "get",
+			"name":   name,
+			"value":  value,
+			"set":    true,
+		},
+	}
+}
+
+// envVarSet sets an environment variable for the current process.
+func (te *ToolExecutor) envVarSet(params map[string]interface{}) *ToolResult {
+	name, ok := params["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	value, ok := params["value"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: value",
+		}
+	}
+
+	os.Setenv(name, value)
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Set environment variable '%s' to '%s'", name, value),
+		Extra: map[string]interface{}{
+			"action": "set",
+			"name":   name,
+		},
+	}
+}
+
+// envVarUnset unsets an environment variable.
+func (te *ToolExecutor) envVarUnset(params map[string]interface{}) *ToolResult {
+	name, ok := params["name"].(string)
+	if !ok || name == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	os.Unsetenv(name)
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Unset environment variable '%s'", name),
+		Extra: map[string]interface{}{
+			"action": "unset",
+			"name":   name,
+		},
+	}
+}
+
+// envVarList lists environment variables with optional prefix filtering.
+func (te *ToolExecutor) envVarList(params map[string]interface{}) *ToolResult {
+	prefix, hasPrefix := params["prefix"].(string)
+	showAll, hasShowAll := params["show_all"].(bool)
+	// Also support string "true"/"false"
+	if !hasShowAll {
+		if s, ok := params["show_all"].(string); ok {
+			showAll = strings.EqualFold(s, "true")
+		}
+	}
+
+	var lines []string
+	count := 0
+
+	for _, env := range os.Environ() {
+		eqIdx := strings.Index(env, "=")
+		if eqIdx == -1 {
+			continue
+		}
+		name := env[:eqIdx]
+		value := env[eqIdx+1:]
+
+		// Apply prefix filter
+		if hasPrefix && prefix != "" && !strings.HasPrefix(name, prefix) {
+			continue
+		}
+
+		// Skip empty values unless show_all is true
+		if !showAll && value == "" {
+			continue
+		}
+
+		if value == "" {
+			lines = append(lines, fmt.Sprintf("  %s= (empty)", name))
+		} else if len(value) > 100 {
+			lines = append(lines, fmt.Sprintf("  %s=%s... (%d chars)", name, value[:100], len(value)))
+		} else {
+			lines = append(lines, fmt.Sprintf("  %s=%s", name, value))
+		}
+		count++
+	}
+
+	if len(lines) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  "No environment variables found",
+			Extra: map[string]interface{}{
+				"action":    "list",
+				"count":     0,
+				"hasPrefix": hasPrefix,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Found %d environment variable(s):\n\n%s", count, strings.Join(lines, "\n")),
+		Extra: map[string]interface{}{
+			"action":    "list",
+			"count":     count,
+			"hasPrefix": hasPrefix,
+		},
+	}
+}
+
+// envVarSource sources a .env file and loads its variables.
+func (te *ToolExecutor) envVarSource(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	overwrite, hasOverwrite := params["overwrite"].(bool)
+	if !hasOverwrite {
+		if s, ok := params["overwrite"].(string); ok {
+			overwrite = strings.EqualFold(s, "true")
+		}
+	}
+
+	// Read the .env file
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read .env file: %v", err),
+		}
+	}
+
+	// Parse the .env file
+	pairs := parseEnvFile(string(content))
+
+	if len(pairs) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("No variables found in %s", path),
+			Extra: map[string]interface{}{
+				"action":   "source",
+				"path":     path,
+				"loaded":   0,
+				"skipped":  0,
+			},
+		}
+	}
+
+	loaded := 0
+	skipped := 0
+	skippedVars := []string{}
+
+	for name, value := range pairs {
+		_, exists := os.LookupEnv(name)
+		if exists && !overwrite {
+			skipped++
+			skippedVars = append(skippedVars, name)
+			continue
+		}
+		os.Setenv(name, value)
+		loaded++
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Loaded %d variable(s) from %s", loaded, path))
+
+	if skipped > 0 {
+		output.WriteString(fmt.Sprintf(", skipped %d (already set): %s", skipped, strings.Join(skippedVars, ", ")))
+	} else if overwrite && skipped > 0 {
+		// Shouldn't happen, but just in case
+		output.WriteString(fmt.Sprintf(", overwrote %d existing variable(s)", skipped))
+	}
+
+	output.WriteString("\n")
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"action":  "source",
+			"path":    path,
+			"loaded":  loaded,
+			"skipped": skipped,
+		},
+	}
 }
