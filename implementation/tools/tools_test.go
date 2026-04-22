@@ -1658,6 +1658,7 @@ func TestMatchGlob_PrefixPattern(t *testing.T) {
 		}
 	}
 }
+
 // --- Sub-Agent Tool Tests ---
 
 func TestExecute_SubAgent_MissingPrompt(t *testing.T) {
@@ -1727,8 +1728,8 @@ func TestExecute_SubAgent_ExecuteSuccess(t *testing.T) {
 	result := te.Execute(&ToolCall{
 		Name: "sub_agent",
 		Parameters: map[string]interface{}{
-			"prompt":    "echo hello from sub-agent",
-			"timeout":   10,
+			"prompt":  "echo hello from sub-agent",
+			"timeout": 10,
 		},
 	})
 	// The sub-agent should run in one-shot mode and return the result of the echo command
@@ -1801,8 +1802,8 @@ func TestExecute_SubAgent_Stats(t *testing.T) {
 		te.Execute(&ToolCall{
 			Name: "sub_agent",
 			Parameters: map[string]interface{}{
-				"prompt":    "true",
-				"timeout":   10,
+				"prompt":  "true",
+				"timeout": 10,
 			},
 		})
 	}

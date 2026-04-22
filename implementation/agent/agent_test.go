@@ -1007,6 +1007,11 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"replace_lines": {"path"},
 		"glob":          {"pattern"},
 		"sub_agent":     {"prompt"},
+		"git_status":    {},
+		"git_diff":      {},
+		"git_log":       {},
+		"git_show":      {"path"},
+		"git_add":       {},
 	}
 
 	for _, tool := range toolDefs {

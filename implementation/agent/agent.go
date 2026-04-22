@@ -384,10 +384,10 @@ func (a *Agent) ClearContext() {
 
 // SessionData represents a saved conversation session.
 type SessionData struct {
-	SystemPrompt string              `json:"system_prompt"`
-	Messages     []*inference.Message `json:"messages"`
-	Stats        *Stats              `json:"stats"`
-	Timestamp    string              `json:"timestamp"`
+	SystemPrompt string                     `json:"system_prompt"`
+	Messages     []*inference.Message       `json:"messages"`
+	Stats        *Stats                     `json:"stats"`
+	Timestamp    string                     `json:"timestamp"`
 	ToolDefs     []inference.ToolDefinition `json:"tool_definitions,omitempty"`
 }
 
@@ -699,6 +699,48 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Sub-agent] task: %s%s\n", ColorCyan, prompt, ColorReset)
+	case "git_status":
+		format := ""
+		if f, ok := params["format"].(string); ok {
+			format = f
+		}
+		msg = fmt.Sprintf("\n%s[Git] status (format: %s)%s\n", ColorCyan, format, ColorReset)
+	case "git_diff":
+		staged := false
+		if s, ok := params["staged"].(bool); ok && s {
+			staged = true
+		}
+		file := ""
+		if f, ok := params["file"].(string); ok && f != "" {
+			file = " file: " + f
+		}
+		mode := "unstaged"
+		if staged {
+			mode = "staged"
+		}
+		msg = fmt.Sprintf("\n%s[Git] diff (%s)%s%s\n", ColorCyan, mode, file, ColorReset)
+	case "git_log":
+		branches := ""
+		if b, ok := params["branches"]; ok {
+			branches = fmt.Sprintf("%v", b)
+		}
+		maxCount := 20
+		if mc, ok := params["max_count"].(float64); ok {
+			maxCount = int(mc)
+		}
+		msg = fmt.Sprintf("\n%s[Git] log (%d commits, branches: %s)%s\n", ColorCyan, maxCount, branches, ColorReset)
+	case "git_show":
+		ref := "HEAD"
+		if r, ok := params["ref"].(string); ok {
+			ref = r
+		}
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Git] show %s:%s%s\n", ColorCyan, ref, path, ColorReset)
+	case "git_add":
+		msg = fmt.Sprintf("\n%s[Git] add (staging files)%s\n", ColorCyan, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -846,6 +888,90 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				return fmt.Sprintf("%s[Success] sub-agent completed (exit code: %d)\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
 			}
 			return fmt.Sprintf("%s[Success] sub-agent completed (exit code: %d)%s\n", ColorGreen, exitCode, ColorReset)
+		case "git_status":
+			staged := 0
+			unstaged := 0
+			untracked := 0
+			if s, ok := result.Extra["stagedFiles"].(int); ok {
+				staged = s
+			}
+			if u, ok := result.Extra["unstagedFiles"].(int); ok {
+				unstaged = u
+			}
+			if u, ok := result.Extra["untrackedFiles"].(int); ok {
+				untracked = u
+			}
+			parts := []string{}
+			if staged > 0 {
+				parts = append(parts, fmt.Sprintf("%d staged", staged))
+			}
+			if unstaged > 0 {
+				parts = append(parts, fmt.Sprintf("%d unstaged", unstaged))
+			}
+			if untracked > 0 {
+				parts = append(parts, fmt.Sprintf("%d untracked", untracked))
+			}
+			status := "no changes"
+			if len(parts) > 0 {
+				status = strings.Join(parts, ", ")
+			}
+			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, status, ColorReset)
+		case "git_diff":
+			changedFiles := 0
+			linesAdded := 0
+			linesDeleted := 0
+			if cf, ok := result.Extra["changedFiles"].(int); ok {
+				changedFiles = cf
+			}
+			if la, ok := result.Extra["linesAdded"].(int); ok {
+				linesAdded = la
+			}
+			if ld, ok := result.Extra["linesDeleted"].(int); ok {
+				linesDeleted = ld
+			}
+			staged := ""
+			if result.Extra["staged"] == true {
+				staged = " (staged)"
+			}
+			return fmt.Sprintf("%s[Success] %d file(s) changed, +%d -%d%s%s\n", ColorGreen, changedFiles, linesAdded, linesDeleted, staged, ColorReset)
+		case "git_log":
+			commitCount := 0
+			if cc, ok := result.Extra["commitCount"].(int); ok {
+				commitCount = cc
+			}
+			branches := ""
+			if b, ok := result.Extra["branches"].([]string); ok {
+				branches = " " + strings.Join(b, ", ")
+			}
+			return fmt.Sprintf("%s[Success] %d commit(s) on branch(es)%s%s\n", ColorGreen, commitCount, branches, ColorReset)
+		case "git_show":
+			path := ""
+			if p, ok := result.Extra["path"].(string); ok {
+				path = p
+			}
+			ref := "HEAD"
+			if r, ok := result.Extra["ref"].(string); ok {
+				ref = r
+			}
+			contentLen := 0
+			if cl, ok := result.Extra["contentLen"].(int); ok {
+				contentLen = cl
+			}
+			return fmt.Sprintf("%s[Success] showed %s:%s (%d bytes)%s\n", ColorGreen, ref, path, contentLen, ColorReset)
+		case "git_add":
+			mode := ""
+			if m, ok := result.Extra["mode"].(string); ok {
+				if m == "update" {
+					mode = "all tracked modified files"
+				} else {
+					files := []string{}
+					if fs, ok := result.Extra["files"].([]string); ok {
+						files = fs
+					}
+					mode = strings.Join(files, ", ")
+				}
+			}
+			return fmt.Sprintf("%s[Success] staged %s%s\n", ColorGreen, mode, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1003,6 +1129,48 @@ AVAILABLE TOOLS:
     How to call: Use sub_agent when a task can be delegated to a parallel agent. This is useful for multi-step tasks where parts can be worked on independently.
     Example use case: Deletting code review of a specific file, researching a specific topic, or generating code for a separate module.
     Note: The sub-agent runs with the same working directory and has access to the same tools (bash, read_file, write_file, etc.).
+
+11. git_status
+    Description: Check the git status of the repository, showing staged, unstaged, and untracked files.
+    Parameters:
+      - format (string, optional): Output format - 'short', 'long', 'porcelain' (default: short)
+      - include_untracked (boolean, optional): Include untracked files (default: true)
+    How to call: Use git_status to check what changes exist in the working directory before making or committing changes.
+    Example use case: Checking which files have been modified before committing, verifying staged changes
+
+12. git_diff
+    Description: Show changes between commits, commit and working tree, etc. Shows unstaged changes by default.
+    Parameters:
+      - staged (boolean, optional): Show staged changes instead of unstaged (default: false)
+      - file (string, optional): Show diff for a specific file
+      - max_lines (integer, optional): Maximum output lines (default: 200)
+    How to call: Use git_diff to review changes before committing, or to verify specific file changes.
+    Example use case: Reviewing unstaged changes, checking what's staged for commit, viewing changes to a specific file
+
+13. git_log
+    Description: Show commit history with subject, body, author, and date information.
+    Parameters:
+      - branches (array, optional): Branch names to show (default: HEAD)
+      - max_count (integer, optional): Maximum commits to show (default: 20)
+      - format (string, optional): 'short', 'medium', 'full', 'fuller', 'raw', 'oneline' (default: medium)
+    How to call: Use git_log to review recent commits, understand project history, or find a specific commit.
+    Example use case: Checking recent commit history, finding when a bug was introduced
+
+14. git_show
+    Description: Show the contents of a file at a specific git ref (commit, branch, tag, or HEAD).
+    Parameters:
+      - ref (string, optional): Git reference (commit hash, branch, tag, HEAD) (default: HEAD)
+      - path (string, required): Path to the file in the repository
+      - max_lines (integer, optional): Maximum output lines (default: 200)
+    How to call: Use git_show to view file content at a previous commit, compare versions, or view a file from a branch.
+    Example use case: Viewing how a file looked before recent changes, comparing HEAD to a branch
+
+15. git_add
+    Description: Stage files for commit. Can stage specific files or all tracked modified files.
+    Parameters:
+      - files (array, optional): List of file paths to stage. If omitted, stages all tracked modified files.
+    How to call: Use git_add to stage files before committing. Without arguments, stages all tracked modified files.
+    Example use case: Staging specific files for commit, staging all changes after reviewing them
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1269,6 +1437,119 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"prompt"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_status",
+				Description: "Check the git status of the repository (staged, unstaged, and untracked files)",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"format": {
+							Type:        "string",
+							Description: "Output format: 'short', 'long', 'porcelain', or 'porcelain=v2' (default: short)",
+						},
+						"include_untracked": {
+							Type:        "boolean",
+							Description: "Include untracked files in output (default: true)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_diff",
+				Description: "Show changes between commits, commit and working tree, etc. Can show staged (--staged=true) or unstaged changes",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"staged": {
+							Type:        "boolean",
+							Description: "Show staged changes (git diff --cached). Default: false (shows unstaged changes)",
+						},
+						"file": {
+							Type:        "string",
+							Description: "Show diff for a specific file path",
+						},
+						"max_lines": {
+							Type:        "integer",
+							Description: "Maximum number of output lines to return (default: 200)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_log",
+				Description: "Show commit history with optional branch and count filters",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"branches": {
+							Type:        "array",
+							Description: "Branch names to show log for (default: ['HEAD'])",
+						},
+						"max_count": {
+							Type:        "integer",
+							Description: "Maximum number of commits to show (default: 20)",
+						},
+						"format": {
+							Type:        "string",
+							Description: "Output format: 'short', 'medium', 'full', 'fuller', 'raw', 'oneline' (default: medium)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_show",
+				Description: "Show the contents of a file at a specific commit/ref in git",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"ref": {
+							Type:        "string",
+							Description: "Git ref (commit hash, branch name, tag, or HEAD) (default: HEAD)",
+						},
+						"path": {
+							Type:        "string",
+							Description: "Path to the file within the repository",
+						},
+						"max_lines": {
+							Type:        "integer",
+							Description: "Maximum number of output lines to return (default: 200)",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_add",
+				Description: "Stage files for commit. Can stage specific files or all tracked modified files",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"files": {
+							Type:        "array",
+							Description: "List of file paths to stage. If not provided, stages all tracked modified files (git add -u)",
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},

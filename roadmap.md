@@ -42,6 +42,14 @@
 - **#032: Replace Lines Tool** - Replace lines by number or search-and-replace
 - **#035: Sub-Agent Tool** - Spawn parallel sub-agents with `-p "prompt"` for delegated tasks, configurable timeout
 
+### Git Tools
+- **#036: Git Integration Tool** - Five git tools for repository interaction:
+  - `git_status` - Check staged, unstaged, and untracked files
+  - `git_diff` - View staged/unstaged diffs with per-file support
+  - `git_log` - View commit history with branch and count filters
+  - `git_show` - View file content at specific git refs
+  - `git_add` - Stage specific files or all tracked modified files
+
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
 - **#015: Tool Prefix Prompt** - Tool definitions in system prompt
@@ -69,4 +77,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**35 / 35 features implemented**
+**36 / 36 features implemented**

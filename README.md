@@ -357,7 +357,7 @@ Error: maximum iterations (1000) exceeded
 
 ## License
 
-
+This project is licensed under the [GNU General Public License v2](LICENSE).
 
 ## Contributing
 

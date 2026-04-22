@@ -125,6 +125,16 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGlob(tc.Parameters)
 	case "sub_agent":
 		result = te.executeSubAgent(tc.Parameters)
+	case "git_status":
+		result = te.executeGitStatus(tc.Parameters)
+	case "git_diff":
+		result = te.executeGitDiff(tc.Parameters)
+	case "git_log":
+		result = te.executeGitLog(tc.Parameters)
+	case "git_show":
+		result = te.executeGitShow(tc.Parameters)
+	case "git_add":
+		result = te.executeGitAdd(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -1239,6 +1249,394 @@ func (te *ToolExecutor) globRecursive(pattern string, maxResults int) ([]string,
 	})
 
 	return matches, err
+}
+
+// executeGitStatus checks git status of the working directory.
+func (te *ToolExecutor) executeGitStatus(params map[string]interface{}) *ToolResult {
+	// Default to short format
+	format := "short"
+	if f, ok := params["format"].(string); ok {
+		format = f
+	}
+
+	args := []string{"status"}
+	switch format {
+	case "short":
+		args = append(args, "--short")
+	case "porcelain", "porcelain=v2":
+		args = append(args, "--porcelain")
+	case "long":
+		args = append(args, "--long")
+	}
+
+	// Only include untracked files if explicitly requested (default: include)
+	if only, ok := params["include_untracked"].(bool); ok && !only {
+		args = append(args, "--untracked-files=no")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git status failed: %s", string(output)),
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool": "git_status",
+		},
+	}
+
+	// Parse short output to provide summary
+	if format == "short" {
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		staged := 0
+		unstaged := 0
+		untracked := 0
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			if len(line) >= 2 {
+				idxStatus := line[0]
+				wtStatus := line[1]
+				if idxStatus != ' ' {
+					staged++
+				}
+				if wtStatus != ' ' && idxStatus != '?' {
+					unstaged++
+				}
+				if idxStatus == '?' {
+					untracked++
+				}
+			}
+		}
+		result.Extra["stagedFiles"] = staged
+		result.Extra["unstagedFiles"] = unstaged
+		result.Extra["untrackedFiles"] = untracked
+	}
+
+	return result
+}
+
+// executeGitDiff shows the diff of changes (staged or unstaged).
+func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResult {
+	// Determine what to show: staged, unstaged, or specific file
+	showStaged := false
+	if s, ok := params["staged"].(bool); ok && s {
+		showStaged = true
+	}
+
+	// If a specific file is provided, show diff for that file
+	file, hasFile := params["file"].(string)
+
+	args := []string{"diff"}
+	if showStaged {
+		args = append(args, "--cached")
+	}
+	if !showStaged && hasFile {
+		// For unstaged diff of a specific file
+		args = append(args, file)
+	} else if showStaged && hasFile {
+		args = append(args, "--", file)
+	}
+
+	// Limit output size to avoid overwhelming the context
+	maxLinesParam, hasMaxLines := params["max_lines"]
+	maxLines := 200 // Default limit
+	if hasMaxLines {
+		switch v := maxLinesParam.(type) {
+		case float64:
+			maxLines = int(v)
+		case int:
+			maxLines = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				maxLines = n
+			}
+		}
+	}
+
+	// Add number flag for line context
+	args = append(args, "-U3")
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git diff failed: %s", string(output)),
+		}
+	}
+
+	// Truncate output if too long
+	outputStr := string(output)
+	if maxLines > 0 {
+		lines := strings.Split(outputStr, "\n")
+		if len(lines) > maxLines {
+			outputStr = strings.Join(lines[:maxLines], "\n") + "\n... [output truncated, " + strconv.Itoa(len(lines)-maxLines) + " more lines]"
+		}
+	}
+
+	// Count changed files and lines
+	changedFiles := 0
+	addedLines := 0
+	deletedLines := 0
+	for _, line := range strings.Split(outputStr, "\n") {
+		if strings.HasPrefix(line, "diff --git") {
+			changedFiles++
+		}
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			addedLines++
+		}
+		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			deletedLines++
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  outputStr,
+		Extra: map[string]interface{}{
+			"tool":         "git_diff",
+			"staged":       showStaged,
+			"changedFiles": changedFiles,
+			"linesAdded":   addedLines,
+			"linesDeleted": deletedLines,
+		},
+	}
+
+	if hasFile {
+		result.Extra["file"] = file
+	}
+
+	return result
+}
+
+// executeGitLog shows commit history.
+func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult {
+	// Default options
+	branches := []string{"HEAD"}
+	maxCount := 20
+	pretty := "medium" // medium = subject, body, author, date
+
+	if b, ok := params["branches"].([]interface{}); ok {
+		branches = make([]string, len(b))
+		for i, br := range b {
+			branches[i] = fmt.Sprintf("%v", br)
+		}
+	} else if b, ok := params["branch"].(string); ok && b != "" {
+		branches = []string{b}
+	} else if b, ok := params["branches"].(string); ok && b != "" {
+		branches = []string{b}
+	}
+
+	if c, ok := params["max_count"].(float64); ok {
+		maxCount = int(c)
+	} else if c, ok := params["max_count"].(int); ok {
+		maxCount = c
+	} else if c, ok := params["max_count"].(string); ok {
+		if n, err := strconv.Atoi(c); err == nil {
+			maxCount = n
+		}
+	}
+
+	if p, ok := params["format"].(string); ok {
+		switch p {
+		case "short":
+			pretty = "short"
+		case "full":
+			pretty = "full"
+		case "fuller":
+			pretty = "fuller"
+		case "raw":
+			pretty = "raw"
+		case "oneline":
+			pretty = "oneline"
+		default:
+			pretty = p
+		}
+	}
+
+	args := []string{"log", fmt.Sprintf("--%s", pretty), fmt.Sprintf("-n%d", maxCount)}
+	// Add separator between branches
+	args = append(args, "--")
+	args = append(args, branches...)
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git log failed: %s", string(output)),
+		}
+	}
+
+	// Truncate if too long
+	outputStr := string(output)
+	maxLines := 100
+	lines := strings.Split(outputStr, "\n")
+	if len(lines) > maxLines {
+		outputStr = strings.Join(lines[:maxLines], "\n") + "\n... [output truncated]"
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  outputStr,
+		Extra: map[string]interface{}{
+			"tool":        "git_log",
+			"maxCount":    maxCount,
+			"branches":    branches,
+			"commitCount": strings.Count(outputStr, "commit "),
+		},
+	}
+
+	return result
+}
+
+// executeGitShow shows file content at a specific commit/ref.
+func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResult {
+	ref, hasRef := params["ref"].(string)
+	if !hasRef {
+		ref = "HEAD"
+	}
+
+	path, hasPath := params["path"].(string)
+	if !hasPath {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	maxLines := 200
+	if ml, ok := params["max_lines"].(float64); ok {
+		maxLines = int(ml)
+	} else if ml, ok := params["max_lines"].(int); ok {
+		maxLines = ml
+	} else if ml, ok := params["max_lines"].(string); ok {
+		if n, err := strconv.Atoi(ml); err == nil {
+			maxLines = n
+		}
+	}
+
+	args := []string{"show", fmt.Sprintf("%s:%s", ref, path)}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git show failed: %s", string(output)),
+		}
+	}
+
+	// Truncate if too long
+	outputStr := string(output)
+	lines := strings.Split(outputStr, "\n")
+	if len(lines) > maxLines {
+		outputStr = strings.Join(lines[:maxLines], "\n") + "\n... [output truncated, " + strconv.Itoa(len(lines)-maxLines) + " more lines]"
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  outputStr,
+		Path:    path,
+		Extra: map[string]interface{}{
+			"tool":       "git_show",
+			"ref":        ref,
+			"path":       path,
+			"contentLen": len(outputStr),
+		},
+	}
+
+	return result
+}
+
+// executeGitAdd stages files for commit.
+func (te *ToolExecutor) executeGitAdd(params map[string]interface{}) *ToolResult {
+	filesParam, hasFiles := params["files"]
+
+	var files []string
+	if hasFiles {
+		switch v := filesParam.(type) {
+		case []interface{}:
+			files = make([]string, len(v))
+			for i, f := range v {
+				files[i] = fmt.Sprintf("%v", f)
+			}
+		case string:
+			// Single file or comma-separated
+			if strings.Contains(v, ",") {
+				for _, f := range strings.Split(v, ",") {
+					files = append(files, strings.TrimSpace(f))
+				}
+			} else {
+				files = []string{v}
+			}
+		}
+	}
+
+	if !hasFiles {
+		// Stage all modified files (but not untracked)
+		args := []string{"add", "-u"}
+		cmd := exec.Command("git", args...)
+		output, err := cmd.CombinedOutput()
+
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("git add -u failed: %s", string(output)),
+			}
+		}
+
+		return &ToolResult{
+			Success: true,
+			Output:  "Staged all tracked modified files",
+			Extra: map[string]interface{}{
+				"tool":     "git_add",
+				"mode":     "update",
+				"files":    []string{},
+				"message":  "Staged all tracked modified files",
+			},
+		}
+	}
+
+	if len(files) == 0 {
+		return &ToolResult{
+			Success: false,
+			Error:   "no files to stage",
+		}
+	}
+
+	args := append([]string{"add"}, files...)
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git add failed: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Staged %d file(s): %s", len(files), strings.Join(files, ", ")),
+		Extra: map[string]interface{}{
+			"tool":    "git_add",
+			"mode":    "specific",
+			"files":   files,
+			"message": fmt.Sprintf("Staged %d file(s)", len(files)),
+		},
+	}
 }
 
 // matchGlob checks if a path matches a glob pattern.
