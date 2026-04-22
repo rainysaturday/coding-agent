@@ -170,6 +170,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCheckLinks(tc.Parameters)
 	case "git_stash":
 		result = te.executeGitStash(tc.Parameters)
+	case "json_transformer":
+		result = te.executeJsonTransformer(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -5509,6 +5511,869 @@ func (te *ToolExecutor) gitStashDrop(params map[string]interface{}) *ToolResult 
 			"action":   "drop",
 			"stashRef": stashRef,
 			"message":  fmt.Sprintf("Dropped stash %s", stashRef),
+		},
+	}
+}
+
+// jsonPathSegment represents a segment in a JSON path.
+type jsonPathSegment struct {
+	Key     string
+	Index   int
+	HasIndex bool
+}
+
+// parseJSONPath parses a JSON path string into segments.
+// Supports dot notation like ".foo.bar" and bracket notation like "foo.bar[0]".
+func parseJSONPath(path string) ([]jsonPathSegment, error) {
+	if path == "" || path == "." {
+		return nil, nil
+	}
+
+	// Remove leading dot
+	path = strings.TrimPrefix(path, ".")
+
+	var segments []jsonPathSegment
+	remaining := path
+
+	for remaining != "" {
+		// Find the next dot or bracket
+		nextDot := strings.Index(remaining, ".")
+		nextBracket := strings.Index(remaining, "[")
+
+		var key string
+		var remainder string
+
+		if nextBracket >= 0 && (nextDot == -1 || nextBracket < nextDot) {
+			// Bracket comes first
+			key = remaining[:nextBracket]
+			// Find closing bracket
+			closeBracket := strings.Index(remaining, "]")
+			if closeBracket == -1 {
+				return nil, fmt.Errorf("unmatched bracket in path")
+			}
+			indexStr := remaining[nextBracket+1 : closeBracket]
+			index, err := strconv.Atoi(indexStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid array index in path: %s", indexStr)
+			}
+			segments = append(segments, jsonPathSegment{
+				Key:      key,
+				Index:    index,
+				HasIndex: true,
+			})
+			remainder = remaining[closeBracket+1:]
+		} else if nextDot >= 0 {
+			key = remaining[:nextDot]
+			remainder = remaining[nextDot+1:]
+			segments = append(segments, jsonPathSegment{
+				Key:  key,
+				HasIndex: false,
+			})
+		} else {
+			// Rest is just a key
+			key = remaining
+			segments = append(segments, jsonPathSegment{
+				Key:      key,
+				HasIndex: false,
+			})
+			remainder = ""
+		}
+		remaining = remainder
+	}
+
+	return segments, nil
+}
+
+// resolvePath resolves a JSON path on a JSON value and returns the value at that path.
+func resolvePath(value interface{}, segments []jsonPathSegment) (interface{}, error) {
+	if len(segments) == 0 {
+		return value, nil
+	}
+
+	current := value
+	for i, seg := range segments {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			key := seg.Key
+			if seg.HasIndex {
+				// Array index on a map key - this shouldn't happen in normal paths
+				// but handle it: first get the map value, then index into it
+				if child, ok := v[key]; ok {
+					if arr, ok := child.([]interface{}); ok {
+						current = resolveArrayIndex(arr, seg.Index)
+					} else {
+						current = nil
+					}
+					if current == nil {
+						return nil, fmt.Errorf("path not found at segment %d: %s", i, key)
+					}
+				} else {
+					return nil, fmt.Errorf("path not found: key '%s' does not exist", key)
+				}
+			} else {
+				if child, ok := v[key]; ok {
+					current = child
+				} else {
+					return nil, fmt.Errorf("path not found: key '%s' does not exist", key)
+				}
+			}
+		case []interface{}:
+			if seg.HasIndex {
+				current = resolveArrayIndex(v, seg.Index)
+				if current == nil {
+					return nil, fmt.Errorf("path not found: array index %d out of bounds", seg.Index)
+				}
+			} else {
+				// Array key is unusual - treat as index 0
+				if idx, err := strconv.Atoi(seg.Key); err == nil {
+					current = resolveArrayIndex(v, idx)
+					if current == nil {
+						return nil, fmt.Errorf("path not found: array index %d out of bounds", idx)
+					}
+				} else {
+					return nil, fmt.Errorf("invalid array access: key '%s' is not a valid index", seg.Key)
+				}
+			}
+		default:
+			return nil, fmt.Errorf("cannot access field '%s' on %T", seg.Key, current)
+		}
+	}
+	return current, nil
+}
+
+// resolveArrayIndex safely resolves an index into an array.
+func resolveArrayIndex(arr []interface{}, index int) interface{} {
+	if index < 0 || index >= len(arr) {
+		return nil
+	}
+	return arr[index]
+}
+
+// setValueAtPath sets a value at a specific JSON path.
+func setValueAtPath(value interface{}, segments []jsonPathSegment, newValue interface{}) (interface{}, error) {
+	if len(segments) == 0 {
+		return newValue, nil
+	}
+
+	current := value
+
+	// Navigate to the parent of the target
+	for i := 0; i < len(segments)-1; i++ {
+		seg := segments[i]
+		switch v := current.(type) {
+		case map[string]interface{}:
+			if child, ok := v[seg.Key]; ok {
+				current = child
+			} else {
+				// Create intermediate object
+				newChild := make(map[string]interface{})
+				v[seg.Key] = newChild
+				current = newChild
+			}
+		case []interface{}:
+			idx := seg.Index
+			if idx < 0 || idx >= len(v) {
+				return nil, fmt.Errorf("array index %d out of bounds", idx)
+			}
+			current = v[idx]
+		default:
+			return nil, fmt.Errorf("cannot navigate into %T", current)
+		}
+	}
+
+	// Set the final segment
+	lastSeg := segments[len(segments)-1]
+	switch v := current.(type) {
+	case map[string]interface{}:
+		v[lastSeg.Key] = newValue
+	case []interface{}:
+		idx := lastSeg.Index
+		if idx < 0 || idx >= len(v) {
+			return nil, fmt.Errorf("array index %d out of bounds", idx)
+		}
+		v[idx] = newValue
+	default:
+		return nil, fmt.Errorf("cannot set value on %T", current)
+	}
+
+	return value, nil
+}
+
+// parseValueFromString parses a value string into a JSON-compatible Go value.
+func parseValueFromString(s string) (interface{}, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return nil, fmt.Errorf("empty value")
+	}
+
+	// Handle special values
+	if strings.EqualFold(trimmed, "null") || trimmed == "nil" {
+		return nil, nil
+	}
+	if strings.EqualFold(trimmed, "true") {
+		return true, nil
+	}
+	if strings.EqualFold(trimmed, "false") {
+		return false, nil
+	}
+
+	// Try parsing as JSON first (handles strings, numbers, arrays, objects)
+	var result interface{}
+	if err := json.Unmarshal([]byte(trimmed), &result); err == nil {
+		return result, nil
+	}
+
+	// Try as a plain string
+	return trimmed, nil
+}
+
+// convertToYAML converts a Go value to a simple YAML string (no external deps).
+func convertToYAML(value interface{}, indent int) string {
+	return convertToYAMLRecursive(value, 0, indent)
+}
+
+func convertToYAMLRecursive(value interface{}, depth int, indent int) string {
+	prefix := strings.Repeat(" ", depth*indent)
+
+	switch v := value.(type) {
+	case map[string]interface{}:
+		var result strings.Builder
+		// Sort keys for deterministic output
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			val := v[k]
+			if val == nil {
+				result.WriteString(fmt.Sprintf("%s%s: null\n", prefix, k))
+			} else if nested, ok := val.(map[string]interface{}); ok {
+				result.WriteString(fmt.Sprintf("%s%s:\n", prefix, k))
+				result.WriteString(convertToYAMLRecursive(nested, depth+1, indent))
+			} else if nestedArr, ok := val.([]interface{}); ok {
+				result.WriteString(fmt.Sprintf("%s%s:\n", prefix, k))
+				for _, item := range nestedArr {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						// Inline map as a YAML mapping on the same line
+						result.WriteString(fmt.Sprintf("%s  - ", prefix))
+						first := true
+						for mk, mv := range itemMap {
+							if !first {
+								result.WriteString(", ")
+							}
+							result.WriteString(fmt.Sprintf("%s: %s", mk, yamlValueString(mv)))
+							first = false
+						}
+						result.WriteString("\n")
+					} else {
+						result.WriteString(fmt.Sprintf("%s  - %s\n", prefix, yamlValueString(item)))
+					}
+				}
+			} else {
+				result.WriteString(fmt.Sprintf("%s%s: %s\n", prefix, k, yamlValueString(val)))
+			}
+		}
+		return result.String()
+
+	case []interface{}:
+		var result strings.Builder
+		for _, item := range v {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				result.WriteString(fmt.Sprintf("%s- ", prefix))
+				first := true
+				for mk, mv := range itemMap {
+					if !first {
+						result.WriteString(", ")
+					}
+					result.WriteString(fmt.Sprintf("%s: %s", mk, yamlValueString(mv)))
+					first = false
+				}
+				result.WriteString("\n")
+			} else {
+				result.WriteString(fmt.Sprintf("%s- %s\n", prefix, yamlValueString(item)))
+			}
+		}
+		return result.String()
+
+	default:
+		return fmt.Sprintf("%s%s\n", prefix, yamlValueString(v))
+	}
+}
+
+// yamlValueString converts a value to its YAML representation.
+func yamlValueString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		// Quote strings that could be misinterpreted
+		if v == "" || v == "true" || v == "false" || v == "null" || v == "yes" || v == "no" ||
+			v == "on" || v == "off" || v == "~" || v == "{}" || v == "[]" ||
+			strings.Contains(v, ":") || strings.Contains(v, "#") || strings.Contains(v, "\n") ||
+			strings.HasPrefix(v, " ") || strings.HasSuffix(v, " ") {
+			return "'" + strings.ReplaceAll(v, "'", "''") + "'"
+		}
+		// Check if it looks like a number
+		if _, err := strconv.ParseFloat(v, 64); err == nil {
+			return "'" + v + "'"
+		}
+		return v
+	case float64:
+		// Check if it's an integer value
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%v", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// convertToEnv converts a JSON object to environment variable format.
+func convertToEnv(value interface{}) string {
+	result, ok := value.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+
+	var lines []string
+	for key, val := range result {
+		envKey := strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+		envKey = strings.ReplaceAll(envKey, "-", "_")
+		envKey = regexp.MustCompile(`[^A-Z0-9_]`).ReplaceAllString(envKey, "_")
+
+		var envVal string
+		switch v := val.(type) {
+		case string:
+			envVal = v
+		case float64:
+			if v == float64(int64(v)) {
+				envVal = fmt.Sprintf("%d", int64(v))
+			} else {
+				envVal = fmt.Sprintf("%v", v)
+			}
+		case bool:
+			envVal = fmt.Sprintf("%t", v)
+		case nil:
+			envVal = ""
+		case map[string]interface{}:
+			// Flatten nested objects
+			flattened := flattenJSON(v, envKey)
+			lines = append(lines, flattened...)
+			continue
+		case []interface{}:
+			// Convert array to comma-separated
+			var items []string
+			for _, item := range v {
+				items = append(items, fmt.Sprintf("%v", item))
+			}
+			envVal = strings.Join(items, ",")
+		default:
+			envVal = fmt.Sprintf("%v", v)
+		}
+		lines = append(lines, fmt.Sprintf("%s=%s", envKey, envVal))
+	}
+
+	sort.Strings(lines)
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// flattenJSON flattens a nested JSON object into key-value pairs with a given prefix.
+func flattenJSON(obj map[string]interface{}, prefix string) []string {
+	var lines []string
+	for key, val := range obj {
+		envKey := strings.ToUpper(strings.Join([]string{prefix, key}, "_"))
+		envKey = strings.ReplaceAll(envKey, "-", "_")
+		envKey = regexp.MustCompile(`[^A-Z0-9_]`).ReplaceAllString(envKey, "_")
+
+		switch v := val.(type) {
+		case map[string]interface{}:
+			lines = append(lines, flattenJSON(v, envKey)...)
+		case []interface{}:
+			var items []string
+			for _, item := range v {
+				items = append(items, fmt.Sprintf("%v", item))
+			}
+			lines = append(lines, fmt.Sprintf("%s=%s", envKey, strings.Join(items, ",")))
+		case nil:
+			lines = append(lines, fmt.Sprintf("%s=", envKey))
+		case float64:
+			if v == float64(int64(v)) {
+				lines = append(lines, fmt.Sprintf("%s=%d", envKey, int64(v)))
+			} else {
+				lines = append(lines, fmt.Sprintf("%s=%v", envKey, v))
+			}
+		default:
+			lines = append(lines, fmt.Sprintf("%s=%v", envKey, v))
+		}
+	}
+	return lines
+}
+
+// validateJSON checks if the required fields exist in the JSON data.
+type validationResult struct {
+	Valid      bool     `json:"valid"`
+	Errors     []string `json:"errors"`
+	Found      []string `json:"found"`
+	TotalField int      `json:"total_fields"`
+}
+
+// executeJsonTransformer handles JSON transformation operations.
+func (te *ToolExecutor) executeJsonTransformer(params map[string]interface{}) *ToolResult {
+	command, ok := params["command"].(string)
+	if !ok || command == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: command",
+		}
+	}
+
+	command = strings.ToLower(strings.TrimSpace(command))
+
+	// Load JSON data from file_path or json_string
+	var jsonData interface{}
+	var sourceDesc string
+
+	filePath, hasFile := params["file_path"]
+	jsonStr, hasJsonStr := params["json_string"]
+
+	if hasFile && hasJsonStr {
+		return &ToolResult{
+			Success: false,
+			Error:   "cannot specify both file_path and json_string",
+		}
+	}
+
+	if hasFile {
+		fPath, ok := filePath.(string)
+		if !ok || fPath == "" {
+			return &ToolResult{
+				Success: false,
+				Error:   "file_path must be a string",
+			}
+		}
+		content, err := os.ReadFile(fPath)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to read file: %v", err),
+			}
+		}
+		if err := json.Unmarshal(content, &jsonData); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to parse JSON: %v", err),
+			}
+		}
+		sourceDesc = fmt.Sprintf("file: %s", fPath)
+	} else if hasJsonStr {
+		jStr, ok := jsonStr.(string)
+		if !ok || jStr == "" {
+			return &ToolResult{
+				Success: false,
+				Error:   "json_string must be a non-empty string",
+			}
+		}
+		if err := json.Unmarshal([]byte(jStr), &jsonData); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to parse JSON: %v", err),
+			}
+		}
+		sourceDesc = "json_string input"
+	} else {
+		return &ToolResult{
+			Success: false,
+			Error:   "must provide either file_path or json_string",
+		}
+	}
+
+	var result *ToolResult
+
+	switch command {
+	case "extract":
+		result = te.jsonExtract(jsonData, params)
+	case "set":
+		result = te.jsonSet(jsonData, params)
+	case "merge":
+		result = te.jsonMerge(jsonData, params)
+	case "validate":
+		result = te.jsonValidate(jsonData, params)
+	case "format":
+		result = te.jsonFormat(jsonData, params, sourceDesc)
+	case "convert_to_yaml":
+		result = te.jsonConvertToYAML(jsonData)
+	case "convert_to_env":
+		result = te.jsonConvertToEnv(jsonData)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown command: %s. Valid commands: extract, set, merge, validate, format, convert_to_yaml, convert_to_env", command),
+		}
+	}
+
+	return result
+}
+
+// jsonExtract extracts a value at a given path from JSON.
+func (te *ToolExecutor) jsonExtract(jsonData interface{}, params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path for 'extract' command",
+		}
+	}
+
+	segments, err := parseJSONPath(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid path: %v", err),
+		}
+	}
+
+	value, err := resolvePath(jsonData, segments)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path resolution failed: %v", err),
+		}
+	}
+
+	// Format the extracted value
+	var output string
+	switch v := value.(type) {
+	case string:
+		output = v
+	case nil:
+		output = "null"
+	default:
+		// Pretty-print the value
+		pretty, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			output = fmt.Sprintf("%v", v)
+		} else {
+			output = string(pretty)
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"tool":   "json_transformer",
+			"action": "extract",
+			"path":   path,
+		},
+	}
+}
+
+// jsonSet sets a value at a given path in JSON.
+func (te *ToolExecutor) jsonSet(jsonData interface{}, params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path for 'set' command",
+		}
+	}
+
+	valueParam, hasValue := params["value"]
+	if !hasValue {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: value for 'set' command",
+		}
+	}
+
+	// Parse the value
+	newValue, err := parseValueFromString(fmt.Sprintf("%v", valueParam))
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse value: %v", err),
+		}
+	}
+
+	segments, err := parseJSONPath(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid path: %v", err),
+		}
+	}
+
+	result, err := setValueAtPath(jsonData, segments, newValue)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to set value: %v", err),
+		}
+	}
+
+	// Output the updated JSON
+	pretty, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to format result: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(pretty),
+		Extra: map[string]interface{}{
+			"tool":   "json_transformer",
+			"action": "set",
+			"path":   path,
+		},
+	}
+}
+
+// jsonMerge merges multiple JSON sources.
+func (te *ToolExecutor) jsonMerge(baseJSON interface{}, params map[string]interface{}) *ToolResult {
+	// Start with the base JSON
+	merged, ok := baseJSON.(map[string]interface{})
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "base JSON must be an object for 'merge' command",
+		}
+	}
+
+	// Collect all JSON data to merge
+	var jsonValues []interface{}
+
+	// Additional file paths
+	if filesParam, hasFiles := params["files"]; hasFiles {
+		if files, ok := filesParam.([]interface{}); ok {
+			for _, f := range files {
+				fPath, ok := f.(string)
+				if !ok {
+					continue
+				}
+				content, err := os.ReadFile(fPath)
+				if err != nil {
+					continue
+				}
+				var data interface{}
+				if err := json.Unmarshal(content, &data); err == nil {
+					jsonValues = append(jsonValues, data)
+				}
+			}
+		}
+	}
+
+	// Additional JSON strings
+	if jsonStrsParam, hasStrs := params["json_strings"]; hasStrs {
+		if jsonStrs, ok := jsonStrsParam.([]interface{}); ok {
+			for _, js := range jsonStrs {
+				jsStr, ok := js.(string)
+				if !ok {
+					continue
+				}
+				var data interface{}
+				if err := json.Unmarshal([]byte(jsStr), &data); err == nil {
+					jsonValues = append(jsonValues, data)
+				}
+			}
+		}
+	}
+
+	// Deep merge each JSON value into merged
+	for _, data := range jsonValues {
+		if obj, ok := data.(map[string]interface{}); ok {
+			deepMerge(merged, obj)
+		}
+	}
+
+	pretty, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to format merged result: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(pretty),
+		Extra: map[string]interface{}{
+			"tool":   "json_transformer",
+			"action": "merge",
+			"filesMerged": len(jsonValues) + 1,
+		},
+	}
+}
+
+// deepMerge merges source into dest recursively.
+func deepMerge(dest, src map[string]interface{}) {
+	for k, v := range src {
+		if destVal, exists := dest[k]; exists {
+			if destMap, ok := destVal.(map[string]interface{}); ok {
+				if srcMap, ok := v.(map[string]interface{}); ok {
+					deepMerge(destMap, srcMap)
+					continue
+				}
+			}
+		}
+		dest[k] = v
+	}
+}
+
+// jsonValidate validates JSON against required fields.
+func (te *ToolExecutor) jsonValidate(jsonData interface{}, params map[string]interface{}) *ToolResult {
+	requiredFields, hasFields := params["required_fields"]
+	if !hasFields {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: required_fields for 'validate' command",
+		}
+	}
+
+	var requiredPaths []string
+	switch v := requiredFields.(type) {
+	case []interface{}:
+		for _, f := range v {
+			if fStr, ok := f.(string); ok {
+				requiredPaths = append(requiredPaths, fStr)
+			}
+		}
+	case string:
+		requiredPaths = []string{v}
+	}
+
+	if len(requiredPaths) == 0 {
+		return &ToolResult{
+			Success: false,
+			Error:   "required_fields must be a non-empty list",
+		}
+	}
+
+	var errors []string
+	var found []string
+
+	for _, fieldPath := range requiredPaths {
+		segments, err := parseJSONPath(fieldPath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("invalid path '%s': %v", fieldPath, err))
+			continue
+		}
+		if _, err := resolvePath(jsonData, segments); err != nil {
+			errors = append(errors, fmt.Sprintf("missing required field: %s", fieldPath))
+		} else {
+			found = append(found, fieldPath)
+		}
+	}
+
+	valid := len(errors) == 0
+	result := validationResult{
+		Valid:      valid,
+		Errors:     errors,
+		Found:      found,
+		TotalField: len(requiredPaths),
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to format result: %v", err),
+		}
+	}
+
+	status := "PASSED"
+	if !valid {
+		status = "FAILED"
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Validation %s: %d/%d fields valid\n%s", status, len(found), len(requiredPaths), string(output)),
+		Extra: map[string]interface{}{
+			"tool":       "json_transformer",
+			"action":     "validate",
+			"validation": result,
+		},
+	}
+}
+
+// jsonFormat formats/beautifies JSON.
+func (te *ToolExecutor) jsonFormat(jsonData interface{}, params map[string]interface{}, sourceDesc string) *ToolResult {
+	indent := 2
+	if indentParam, ok := params["indent"]; ok {
+		switch v := indentParam.(type) {
+		case float64:
+			indent = int(v)
+		case int:
+			indent = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				indent = n
+			}
+		}
+	}
+
+	pretty, err := json.MarshalIndent(jsonData, "", strings.Repeat(" ", indent))
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to format JSON: %v", err),
+		}
+	}
+
+	output := string(pretty) + "\n"
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"tool":      "json_transformer",
+			"action":    "format",
+			"indent":    indent,
+			"source":    sourceDesc,
+			"charCount": len(output),
+		},
+	}
+}
+
+// jsonConvertToYAML converts JSON to YAML format.
+func (te *ToolExecutor) jsonConvertToYAML(jsonData interface{}) *ToolResult {
+	yaml := convertToYAML(jsonData, 2)
+	return &ToolResult{
+		Success: true,
+		Output:  yaml,
+		Extra: map[string]interface{}{
+			"tool":      "json_transformer",
+			"action":    "convert_to_yaml",
+			"charCount": len(yaml),
+		},
+	}
+}
+
+// jsonConvertToEnv converts JSON to environment variable format.
+func (te *ToolExecutor) jsonConvertToEnv(jsonData interface{}) *ToolResult {
+	if _, ok := jsonData.(map[string]interface{}); !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "convert_to_env requires a JSON object at the top level",
+		}
+	}
+
+	env := convertToEnv(jsonData)
+	return &ToolResult{
+		Success: true,
+		Output:  env,
+		Extra: map[string]interface{}{
+			"tool":      "json_transformer",
+			"action":    "convert_to_env",
+			"charCount": len(env),
 		},
 	}
 }

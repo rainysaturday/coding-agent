@@ -1014,6 +1014,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_show":      {"path"},
 		"git_add":       {},
 		"git_commit":    {},
+		"git_branch":    {"action"},
+		"git_stash":     {"action"},
 		"find":          {"pattern"},
 		"web_fetch":     {"url"},
 		"move_file":     {"source", "destination"},
@@ -1025,6 +1027,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"project_tree":  {},
 		"code_navigation": {"query"},
 		"check_links":     {},
+		"json_transformer": {"command"},
 	}
 
 	for _, tool := range toolDefs {

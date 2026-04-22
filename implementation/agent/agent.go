@@ -1494,6 +1494,21 @@ AVAILABLE TOOLS:
     Example use case: check_links() to scan all .md and .html files, check_links(paths=['docs/**/*.md']) to check only documentation files, check_links(file_types=['.md'], timeout=15) to scan only markdown files with a longer timeout.
     Note: Internal links are resolved relative to the file's directory. External links are verified via HTTP HEAD request (falls back to GET). Rate-limited to 5 simultaneous requests.
 
+26. json_transformer
+    Description: Transform JSON data with multiple operations. Supports extract, set, merge, validate, format, convert_to_yaml, and convert_to_env commands.
+    Parameters:
+      - command (string, required): Operation to perform: 'extract', 'set', 'merge', 'validate', 'format', 'convert_to_yaml', 'convert_to_env'
+      - file_path (string, optional): Path to a JSON file to operate on (alternative to json_string)
+      - json_string (string, optional): Raw JSON string to operate on (alternative to file_path)
+      - path (string, optional): JSON path for extract/set operations using dot notation (e.g., '.foo.bar' or 'foo.bar[0]'). Required for 'extract' and 'set' commands.
+      - value (string, optional): Value to set for 'set' command. Can be a JSON value, number, boolean, or 'null'.
+      - files (array, optional): List of JSON file paths to merge (for 'merge' command).
+      - json_strings (array, optional): List of raw JSON strings to merge (for 'merge' command).
+      - required_fields (array, optional): List of required JSON field paths to validate (for 'validate' command).
+      - indent (integer, optional): Number of spaces for formatting (default: 2).
+    How to call: Use json_transformer to work with JSON data. Extract a specific field, set a value at a path, merge multiple JSON sources, validate structure, format for readability, or convert between JSON and YAML/ENV formats.
+    Example use case: json_transformer(command='extract', file_path='config.json', path='.database.host') to extract a field, json_transformer(command='set', file_path='config.json', path='.database.port', value='5432') to set a value, json_transformer(command='format', file_path='data.json', indent=4) to beautify JSON, json_transformer(command='convert_to_yaml', file_path='config.json') to convert to YAML.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2298,6 +2313,55 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "json_transformer",
+				Description: "Transform JSON data with multiple operations: extract, set, merge, validate, format, convert_to_yaml, convert_to_env. Operates on JSON from a file path or raw JSON string.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "The operation to perform: 'extract', 'set', 'merge', 'validate', 'format', 'convert_to_yaml', 'convert_to_env'",
+						},
+						"file_path": {
+							Type:        "string",
+							Description: "Path to a JSON file to operate on (alternative to json_string)",
+						},
+						"json_string": {
+							Type:        "string",
+							Description: "Raw JSON string to operate on (alternative to file_path)",
+						},
+						"path": {
+							Type:        "string",
+							Description: "JSON path for extract/set operations using dot notation (e.g., '.foo.bar' or 'foo.bar[0]')",
+						},
+						"value": {
+							Type:        "string",
+							Description: "Value to set (for 'set' command). Can be a JSON string, number, boolean, or null.",
+						},
+						"files": {
+							Type:        "array",
+							Description: "List of JSON file paths to merge (for 'merge' command)",
+						},
+						"json_strings": {
+							Type:        "array",
+							Description: "List of raw JSON strings to merge (for 'merge' command)",
+						},
+						"required_fields": {
+							Type:        "array",
+							Description: "List of required JSON field paths to validate (for 'validate' command)",
+						},
+						"indent": {
+							Type:        "integer",
+							Description: "Number of spaces for formatting (default: 2, for 'format' command)",
+						},
+					},
+					Required: []string{"command"},
 				},
 			},
 		},

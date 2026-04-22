@@ -105,8 +105,15 @@
 ### Link Validation
 - **#048: Broken Link Checker Tool** - Scan Markdown and HTML files for broken links (both internal file links and external URLs). Detects relative paths, image references, and HTTP/HTTPS URLs. Returns structured results with summaries of valid and broken links, with details for each broken link.
 
+### Data/Format Tools
+- **#051: JSON Transformer Tool** - Transform JSON data with multiple operations: extract value by path using dot notation, set/modify fields at arbitrary paths, merge multiple JSON files/sources, validate required fields, format/beautify with configurable indentation, convert to YAML, and convert to environment variable format. Uses only Go stdlib (encoding/json) - zero external dependencies.
+
 ## Completed Feature Count
 
 **50 / 50 features implemented**
 
 ## Upcoming Features
+
+## Completed Feature Count
+
+**51 / 51 features implemented**
