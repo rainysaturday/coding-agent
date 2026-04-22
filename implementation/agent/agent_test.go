@@ -1053,6 +1053,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_cherry_pick": {"action"},
 		"git_commit_msg":  {},
 		"git_push":        {"action"},
+		"code_structure":  {"path"},
+		"env_setup":       {},
 	}
 
 	for _, tool := range toolDefs {

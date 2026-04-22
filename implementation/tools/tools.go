@@ -229,6 +229,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitCommitMsg(tc.Parameters)
 	case "code_structure":
 		result = te.executeCodeStructure(tc.Parameters)
+	case "env_setup":
+		result = te.executeEnvSetup(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -17112,4 +17114,355 @@ func extractJavaMethodName(line string) string {
 		}
 	}
 	return ""
+}
+
+// executeEnvSetup manages environment setup for various project types.
+// Actions: 'setup' (full), 'verify' (check only), 'install' (dependencies only).
+func (te *ToolExecutor) executeEnvSetup(params map[string]interface{}) *ToolResult {
+	action, _ := params["action"].(string)
+	if action == "" {
+		action = "setup"
+	}
+
+	// Optional path parameter for the project root
+	path, _ := params["path"].(string)
+	if path == "" {
+		var err error
+		path, err = os.Getwd()
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   "failed to get working directory: " + err.Error(),
+			}
+		}
+	}
+
+	// Optional language override
+	forceLang, _ := params["language"].(string)
+
+	// Optional verbose output
+	verbose, _ := params["verbose"].(bool)
+
+	detected := detectEnvProjectType(path, forceLang)
+	if detected.Type == "" {
+		return &ToolResult{
+			Success: false,
+			Output:  "No supported project type detected in " + path + "\nSupported types: Go (go.mod), Python (requirements.txt/pyproject.toml), Node.js (package.json), Rust (Cargo.toml), Java (pom.xml/build.gradle)",
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output: "",
+		Extra: map[string]interface{}{
+			"project_type": detected.Type,
+			"project_name": detected.Name,
+			"actions":      map[string]interface{}{},
+		},
+	}
+
+	var output strings.Builder
+
+	output.WriteString(fmt.Sprintf("Environment Setup for %s project\n", strings.ToTitle(detected.Type[0:1]) + detected.Type[1:]))
+	output.WriteString(fmt.Sprintf("Directory: %s\n\n", path))
+
+	// Detect installed tools
+	output.WriteString("=== Environment Check ===\n")
+	envIssues := checkEnvEnvironment(detected.Type, verbose)
+	if len(envIssues) > 0 {
+		output.WriteString("Missing or unavailable tools:\n")
+		for _, issue := range envIssues {
+			output.WriteString(fmt.Sprintf("  - %s\n", issue))
+		}
+	} else {
+		output.WriteString("All required tools are available.\n")
+	}
+	output.WriteString("\n")
+
+	// Detect project details
+	output.WriteString("=== Project Details ===\n")
+	output.WriteString(fmt.Sprintf("Type: %s\n", detected.Type))
+	output.WriteString(fmt.Sprintf("Name: %s\n", detected.Name))
+	if detected.Version != "" {
+		output.WriteString(fmt.Sprintf("Version: %s\n", detected.Version))
+	}
+	output.WriteString(fmt.Sprintf("Dependencies: %d file(s) found\n", len(detected.DepsFiles)))
+	output.WriteString("\n")
+
+	// Run requested action
+	switch action {
+	case "verify":
+		output.WriteString("=== Verification Only ===\n")
+		verifyResult := verifyEnvEnvironment(detected.Type, verbose)
+		output.WriteString(verifyResult)
+
+	case "install":
+		output.WriteString("=== Installing Dependencies ===\n")
+		installOutput, installErr := installEnvDependencies(detected.Type, path, verbose)
+		output.WriteString(installOutput)
+		if installErr != nil {
+			result.Extra["actions"].(map[string]interface{})["install"] = map[string]interface{}{
+				"success": false,
+				"error":   installErr.Error(),
+			}
+		} else {
+			result.Extra["actions"].(map[string]interface{})["install"] = map[string]interface{}{
+				"success": true,
+			}
+		}
+
+	case "setup", "":
+		output.WriteString("=== Installing Dependencies ===\n")
+		installOutput, installErr := installEnvDependencies(detected.Type, path, verbose)
+		output.WriteString(installOutput)
+		if installErr != nil {
+			result.Extra["actions"].(map[string]interface{})["install"] = map[string]interface{}{
+				"success": false,
+				"error":   installErr.Error(),
+			}
+		} else {
+			result.Extra["actions"].(map[string]interface{})["install"] = map[string]interface{}{
+				"success": true,
+			}
+		}
+
+		output.WriteString("\n=== Verification ===\n")
+		verifyResult := verifyEnvEnvironment(detected.Type, verbose)
+		output.WriteString(verifyResult)
+		result.Extra["actions"].(map[string]interface{})["verify"] = map[string]interface{}{
+			"success": len(envIssues) == 0,
+		}
+
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s (supported: setup, verify, install)", action),
+		}
+	}
+
+	result.Output = output.String()
+	return result
+}
+
+// envProjectInfo holds detected project information for the env_setup tool.
+type envProjectInfo struct {
+	Type       string
+	Name       string
+	Version    string
+	DepsFiles  []string
+}
+
+// detectEnvProjectType determines the project type from the given directory.
+func detectEnvProjectType(dir, forceLang string) envProjectInfo {
+	if forceLang != "" {
+		return mapToEnvProjectType(strings.ToLower(forceLang), dir)
+	}
+
+	// Check for each supported project type in priority order
+	checks := []struct {
+		files       []string
+		projectType string
+	}{
+		{[]string{"go.mod"}, "go"},
+		{[]string{"package.json"}, "node"},
+		{[]string{"Cargo.toml"}, "rust"},
+		{[]string{"pyproject.toml"}, "python"},
+		{[]string{"requirements.txt"}, "python"},
+		{[]string{"pom.xml"}, "java"},
+		{[]string{"build.gradle", "build.gradle.kts"}, "java"},
+	}
+
+	for _, check := range checks {
+		for _, f := range check.files {
+			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+				return envProjectInfo{
+					Type:      check.projectType,
+					Name:      extractProjectName(dir),
+					DepsFiles: []string{f},
+				}
+			}
+		}
+	}
+
+	return envProjectInfo{}
+}
+
+// mapToEnvProjectType maps a language string to a project info struct.
+func mapToEnvProjectType(lang, dir string) envProjectInfo {
+	mapping := map[string]struct {
+		files       []string
+		projectType string
+	}{
+		"go":         {[]string{"go.mod"}, "go"},
+		"golang":     {[]string{"go.mod"}, "go"},
+		"python":     {[]string{"requirements.txt"}, "python"},
+		"py":         {[]string{"requirements.txt"}, "python"},
+		"node":       {[]string{"package.json"}, "node"},
+		"javascript": {[]string{"package.json"}, "node"},
+		"typescript": {[]string{"package.json"}, "node"},
+		"rust":       {[]string{"Cargo.toml"}, "rust"},
+		"java":       {[]string{"pom.xml", "build.gradle", "build.gradle.kts"}, "java"},
+	}
+
+	if m, ok := mapping[lang]; ok {
+		for _, f := range m.files {
+			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+				return envProjectInfo{
+					Type:      m.projectType,
+					Name:      extractProjectName(dir),
+					DepsFiles: []string{f},
+				}
+			}
+		}
+	}
+	return envProjectInfo{}
+}
+
+// extractProjectName extracts the project name from the directory name.
+func extractProjectName(dir string) string {
+	base := filepath.Base(dir)
+	if base == "." || base == "" {
+		base = filepath.Dir(dir)
+		base = filepath.Base(base)
+	}
+	return base
+}
+
+// checkEnvEnvironment checks if required tools are installed for the given project type.
+func checkEnvEnvironment(projType string, verbose bool) []string {
+	var issues []string
+	tools := map[string][]string{
+		"go":     {"go"},
+		"python": {"python3", "pip3"},
+		"node":   {"node", "npm"},
+		"rust":   {"cargo", "rustc"},
+		"java":   {"java", "mvn"},
+	}
+
+	requiredTools, ok := tools[projType]
+	if !ok {
+		return []string{"unknown project type: " + projType}
+	}
+
+	for _, tool := range requiredTools {
+		if _, err := exec.LookPath(tool); err != nil {
+			msg := fmt.Sprintf("%s is not installed or not in PATH", tool)
+			if verbose {
+				msg += fmt.Sprintf(" (searched PATH, error: %v)", err)
+			}
+			issues = append(issues, msg)
+		}
+	}
+	return issues
+}
+
+// verifyEnvEnvironment performs a full environment verification and returns a report string.
+func verifyEnvEnvironment(projType string, verbose bool) string {
+	var output strings.Builder
+	issues := checkEnvEnvironment(projType, verbose)
+	available := len(issues) == 0
+
+	output.WriteString(fmt.Sprintf("Status: %s\n", mapBool(available)))
+	if available {
+		output.WriteString("Environment is ready for development.\n")
+	} else {
+		output.WriteString("Issues found (see above). Install missing tools to proceed.\n")
+	}
+	return output.String()
+}
+
+// installEnvDependencies installs dependencies for the detected project type.
+func installEnvDependencies(projType, dir string, verbose bool) (string, error) {
+	var output strings.Builder
+
+	switch projType {
+	case "go":
+		// Check if go.mod exists
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+			return output.String(), fmt.Errorf("go.mod not found - not a Go module")
+		}
+		return runEnvCommand(&output, "go", []string{"mod", "tidy"}, dir, verbose)
+
+	case "python":
+		// Check for requirements.txt or pyproject.toml
+		hasRequirements := false
+		hasPyproject := false
+		if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+			hasRequirements = true
+		}
+		if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+			hasPyproject = true
+		}
+
+		if hasRequirements {
+			return runEnvCommand(&output, "pip3", []string{"install", "-r", "requirements.txt"}, dir, verbose)
+		} else if hasPyproject {
+			return runEnvCommand(&output, "pip3", []string{"install", "-e", "."}, dir, verbose)
+		}
+		return output.String(), fmt.Errorf("no Python dependency file found (need requirements.txt or pyproject.toml)")
+
+	case "node":
+		if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+			return output.String(), fmt.Errorf("package.json not found - not a Node.js project")
+		}
+		// Try npm first, fallback to yarn
+		if _, err := exec.LookPath("yarn"); err == nil {
+			return runEnvCommand(&output, "yarn", []string{"install"}, dir, verbose)
+		}
+		return runEnvCommand(&output, "npm", []string{"install"}, dir, verbose)
+
+	case "rust":
+		if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err != nil {
+			return output.String(), fmt.Errorf("Cargo.toml not found - not a Rust project")
+		}
+		// Update dependencies and check
+		return runEnvCommand(&output, "cargo", []string{"update"}, dir, verbose)
+
+	case "java":
+		// Try Maven first
+		if _, err := os.Stat(filepath.Join(dir, "pom.xml")); err == nil {
+			return runEnvCommand(&output, "mvn", []string{"dependency:resolve"}, dir, verbose)
+		}
+		// Fall back to Gradle
+		if _, err := os.Stat(filepath.Join(dir, "build.gradle")); err == nil {
+			return runEnvCommand(&output, "gradle", []string{"dependencies"}, dir, verbose)
+		}
+		return output.String(), fmt.Errorf("no Java build file found (need pom.xml or build.gradle)")
+
+	default:
+		return output.String(), fmt.Errorf("unsupported project type: %s", projType)
+	}
+}
+
+// runEnvCommand executes a command and captures output.
+func runEnvCommand(output *strings.Builder, cmd string, args []string, dir string, verbose bool) (string, error) {
+	cwd, _ := os.Getwd()
+	defer os.Chdir(cwd)
+	os.Chdir(dir)
+
+	command := exec.Command(cmd, args...)
+	var stderr bytes.Buffer
+	command.Stdout = output
+	command.Stderr = &stderr
+
+	err := command.Run()
+
+	if err != nil {
+		// Still return the output collected so far
+		output.WriteString(fmt.Sprintf("\n[Error: %v]\n", err))
+		if verbose && stderr.Len() > 0 {
+			output.WriteString(fmt.Sprintf("[Stderr: %s]\n", stderr.String()))
+		}
+		return output.String(), err
+	}
+
+	return output.String(), nil
+}
+
+// mapBool returns "Available" or "Missing" based on the boolean value.
+func mapBool(v bool) string {
+	if v {
+		return "Available"
+	}
+	return "Missing"
 }

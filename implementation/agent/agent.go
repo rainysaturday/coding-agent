@@ -3663,6 +3663,35 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "env_setup",
+				Description: "Detect and set up the development environment for a project. Auto-detects project type (Go, Python, Node.js, Rust, Java), checks for required tools, installs dependencies, and verifies the environment. Actions: 'setup' (full), 'verify' (check only), 'install' (dependencies only).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'setup' (full environment setup including install and verify), 'verify' (check only, no changes), 'install' (install dependencies only). Default: 'setup'",
+						},
+						"path": {
+							Type:        "string",
+							Description: "Path to the project root directory. If omitted, uses the current working directory.",
+						},
+						"language": {
+							Type:        "string",
+							Description: "Force a specific project type for detection: 'go', 'python', 'node', 'rust', or 'java'. Useful when the directory has multiple project markers.",
+						},
+						"verbose": {
+							Type:        "boolean",
+							Description: "Include verbose/detailed output with debug information (default: false)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
 	}
 }
 
