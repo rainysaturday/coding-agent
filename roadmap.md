@@ -50,6 +50,7 @@
   - `git_show` - View file content at specific git refs
   - `git_add` - Stage specific files or all tracked modified files
 - **#037: Git Commit Tool** - Commit staged changes with descriptive messages, amend support
+- **#049: Git Branch Tool** - Unified branch management with list, create, checkout, delete, rename, and set_upstream actions; branch name validation; upstream tracking
 
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
@@ -103,6 +104,6 @@
 
 ## Completed Feature Count
 
-**48 / 48 features implemented**
+**49 / 49 features implemented**
 
 ## Upcoming Features

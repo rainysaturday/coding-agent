@@ -144,6 +144,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitAdd(tc.Parameters)
 	case "git_commit":
 		result = te.executeGitCommit(tc.Parameters)
+	case "git_branch":
+		result = te.executeGitBranch(tc.Parameters)
 	case "find":
 		result = te.executeFind(tc.Parameters)
 	case "web_fetch":
@@ -1968,6 +1970,634 @@ func (te *ToolExecutor) executeGitCommit(params map[string]interface{}) *ToolRes
 	}
 
 	return result
+}
+
+// executeGitBranch manages git branches: list, create, checkout, delete, rename, and set upstream.
+func (te *ToolExecutor) executeGitBranch(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action (list, create, checkout, delete, rename, set_upstream)",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "list":
+		return te.gitBranchList(params)
+	case "create":
+		return te.gitBranchCreate(params)
+	case "checkout":
+		return te.gitBranchCheckout(params)
+	case "delete":
+		return te.gitBranchDelete(params)
+	case "rename":
+		return te.gitBranchRename(params)
+	case "set_upstream":
+		return te.gitBranchSetUpstream(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s. Valid actions: list, create, checkout, delete, rename, set_upstream", actionStr),
+		}
+	}
+}
+
+// gitBranchList lists all branches (local and remote) with the current branch highlighted.
+func (te *ToolExecutor) gitBranchList(params map[string]interface{}) *ToolResult {
+	// Check for local branches
+	localArgs := []string{"branch", "--format=%(refname:short)"}
+	localCmd := exec.Command("git", localArgs...)
+	localOutput, localErr := localCmd.CombinedOutput()
+
+	// Check for remote branches
+	remoteArgs := []string{"branch", "-r", "--format=%(refname:short)"}
+	remoteCmd := exec.Command("git", remoteArgs...)
+	remoteOutput, _ := remoteCmd.CombinedOutput()
+
+	var output strings.Builder
+
+	// Get current branch name for highlighting
+	currentBranch := ""
+	headCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	if headOutput, err := headCmd.CombinedOutput(); err == nil {
+		currentBranch = strings.TrimSpace(string(headOutput))
+	}
+
+	// Parse local branches
+	localBranches := strings.Split(strings.TrimSpace(string(localOutput)), "\n")
+	if localErr != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list local branches: %s", string(localOutput)),
+		}
+	}
+
+	localCount := 0
+	for _, br := range localBranches {
+		br = strings.TrimSpace(br)
+		if br == "" {
+			continue
+		}
+		localCount++
+		prefix := "  "
+		if br == currentBranch {
+			prefix = "* "
+		}
+		output.WriteString(fmt.Sprintf("%s%s\n", prefix, br))
+	}
+
+	// Parse remote branches
+	remoteBranches := strings.Split(strings.TrimSpace(string(remoteOutput)), "\n")
+	hasRemote := false
+	for _, br := range remoteBranches {
+		br = strings.TrimSpace(br)
+		if br == "" {
+			continue
+		}
+		hasRemote = true
+		// Track upstream info
+		upstreamInfo := ""
+		upstreamCmd := exec.Command("git", "branch", "-vv", "--format=%(upstream:short)", br)
+		if upstreamOutput, err := upstreamCmd.CombinedOutput(); err == nil {
+			upstream := strings.TrimSpace(string(upstreamOutput))
+			if upstream != "" {
+				upstreamInfo = " -> " + upstream
+			}
+		}
+		// Remove "origin/" prefix for display if desired, but keep it for clarity
+		output.WriteString(fmt.Sprintf("  %s%s\n", br, upstreamInfo))
+	}
+
+	if localCount == 0 && !hasRemote {
+		return &ToolResult{
+			Success: true,
+			Output:  "No branches found in this repository.",
+			Extra: map[string]interface{}{
+				"tool":       "git_branch",
+				"action":     "list",
+				"localCount":  0,
+				"remoteCount": 0,
+			},
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"tool":        "git_branch",
+			"action":      "list",
+			"localCount":  localCount,
+			"currentBranch": currentBranch,
+		},
+	}
+
+	// Count remote branches for extra info
+	remoteCount := 0
+	for _, br := range remoteBranches {
+		if strings.TrimSpace(br) != "" {
+			remoteCount++
+		}
+	}
+	result.Extra["remoteCount"] = remoteCount
+
+	return result
+}
+
+// gitBranchCreate creates a new branch, optionally from a specified base branch.
+func (te *ToolExecutor) gitBranchCreate(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"]
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	nameStr, ok := name.(string)
+	if !ok || nameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "name must be a non-empty string",
+		}
+	}
+
+	// Validate branch name (git rules)
+	if err := validateBranchName(nameStr); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid branch name: %v", err),
+		}
+	}
+
+	// Check if branch already exists
+	checkCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+nameStr)
+	if _, err := checkCmd.CombinedOutput(); err == nil {
+		// Branch exists, check if it's a remote branch
+		remoteCheck := exec.Command("git", "rev-parse", "--verify", "refs/remotes/origin/"+nameStr)
+		if remoteCheckOut, remoteErr := remoteCheck.CombinedOutput(); remoteErr == nil {
+			// It's a remote branch, not a local one - allow creating
+			_ = remoteCheckOut
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("branch '%s' already exists", nameStr),
+			}
+		}
+	}
+
+	// Build create command
+	args := []string{"branch", nameStr}
+
+	// Check for base branch
+	if base, ok := params["start_point"].(string); ok && base != "" {
+		// Verify base branch exists
+		verifyCmd := exec.Command("git", "rev-parse", "--verify", base)
+		if _, err := verifyCmd.CombinedOutput(); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("base branch '%s' does not exist", base),
+			}
+		}
+		args = append(args, base)
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create branch: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Created branch '%s'", nameStr),
+		Extra: map[string]interface{}{
+			"tool":    "git_branch",
+			"action":  "create",
+			"name":    nameStr,
+			"message": fmt.Sprintf("Created branch '%s'", nameStr),
+		},
+	}
+}
+
+// gitBranchCheckout switches to a different branch.
+func (te *ToolExecutor) gitBranchCheckout(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"]
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	nameStr, ok := name.(string)
+	if !ok || nameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "name must be a non-empty string",
+		}
+	}
+
+	// Check if branch exists (local or remote)
+	exists := false
+
+	// Check local
+	checkCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+nameStr)
+	if _, err := checkCmd.CombinedOutput(); err == nil {
+		exists = true
+	}
+
+	// Check remote if not local
+	if !exists {
+		remoteCheck := exec.Command("git", "rev-parse", "--verify", "refs/remotes/origin/"+nameStr)
+		if _, err := remoteCheck.CombinedOutput(); err == nil {
+			exists = true
+		}
+	}
+
+	if !exists {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("branch '%s' does not exist", nameStr),
+		}
+	}
+
+	// Build checkout command
+	args := []string{"checkout", nameStr}
+
+	// Check for create flag (checkout -b for new branch)
+	if create, ok := params["create"].(bool); ok && create {
+		args = []string{"checkout", "-b", nameStr}
+
+		// Check for base branch
+		if base, ok := params["start_point"].(string); ok && base != "" {
+			args = append(args, base)
+		}
+
+		cmd := exec.Command("git", args...)
+		output, err := cmd.CombinedOutput()
+
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to create and checkout branch: %s", string(output)),
+			}
+		}
+
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Created and checked out branch '%s'", nameStr),
+			Extra: map[string]interface{}{
+				"tool":    "git_branch",
+				"action":  "checkout",
+				"name":    nameStr,
+				"created": true,
+				"message": fmt.Sprintf("Created and checked out branch '%s'", nameStr),
+			},
+		}
+	}
+
+	// Validate branch name before checkout
+	if err := validateBranchName(nameStr); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid branch name: %v", err),
+		}
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to checkout branch: %s", string(output)),
+		}
+	}
+
+	// Get the new current branch
+	newBranch := nameStr
+	if newBranchOut, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput(); err == nil {
+		newBranch = strings.TrimSpace(string(newBranchOut))
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Switched to branch '%s'", newBranch),
+		Extra: map[string]interface{}{
+			"tool":       "git_branch",
+			"action":     "checkout",
+			"name":       nameStr,
+			"newBranch":  newBranch,
+			"message":    fmt.Sprintf("Switched to branch '%s'", newBranch),
+		},
+	}
+}
+
+// gitBranchDelete deletes a local branch.
+func (te *ToolExecutor) gitBranchDelete(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"]
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	nameStr, ok := name.(string)
+	if !ok || nameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "name must be a non-empty string",
+		}
+	}
+
+	// Check if branch exists
+	checkCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+nameStr)
+	if _, err := checkCmd.CombinedOutput(); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("branch '%s' does not exist", nameStr),
+		}
+	}
+
+	// Build delete command
+	args := []string{"branch", "-d", nameStr}
+	force := false
+
+	// Use -D for force delete if specified
+	if f, ok := params["force"].(bool); ok && f {
+		force = true
+		args = []string{"branch", "-D", nameStr}
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// If -d failed because branch not merged, suggest -D
+		if force {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to delete branch '%s': %s", nameStr, string(output)),
+			}
+		}
+		output2, _ := exec.Command("git", "branch", "-D", nameStr).CombinedOutput()
+		if err2 := exec.Command("git", "branch", "-D", nameStr).Run(); err2 != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to delete branch '%s' (try force delete: git_branch action='delete' name='%s' force=true). Output: %s", nameStr, nameStr, string(output2)),
+			}
+		}
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Force deleted branch '%s'", nameStr),
+			Extra: map[string]interface{}{
+				"tool":    "git_branch",
+				"action":  "delete",
+				"name":    nameStr,
+				"forced":  true,
+				"message": fmt.Sprintf("Force deleted branch '%s'", nameStr),
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Deleted branch '%s'", nameStr),
+		Extra: map[string]interface{}{
+			"tool":    "git_branch",
+			"action":  "delete",
+			"name":    nameStr,
+			"message": fmt.Sprintf("Deleted branch '%s'", nameStr),
+		},
+	}
+}
+
+// gitBranchRename renames a local branch.
+func (te *ToolExecutor) gitBranchRename(params map[string]interface{}) *ToolResult {
+	oldName, hasOldName := params["old_name"]
+	newName, hasNewName := params["new_name"]
+
+	if !hasOldName || !hasNewName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameters: old_name and new_name",
+		}
+	}
+
+	oldNameStr, ok := oldName.(string)
+	if !ok || oldNameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "old_name must be a non-empty string",
+		}
+	}
+
+	newNameStr, ok := newName.(string)
+	if !ok || newNameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "new_name must be a non-empty string",
+		}
+	}
+
+	// Validate new branch name
+	if err := validateBranchName(newNameStr); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid new branch name: %v", err),
+		}
+	}
+
+	// Check if old branch exists
+	checkCmd := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+oldNameStr)
+	if _, err := checkCmd.CombinedOutput(); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("branch '%s' does not exist", oldNameStr),
+		}
+	}
+
+	// Check if new branch already exists
+	newCheck := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+newNameStr)
+	if _, err := newCheck.CombinedOutput(); err == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("branch '%s' already exists", newNameStr),
+		}
+	}
+
+	// Build rename command (git branch -m for current, -M for force)
+	args := []string{"branch", "-m", oldNameStr, newNameStr}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to rename branch: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Renamed branch '%s' -> '%s'", oldNameStr, newNameStr),
+		Extra: map[string]interface{}{
+			"tool":      "git_branch",
+			"action":    "rename",
+			"old_name":  oldNameStr,
+			"new_name":  newNameStr,
+			"message":   fmt.Sprintf("Renamed branch '%s' -> '%s'", oldNameStr, newNameStr),
+		},
+	}
+}
+
+// gitBranchSetUpstream sets or changes the upstream tracking branch for a branch.
+func (te *ToolExecutor) gitBranchSetUpstream(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"]
+	remote, hasRemote := params["remote"]
+	branch, hasBranch := params["branch"]
+
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	nameStr, ok := name.(string)
+	if !ok || nameStr == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "name must be a non-empty string",
+		}
+	}
+
+	// Build command
+	args := []string{"branch", "--set-upstream-to="}
+
+	// Construct the upstream reference
+	upstreamRef := ""
+	if hasRemote && hasBranch {
+		remoteStr, rOk := remote.(string)
+		branchStr, bOk := branch.(string)
+		if rOk && bOk {
+			upstreamRef = remoteStr + "/" + branchStr
+		}
+	} else if hasRemote {
+		remoteStr, rOk := remote.(string)
+		if rOk && remoteStr != "" {
+			// Use the same branch name on the remote
+			upstreamRef = remoteStr + "/" + nameStr
+		}
+	} else {
+		return &ToolResult{
+			Success: false,
+			Error:   "must provide both 'remote' and 'branch' parameters, or just 'remote'",
+		}
+	}
+
+	if upstreamRef == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "failed to construct upstream reference",
+		}
+	}
+
+	args = append(args, upstreamRef)
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to set upstream: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Set upstream for branch '%s' to '%s'", nameStr, upstreamRef),
+		Extra: map[string]interface{}{
+			"tool":        "git_branch",
+			"action":      "set_upstream",
+			"name":        nameStr,
+			"upstream":    upstreamRef,
+			"message":     fmt.Sprintf("Set upstream for branch '%s' to '%s'", nameStr, upstreamRef),
+		},
+	}
+}
+
+// validateBranchName validates a git branch name according to git rules.
+func validateBranchName(name string) error {
+	if name == "" {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if len(name) > 255 {
+		return fmt.Errorf("branch name exceeds 255 characters")
+	}
+
+	// Check for invalid characters and patterns
+	invalidPatterns := []string{
+		"..",
+		" ",
+		"\t",
+		"\r",
+		"\n",
+		"^",
+		":",
+		"?",
+		"*",
+		"[",
+		"\\",
+		"<",
+		">",
+		"|",
+		"!",
+		"~",
+	}
+
+	for _, pattern := range invalidPatterns {
+		if strings.Contains(name, pattern) {
+			return fmt.Errorf("branch name contains invalid character: '%s'", pattern)
+		}
+	}
+
+	// Check for leading/trailing dots and slashes
+	if strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") {
+		return fmt.Errorf("branch name cannot start or end with '/'")
+	}
+	if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf("branch name cannot start or end with '.'")
+	}
+
+	// Check for invalid leading patterns
+	if strings.HasPrefix(name, "-") || strings.HasPrefix(name, "+") {
+		return fmt.Errorf("branch name cannot start with '-' or '+'")
+	}
+
+	// Check that it doesn't contain only special characters
+	if strings.HasPrefix(name, "@{") {
+		return fmt.Errorf("branch name cannot start with '@{'")
+	}
+
+	return nil
 }
 
 // executeWebFetch fetches content from a URL using HTTP GET.

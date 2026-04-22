@@ -743,6 +743,39 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		msg = fmt.Sprintf("\n%s[Git] add (staging files)%s\n", ColorCyan, ColorReset)
 	case "git_commit":
 		msg = fmt.Sprintf("\n%s[Git] commit%s\n", ColorCyan, ColorReset)
+	case "git_branch":
+		action := ""
+		name := ""
+		if a, ok := params["action"].(string); ok {
+			action = a
+		}
+		if n, ok := params["name"].(string); ok {
+			name = n
+		}
+		switch action {
+		case "list":
+			msg = fmt.Sprintf("\n%s[Git] list branches%s\n", ColorCyan, ColorReset)
+		case "create":
+			msg = fmt.Sprintf("\n%s[Git] create branch: %s%s\n", ColorCyan, name, ColorReset)
+		case "checkout":
+			msg = fmt.Sprintf("\n%s[Git] checkout branch: %s%s\n", ColorCyan, name, ColorReset)
+		case "delete":
+			msg = fmt.Sprintf("\n%s[Git] delete branch: %s%s\n", ColorCyan, name, ColorReset)
+		case "rename":
+			oldName := ""
+			if o, ok := params["old_name"].(string); ok {
+				oldName = o
+			}
+			newName := ""
+			if n, ok := params["new_name"].(string); ok {
+				newName = n
+			}
+			msg = fmt.Sprintf("\n%s[Git] rename branch: %s -> %s%s\n", ColorCyan, oldName, newName, ColorReset)
+		case "set_upstream":
+			msg = fmt.Sprintf("\n%s[Git] set upstream for: %s%s\n", ColorCyan, name, ColorReset)
+		default:
+			msg = fmt.Sprintf("\n%s[Git] branch (%s)%s\n", ColorCyan, action, ColorReset)
+		}
 	case "move_file":
 		src := ""
 		dst := ""
@@ -1016,6 +1049,90 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				return fmt.Sprintf("%s[Success] amended last commit%s\n", ColorGreen, ColorReset)
 			}
 			return fmt.Sprintf("%s[Success] committed changes%s\n", ColorGreen, ColorReset)
+		case "git_branch":
+			action := ""
+			if a, ok := result.Extra["action"].(string); ok {
+				action = a
+			}
+			switch action {
+			case "list":
+				localCount := 0
+				if lc, ok := result.Extra["localCount"].(int); ok {
+					localCount = lc
+				}
+				remoteCount := 0
+				if rc, ok := result.Extra["remoteCount"].(int); ok {
+					remoteCount = rc
+				}
+				currentBranch := ""
+				if cb, ok := result.Extra["currentBranch"].(string); ok {
+					currentBranch = cb
+				}
+				total := localCount + remoteCount
+				msg := fmt.Sprintf("%s[Success] %d branch(es) listed%s", ColorGreen, total, ColorReset)
+				if currentBranch != "" {
+					msg += fmt.Sprintf(" (current: %s)", currentBranch)
+				}
+				return msg
+			case "create":
+				name := ""
+				if n, ok := result.Extra["name"].(string); ok {
+					name = n
+				}
+				return fmt.Sprintf("%s[Success] created branch '%s'%s\n", ColorGreen, name, ColorReset)
+			case "checkout":
+				created := false
+				if c, ok := result.Extra["created"].(bool); ok {
+					created = c
+				}
+				if created {
+					name := ""
+					if n, ok := result.Extra["name"].(string); ok {
+						name = n
+					}
+					return fmt.Sprintf("%s[Success] created and checked out branch '%s'%s\n", ColorGreen, name, ColorReset)
+				}
+				newBranch := ""
+				if nb, ok := result.Extra["newBranch"].(string); ok {
+					newBranch = nb
+				}
+				return fmt.Sprintf("%s[Success] switched to branch '%s'%s\n", ColorGreen, newBranch, ColorReset)
+			case "delete":
+				forced := false
+				if f, ok := result.Extra["forced"].(bool); ok {
+					forced = f
+				}
+				name := ""
+				if n, ok := result.Extra["name"].(string); ok {
+					name = n
+				}
+				if forced {
+					return fmt.Sprintf("%s[Success] force deleted branch '%s'%s\n", ColorGreen, name, ColorReset)
+				}
+				return fmt.Sprintf("%s[Success] deleted branch '%s'%s\n", ColorGreen, name, ColorReset)
+			case "rename":
+				oldName := ""
+				if on, ok := result.Extra["old_name"].(string); ok {
+					oldName = on
+				}
+				newName := ""
+				if nn, ok := result.Extra["new_name"].(string); ok {
+					newName = nn
+				}
+				return fmt.Sprintf("%s[Success] renamed '%s' -> '%s'%s\n", ColorGreen, oldName, newName, ColorReset)
+			case "set_upstream":
+				name := ""
+				if n, ok := result.Extra["name"].(string); ok {
+					name = n
+				}
+				upstream := ""
+				if u, ok := result.Extra["upstream"].(string); ok {
+					upstream = u
+				}
+				return fmt.Sprintf("%s[Success] set upstream for '%s' to '%s'%s\n", ColorGreen, name, upstream, ColorReset)
+			default:
+				return fmt.Sprintf("%s[Success] branch operation completed%s\n", ColorGreen, ColorReset)
+			}
 		case "move_file":
 			source := ""
 			destination := ""
@@ -1260,6 +1377,21 @@ AVAILABLE TOOLS:
       - amend (boolean, optional): Amend the most recent commit instead of creating a new one (default: false)
     How to call: Use git_commit after git_add to save changes. Provide a clear, descriptive commit message.
     Example use case: "git_commit message='Add new authentication module'" or "git_commit message='Fix login bug' amend=true"
+
+16. git_branch
+    Description: Manage git branches with six actions: list, create, checkout, delete, rename, and set_upstream.
+    Parameters:
+      - action (string, required): One of: 'list', 'create', 'checkout', 'delete', 'rename', 'set_upstream'
+      - name (string, required for create/checkout/delete/set_upstream): The branch name to operate on
+      - old_name (string, required for rename): The current branch name
+      - new_name (string, required for rename): The new branch name
+      - start_point (string, optional): Base branch to create from (for create/checkout)
+      - create (boolean, optional): Create branch if it doesn't exist (for checkout)
+      - force (boolean, optional): Force delete even if not merged (for delete)
+      - remote (string, optional): Remote name for set_upstream (e.g., 'origin')
+      - branch (string, optional): Remote branch name for set_upstream
+    How to call: Use git_branch to manage branches. List all branches with action='list', create a new branch with action='create' name='feature-xyz', or switch branches with action='checkout' name='main'.
+    Example use case: git_branch(action='list'), git_branch(action='create', name='feature/auth'), git_branch(action='checkout', name='feature/auth'), git_branch(action='delete', name='feature/old')
 
 17. find
     Description: Search file contents for matches to a regex pattern. Returns file paths, line numbers, and matching content.
@@ -1749,6 +1881,55 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_branch",
+				Description: "Manage git branches: list, create, checkout, delete, rename, and set upstream tracking.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Branch action: 'list', 'create', 'checkout', 'delete', 'rename', or 'set_upstream'",
+						},
+						"name": {
+							Type:        "string",
+							Description: "Branch name (required for create, checkout, delete, set_upstream)",
+						},
+						"old_name": {
+							Type:        "string",
+							Description: "Current branch name (required for rename)",
+						},
+						"new_name": {
+							Type:        "string",
+							Description: "New branch name (required for rename)",
+						},
+						"start_point": {
+							Type:        "string",
+							Description: "Base branch to create from (for create and checkout with create=true)",
+						},
+						"create": {
+							Type:        "boolean",
+							Description: "Create the branch if it doesn't exist (for checkout action)",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Force delete even if not merged (for delete action)",
+						},
+						"remote": {
+							Type:        "string",
+							Description: "Remote name for set_upstream (e.g., 'origin')",
+						},
+						"branch": {
+							Type:        "string",
+							Description: "Remote branch name for set_upstream",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},
