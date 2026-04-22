@@ -690,6 +690,15 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Searching] pattern: %s%s\n", ColorCyan, pattern, ColorReset)
+	case "sub_agent":
+		prompt := ""
+		if p, ok := params["prompt"].(string); ok {
+			prompt = p
+			if len(prompt) > 50 {
+				prompt = prompt[:50] + "..."
+			}
+		}
+		msg = fmt.Sprintf("\n%s[Sub-agent] task: %s%s\n", ColorCyan, prompt, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -825,6 +834,18 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				matchCount = mc
 			}
 			return fmt.Sprintf("%s[Success] found %d file(s) matching '%s'%s\n", ColorGreen, matchCount, pattern, ColorReset)
+		case "sub_agent":
+			exitCode := result.ExitCode
+			if exitCode == 0 {
+				output := result.Output
+				lines := strings.Split(output, "\n")
+				if len(lines) > 10 {
+					lines = lines[:10]
+					output = strings.Join(lines, "\n") + "\n... [output truncated]"
+				}
+				return fmt.Sprintf("%s[Success] sub-agent completed (exit code: %d)\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
+			}
+			return fmt.Sprintf("%s[Success] sub-agent completed (exit code: %d)%s\n", ColorGreen, exitCode, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -973,6 +994,15 @@ AVAILABLE TOOLS:
      - max_results (integer, optional): Maximum number of results to return (default: 100)
    How to call: Use glob to discover files in the codebase. Supports recursive matching with ** patterns.
    Example use case: Finding all Go files in a project with "go/**/*.go", or finding test files with "**/*_test.go"
+
+10. sub_agent
+    Description: Spawn a parallel sub-agent to work on a delegated task. The sub-agent runs the coding-agent in one-shot mode with the provided prompt.
+    Parameters:
+      - prompt (string, required): The task/prompt to delegate to the sub-agent
+      - timeout (integer, optional): Maximum execution time in seconds (default: 300)
+    How to call: Use sub_agent when a task can be delegated to a parallel agent. This is useful for multi-step tasks where parts can be worked on independently.
+    Example use case: Deletting code review of a specific file, researching a specific topic, or generating code for a separate module.
+    Note: The sub-agent runs with the same working directory and has access to the same tools (bash, read_file, write_file, etc.).
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1218,6 +1248,27 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"pattern"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "sub_agent",
+				Description: "Spawn a parallel sub-agent to work on a delegated task. The sub-agent runs the coding-agent in one-shot mode with the provided prompt.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"prompt": {
+							Type:        "string",
+							Description: "The task/prompt to delegate to the sub-agent",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum execution time in seconds (default: 300)",
+						},
+					},
+					Required: []string{"prompt"},
 				},
 			},
 		},

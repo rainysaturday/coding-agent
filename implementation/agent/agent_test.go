@@ -1006,6 +1006,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"patch":         {"path", "diff"},
 		"replace_lines": {"path"},
 		"glob":          {"pattern"},
+		"sub_agent":     {"prompt"},
 	}
 
 	for _, tool := range toolDefs {

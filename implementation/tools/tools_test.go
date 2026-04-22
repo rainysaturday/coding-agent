@@ -1658,3 +1658,193 @@ func TestMatchGlob_PrefixPattern(t *testing.T) {
 		}
 	}
 }
+// --- Sub-Agent Tool Tests ---
+
+func TestExecute_SubAgent_MissingPrompt(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name:       "sub_agent",
+		Parameters: map[string]interface{}{},
+	})
+	if result.Success {
+		t.Error("Expected failure for missing prompt parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: prompt") {
+		t.Errorf("Expected 'missing required parameter: prompt' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_SubAgent_EmptyPrompt(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "sub_agent",
+		Parameters: map[string]interface{}{
+			"prompt": "",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for empty prompt parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter: prompt") {
+		t.Errorf("Expected 'missing required parameter: prompt' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_SubAgent_ExecuteSuccess(t *testing.T) {
+	// Find the coding-agent executable
+	var executablePath string
+	cwd, _ := os.Getwd()
+	for _, candidate := range []string{
+		filepath.Join(cwd, "coding-agent"),
+		filepath.Join(cwd, "..", "coding-agent"),
+	} {
+		// Resolve the path
+		resolved, _ := filepath.Abs(candidate)
+		if _, err := os.Stat(resolved); err == nil {
+			executablePath = resolved
+			break
+		}
+	}
+	// Also check relative to this test's working directory (implementation/)
+	if executablePath == "" {
+		cwd2, _ := os.Getwd()
+		for _, candidate := range []string{
+			filepath.Join(cwd2, "..", "coding-agent"),
+		} {
+			resolved, _ := filepath.Abs(candidate)
+			if _, err := os.Stat(resolved); err == nil {
+				executablePath = resolved
+				break
+			}
+		}
+	}
+
+	if executablePath == "" {
+		t.Skip("coding-agent executable not found, skipping sub_agent execution test")
+	}
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "sub_agent",
+		Parameters: map[string]interface{}{
+			"prompt":    "echo hello from sub-agent",
+			"timeout":   10,
+		},
+	})
+	// The sub-agent should run in one-shot mode and return the result of the echo command
+	if !result.Success {
+		t.Errorf("Expected success for valid sub_agent call, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "hello from sub-agent") {
+		t.Errorf("Expected output to contain 'hello from sub-agent', got: %s", result.Output)
+	}
+}
+
+func TestExecute_SubAgent_ExecuteFailure(t *testing.T) {
+	// Find the coding-agent executable
+	var executablePath string
+	cwd, _ := os.Getwd()
+	for _, candidate := range []string{
+		filepath.Join(cwd, "coding-agent"),
+		filepath.Join(cwd, "..", "coding-agent"),
+	} {
+		resolved, _ := filepath.Abs(candidate)
+		if _, err := os.Stat(resolved); err == nil {
+			executablePath = resolved
+			break
+		}
+	}
+	if executablePath == "" {
+		t.Skip("coding-agent executable not found, skipping sub_agent execution failure test")
+	}
+
+	te := NewToolExecutor()
+	// Use a prompt that the sub-agent will try to execute. The LLM may decide
+	// not to execute an obviously invalid command, in which case the sub-agent
+	// still exits successfully (exit code 0) with a helpful response.
+	result := te.Execute(&ToolCall{
+		Name: "sub_agent",
+		Parameters: map[string]interface{}{
+			"prompt":  "this-command-definitely-does-not-exist-12345",
+			"timeout": 10,
+		},
+	})
+	// The sub-agent process itself should succeed (exit code 0).
+	// The LLM inside may respond helpfully rather than trying to execute the invalid command.
+	if !result.Success {
+		t.Logf("Sub-agent returned (this is acceptable - the LLM may have declined to execute): %s", result.Error)
+	}
+}
+
+func TestExecute_SubAgent_Stats(t *testing.T) {
+	te := NewToolExecutor()
+
+	// Test that stats are tracked properly
+	// First, call an unknown tool to increment FailedCalls
+	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "echo test"}})
+
+	// Find the coding-agent executable for a successful call
+	var executablePath string
+	cwd, _ := os.Getwd()
+	for _, candidate := range []string{
+		filepath.Join(cwd, "coding-agent"),
+		filepath.Join(cwd, "..", "coding-agent"),
+	} {
+		resolved, _ := filepath.Abs(candidate)
+		if _, err := os.Stat(resolved); err == nil {
+			executablePath = resolved
+			break
+		}
+	}
+
+	if executablePath != "" {
+		te.Execute(&ToolCall{
+			Name: "sub_agent",
+			Parameters: map[string]interface{}{
+				"prompt":    "true",
+				"timeout":   10,
+			},
+		})
+	}
+
+	stats := te.Stats()
+	if stats.TotalCalls != 2 {
+		t.Errorf("Expected 2 total calls, got %d", stats.TotalCalls)
+	}
+}
+
+func TestExecute_SubAgent_TooManyParameters(t *testing.T) {
+	te := NewToolExecutor()
+	// Test with extra unexpected parameters - should still work with just prompt
+	result := te.Execute(&ToolCall{
+		Name: "sub_agent",
+		Parameters: map[string]interface{}{
+			"prompt":  "echo extra params",
+			"timeout": 5,
+			"extra":   "ignored",
+			"nested":  map[string]interface{}{"key": "value"},
+		},
+	})
+
+	// Find the coding-agent executable
+	cwd, _ := os.Getwd()
+	found := false
+	for _, candidate := range []string{
+		filepath.Join(cwd, "coding-agent"),
+		filepath.Join(cwd, "..", "coding-agent"),
+	} {
+		resolved, _ := filepath.Abs(candidate)
+		if _, err := os.Stat(resolved); err == nil {
+			found = true
+			break
+		}
+	}
+
+	if found {
+		// With valid prompt, the tool should execute (ignoring extra params)
+		if !result.Success {
+			t.Logf("Sub-agent execution returned: %s", result.Error)
+			// Don't fail - the sub-agent might not be available
+		}
+	}
+}

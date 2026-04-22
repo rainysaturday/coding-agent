@@ -31,7 +31,7 @@
 - **#028: Debug Flag** - Full conversation logging to file
 - **#029: System Prompt Environment Info** - Working directory, executable path, OS/arch
 
-### Tools (8 Total)
+### Tools (9 Total)
 - **#004: Bash Tool** - Execute shell commands
 - **#005: Read File Tool** - Read file contents
 - **#006: Write File Tool** - Write/overwrite files
@@ -40,6 +40,7 @@
 - **#013: Replace Text Tool** - Find and replace text
 - **#030: Patch Tool** - Apply unified diff patches (via system `patch` command)
 - **#032: Replace Lines Tool** - Replace lines by number or search-and-replace
+- **#035: Sub-Agent Tool** - Spawn parallel sub-agents with `-p "prompt"` for delegated tasks, configurable timeout
 
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
@@ -68,4 +69,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**34 / 34 features implemented**
+**35 / 35 features implemented**

@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ToolResult represents the result of a tool execution.
@@ -121,6 +123,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeReplaceLines(tc.Parameters)
 	case "glob":
 		result = te.executeGlob(tc.Parameters)
+	case "sub_agent":
+		result = te.executeSubAgent(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -1040,6 +1044,101 @@ func (te *ToolExecutor) executeGlob(params map[string]interface{}) *ToolResult {
 			"matchesFound": len(matches),
 		},
 	}
+}
+
+// executeSubAgent spawns a sub-agent process to handle a delegated task.
+func (te *ToolExecutor) executeSubAgent(params map[string]interface{}) *ToolResult {
+	prompt, ok := params["prompt"].(string)
+	if !ok || prompt == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: prompt",
+		}
+	}
+
+	// Determine timeout (default 300 seconds / 5 minutes)
+	timeoutSeconds := 300
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Find the coding-agent executable
+	// Try the current working directory first, then PATH
+	var executablePath string
+	cwd, _ := os.Getwd()
+	for _, candidate := range []string{
+		filepath.Join(cwd, "coding-agent"),
+		filepath.Join(cwd, "implementation", "coding-agent"),
+		"coding-agent",
+	} {
+		if resolved, err := filepath.Abs(candidate); err == nil {
+			if _, err := os.Stat(resolved); err == nil {
+				executablePath = resolved
+				break
+			}
+		}
+	}
+
+	// If not found, try to find via exec.LookPath
+	if executablePath == "" {
+		if lookedPath, err := exec.LookPath("coding-agent"); err == nil {
+			executablePath = lookedPath
+		}
+	}
+
+	if executablePath == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "coding-agent executable not found in PATH or working directory",
+		}
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	// Spawn the sub-agent process with context
+	cmd := exec.CommandContext(ctx, executablePath, "-p", prompt)
+
+	// Set working directory to current directory
+	cmd.Dir = cwd
+
+	// Set up output capture
+	output, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("sub-agent timed out after %d seconds", timeoutSeconds)
+		output = []byte("")
+	}
+
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	}
+
+	result := &ToolResult{
+		ExitCode: exitCode,
+	}
+
+	if err != nil {
+		result.Success = false
+		result.Error = fmt.Sprintf("sub-agent failed (exit code %d): %s", exitCode, string(output))
+	} else {
+		result.Success = true
+		result.Output = string(output)
+	}
+
+	return result
 }
 
 // globRecursive performs recursive glob matching for patterns containing **.
