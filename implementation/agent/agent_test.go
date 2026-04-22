@@ -1050,6 +1050,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"http_request":   {"url"},
 		"csv_transformer": {"command"},
 		"git_blame":      {"action"},
+		"git_cherry_pick": {"action"},
 		"git_commit_msg": {},
 	}
 

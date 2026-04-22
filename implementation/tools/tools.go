@@ -217,6 +217,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCsvTransformer(tc.Parameters)
 	case "git_blame":
 		result = te.executeGitBlame(tc.Parameters)
+	case "git_cherry_pick":
+		result = te.executeGitCherryPick(tc.Parameters)
 	case "git_commit_msg":
 		result = te.executeGitCommitMsg(tc.Parameters)
 	default:

@@ -1608,7 +1608,24 @@ AVAILABLE TOOLS:
     How to call: Use git_blame(action='blame', path='src/main.go') to see who last modified each line. Use git_blame(action='blame', path='src/main.go', start=1, end=10) for a specific range. Use git_blame(action='recent', max_results=10) to see recently modified files.
     Example use case: git_blame(action='blame', path='src/main.go') to check recent changes, git_blame(action='recent') to see all recently modified files, git_blame(action='blame', path='config/', reverse=true) to see blame from newest to oldest.
 
-28. project_diagnostics
+28. git_cherry_pick
+    Description: Cherry-pick commits from one branch to another with conflict handling. Four actions: 'cherry-pick' applies a commit or range of commits, 'abort' cancels an in-progress cherry-pick, 'list' shows commits available from a target branch that aren't in the current branch, and 'preview' dry-runs a cherry-pick to see what changes it would produce.
+    Parameters:
+      - action (string, required): One of: 'cherry-pick' (apply commit/range), 'abort' (cancel cherry-pick), 'list' (show available commits), 'preview' (dry-run)
+      - commit (string, required for cherry-pick and preview): Commit hash (e.g., 'abc123') or range (e.g., 'abc123..def456')
+      - target (string, required for list): Target branch name to list commits from
+      - allow_empty (boolean, optional): Allow cherry-picking empty commits (for 'cherry-pick' action)
+      - signoff (boolean, optional): Add Signed-off-by line (for 'cherry-pick' action)
+      - edit (boolean, optional): Open editor to modify commit message (for 'cherry-pick' action)
+      - no_commit (boolean, optional): Stage changes without creating commit (for 'cherry-pick' action)
+      - message (string, optional): Override commit message for the cherry-picked commit
+      - strategy (string, optional): Conflict resolution strategy ('ours', 'theirs')
+      - continue (boolean, optional): Continue cherry-pick after resolving conflicts (use with git add)
+      - max_results (integer, optional): Maximum commits to show (for 'list' action, default: 50)
+    How to call: Use git_cherry_pick(action='cherry-pick', commit='abc123def') to apply a commit. Use git_cherry_pick(action='abort') to cancel a cherry-pick. Use git_cherry_pick(action='list', target='main') to see commits to cherry-pick from main. Use git_cherry_pick(action='preview', commit='abc123def') to preview changes.
+    Example use case: git_cherry_pick(action='cherry-pick', commit='abc123def', message='Apply fix for bug') to cherry-pick with custom message, git_cherry_pick(action='list', target='main', max_results=10) to see recent commits from main, git_cherry_pick(action='cherry-pick', commit='abc123', strategy='theirs') to resolve conflicts using theirs.
+
+29. project_diagnostics
     Description: Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys, and more. Returns a structured report with severity levels and recommendations.
     Parameters:
       - paths (array, optional): Paths to scan (glob patterns or directory paths). If omitted, scans the current directory.
@@ -2813,6 +2830,63 @@ func buildTools() []inference.ToolDefinition {
 						"max_results": {
 							Type:        "integer",
 							Description: "Maximum number of recent files to show (for 'recent' action, default: 20)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_cherry_pick",
+				Description: "Cherry-pick commits from one branch to another. Four actions: 'cherry-pick' applies a commit or range of commits, 'abort' cancels an in-progress cherry-pick, 'list' shows commits available from a target branch, and 'preview' dry-runs a cherry-pick to see what changes it would produce.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'cherry-pick' (apply commit/range), 'abort' (cancel cherry-pick), 'list' (show available commits from branch), 'preview' (dry-run cherry-pick)",
+						},
+						"commit": {
+							Type:        "string",
+							Description: "Commit hash or range (e.g., 'abc123' or 'abc123..def456'). Required for 'cherry-pick' and 'preview' actions.",
+						},
+						"target": {
+							Type:        "string",
+							Description: "Target branch name. Required for 'list' action to specify which branch to list commits from.",
+						},
+						"allow_empty": {
+							Type:        "boolean",
+							Description: "Allow cherry-picking commits that introduce no changes (for 'cherry-pick' action).",
+						},
+						"signoff": {
+							Type:        "boolean",
+							Description: "Add Signed-off-by line to commit message (for 'cherry-pick' action).",
+						},
+						"edit": {
+							Type:        "boolean",
+							Description: "Open editor to modify commit message before committing (for 'cherry-pick' action).",
+						},
+						"no_commit": {
+							Type:        "boolean",
+							Description: "Stage changes without creating a commit (for 'cherry-pick' action).",
+						},
+						"message": {
+							Type:        "string",
+							Description: "Override the default commit message for the cherry-picked commit (for 'cherry-pick' action).",
+						},
+						"strategy": {
+							Type:        "string",
+							Description: "Merge strategy option for resolving conflicts (e.g., 'ours', 'theirs'). Use 'git cherry-pick --strategy-option' values.",
+						},
+						"continue": {
+							Type:        "boolean",
+							Description: "Continue cherry-pick after resolving conflicts. Use after manually resolving conflicts and running 'git add'.",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum number of commits to show (for 'list' action, default: 50).",
 						},
 					},
 					Required: []string{"action"},

@@ -60,6 +60,7 @@
 - **#062: Git Merge Tool** - Unified merge management with five actions: merge (standard branch merge with target branch support), abort (cancel in-progress merge), status (check for merge conflicts), squash (squash merge all commits into one), and merge_pr (merge GitHub pull requests via API with merge/squash/rebase methods)
 - **#065: Git Revert Tool** - Revert git changes with five actions: list (recent commits), commit (revert a specific commit by hash creating undo commit), files (revert specific files to last committed state), soft_reset (soft reset to a commit keeping changes staged), and hard_reset (hard reset to a commit discarding all changes); branch protection for main/master; dry-run mode; safety checks for destructive operations
 - **#066: Git Rebase Tool** - Manage git rebases with six actions: list (show commits that would be rebased), start (begin rebase onto target branch/commit), continue (resume after conflicts), abort (cancel rebase and restore original branch), skip (skip current commit), and update (update rebase todo list for interactive rebase); supports keep-empty and allow-empty flags
+- **#073: Git Blame Tool** - Two actions: 'blame' to show who last modified each line of a file with author/date/content, 'recent' to list the most recently modified files in the repository ordered by last commit time
 - **#074: Git Commit Message Generator** - Analyze git staged changes and generate conventional commit messages with type (feat/fix/docs/refactor/test/chore/ci), optional scope, subject line, and body; supports conventional, angular, and simple conventions
 
 ### Test Generation
@@ -168,9 +169,11 @@
 
 ## Completed Feature Count
 
-**74 / 74 features implemented**
+**75 / 75 features implemented**
+
+### Git Tools (Extended)
+- **#075: Git Cherry-Pick Tool** - Cherry-pick commits from one branch to another with conflict handling. Supports: cherry-pick (apply a commit or range of commits), abort (cancel in-progress cherry-pick), list (show commits available to cherry-pick from a branch), and preview (dry-run to see what changes a cherry-pick would produce); conflict detection with structured output; commit message customization; allow-empty support; branch validation
 
 ## Upcoming Features
 
-## Implemented Feature: #073: Git Blame Tool
-- **Git Blame Tool** - Two actions: 'blame' to show who last modified each line of a file with author/date/content, 'recent' to list the most recently modified files in the repository ordered by last commit time
+- **(none)**
