@@ -167,6 +167,9 @@
 
 ## Completed Feature Count
 
-**72 / 72 features implemented**
+**73 / 73 features implemented**
 
 ## Upcoming Features
+
+## Implemented Feature: #073: Git Blame Tool
+- **Git Blame Tool** - Two actions: 'blame' to show who last modified each line of a file with author/date/content, 'recent' to list the most recently modified files in the repository ordered by last commit time

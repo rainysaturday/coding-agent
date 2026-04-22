@@ -1048,6 +1048,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"code_review":    {"path"},
 		"interactive_session": {"action"},
 		"http_request":   {"url"},
+		"csv_transformer": {"command"},
+		"git_blame":      {"action"},
 	}
 
 	for _, tool := range toolDefs {

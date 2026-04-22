@@ -1595,6 +1595,19 @@ AVAILABLE TOOLS:
     How to call: Use csv_transformer to work with CSV data. Read and inspect CSV files, filter rows by conditions, select specific columns, sort by a column, aggregate numeric data by groups, or convert CSV to JSON/YAML format. Supports auto-detection of delimiters (comma, semicolon, tab, pipe).
     Example use case: csv_transformer(command='read', file_path='data.csv') to inspect data, csv_transformer(command='filter', file_path='data.csv', conditions=[{'column': 'status', 'operator': 'eq', 'value': 'active'}]) to filter rows, csv_transformer(command='to_json', file_path='data.csv') to convert to JSON.
 
+27. git_blame
+    Description: Show git blame for files or list recently modified files. Two actions: 'blame' shows who last modified each line of a file with author, date, and content. 'recent' lists the most recently modified files in the repository ordered by last commit time.
+    Parameters:
+      - action (string, required): One of: 'blame' (show blame for file) or 'recent' (list recently modified files)
+      - path (string, required for blame, optional for recent): File or directory path to show blame for
+      - start (integer, optional): Start line number for blame range (for 'blame' action)
+      - end (integer, optional): End line number for blame range (for 'blame' action)
+      - reverse (boolean, optional): Show blame in reverse order newest first (for 'blame' action)
+      - date (string, optional): Date format for blame output: 'relative', 'iso', 'rfc', 'short'
+      - max_results (integer, optional): Maximum recent files to show (for 'recent' action, default: 20)
+    How to call: Use git_blame(action='blame', path='src/main.go') to see who last modified each line. Use git_blame(action='blame', path='src/main.go', start=1, end=10) for a specific range. Use git_blame(action='recent', max_results=10) to see recently modified files.
+    Example use case: git_blame(action='blame', path='src/main.go') to check recent changes, git_blame(action='recent') to see all recently modified files, git_blame(action='blame', path='config/', reverse=true) to see blame from newest to oldest.
+
 28. project_diagnostics
     Description: Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys, and more. Returns a structured report with severity levels and recommendations.
     Parameters:
@@ -2752,6 +2765,47 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_blame",
+				Description: "Show git blame for files or list recently modified files. Two actions: 'blame' to show who last modified each line of a file, 'recent' to list the most recently modified files in the repository ordered by last commit.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'blame' (show git blame for file) or 'recent' (list most recently modified files)",
+						},
+						"path": {
+							Type:        "string",
+							Description: "File or directory path (required for 'blame' action, optional filter for 'recent' action)",
+						},
+						"start": {
+							Type:        "integer",
+							Description: "Start line number for blame range (optional, for 'blame' action only)",
+						},
+						"end": {
+							Type:        "integer",
+							Description: "End line number for blame range (optional, for 'blame' action only)",
+						},
+						"reverse": {
+							Type:        "boolean",
+							Description: "Show blame in reverse order (newest first, for 'blame' action)",
+						},
+						"date": {
+							Type:        "string",
+							Description: "Date format for blame output: 'relative' (default), 'iso', 'rfc', 'short'",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum number of recent files to show (for 'recent' action, default: 20)",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

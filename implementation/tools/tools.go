@@ -215,6 +215,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeHttpRequest(tc.Parameters)
 	case "csv_transformer":
 		result = te.executeCsvTransformer(tc.Parameters)
+	case "git_blame":
+		result = te.executeGitBlame(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
