@@ -55,6 +55,9 @@
 ### Git Tools (Extended)
 - **#050: Git Stash Tool** - Manage git stashes with list, save, pop, apply, and drop actions; stash message support; stashed file metadata
 
+### Git Tools (Extended)
+- **#059: Git Tag Management Tool** - Manage git tags with four actions: list (with pattern filtering and sorting), create (annotated/lightweight), delete, and show (with tagger/date/message/object ref details); tag name validation
+
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
 - **#015: Tool Prefix Prompt** - Tool definitions in system prompt
@@ -131,6 +134,6 @@
 
 ## Completed Feature Count
 
-**58 / 58 features implemented**
+**59 / 59 features implemented**
 
 ## Upcoming Features

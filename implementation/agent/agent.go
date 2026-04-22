@@ -1428,7 +1428,21 @@ AVAILABLE TOOLS:
     How to call: Use git_stash to temporarily save uncommitted changes. List stashes with action='list', save changes with action='save', or restore with action='pop'.
     Example use case: git_stash(action='list'), git_stash(action='save', message='WIP auth changes'), git_stash(action='pop'), git_stash(action='drop', stash_ref='stash@{1}')
 
-18. find
+18. git_tag
+    Description: Manage git tags: list, create, delete, and show. Tags mark specific points in git history (e.g., release versions).
+    Parameters:
+      - action (string, required): One of: 'list', 'create', 'delete', 'show'
+      - name (string, required for create/delete/show): The tag name
+      - pattern (string, optional): Glob pattern to filter tag list (e.g., 'v1.*', 'release-*')
+      - message (string, optional): Tag message/description (for create action, creates an annotated tag)
+      - annotated (boolean, optional): Create annotated tag (true) or lightweight tag (false). Default: true for annotated.
+      - force (boolean, optional): Force create/delete even if tag already exists / delete failed (default: false)
+      - max_results (integer, optional): Maximum tags to return when listing (default: 50)
+      - sort (string, optional): Sort order for listing: 'version' (default), 'committerdate', or 'creatordate'
+    How to call: Use git_tag to create release tags, list existing tags, delete outdated tags, or inspect tag details.
+    Example use case: git_tag(action='list'), git_tag(action='create', name='v1.2.0', message='Release 1.2.0'), git_tag(action='delete', name='v1.2.0'), git_tag(action='show', name='v1.2.0')
+
+19. find
     Description: Search file contents for matches to a regex pattern. Returns file paths, line numbers, and matching content.
     Parameters:
       - pattern (string, required): Regular expression pattern to search for (Go regex syntax)
@@ -2074,6 +2088,51 @@ func buildTools() []inference.ToolDefinition {
 						"pathspec": {
 							Type:        "string",
 							Description: "Restrict stashing to specific file(s) or directory (for save action)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_tag",
+				Description: "Manage git tags: list, create, delete, and show. Tags mark specific points in git history (e.g., release versions).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Tag action: 'list', 'create', 'delete', or 'show'",
+						},
+						"name": {
+							Type:        "string",
+							Description: "Tag name (required for create/delete/show actions)",
+						},
+						"pattern": {
+							Type:        "string",
+							Description: "Glob pattern to filter tags when listing (e.g., 'v1.*', 'release-*')",
+						},
+						"message": {
+							Type:        "string",
+							Description: "Tag message/description (for create action; creates an annotated tag)",
+						},
+						"annotated": {
+							Type:        "boolean",
+							Description: "Create annotated tag (true) or lightweight tag (false). Default: true for annotated.",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Force create/delete even if tag already exists or delete fails (default: false)",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum tags to return when listing (default: 50)",
+						},
+						"sort": {
+							Type:        "string",
+							Description: "Sort order for listing: 'version' (default), 'committerdate', or 'creatordate'",
 						},
 					},
 					Required: []string{"action"},

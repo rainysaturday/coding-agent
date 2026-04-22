@@ -188,6 +188,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeFileCompare(tc.Parameters)
 	case "changelog":
 		result = te.executeChangelog(tc.Parameters)
+	case "git_tag":
+		result = te.executeGitTag(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -9623,5 +9625,383 @@ func insertAfterHeader(content, toInsert string) string {
 	}
 	// No title found, prepend
 	return "# Changelog\n\n" + toInsert + "\n"
+}
+
+// executeGitTag manages git tags: list, create, delete, and show.
+func (te *ToolExecutor) executeGitTag(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "list":
+		return te.executeGitTagList(params)
+	case "create":
+		return te.executeGitTagCreate(params)
+	case "delete":
+		return te.executeGitTagDelete(params)
+	case "show":
+		return te.executeGitTagShow(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s. Valid actions: 'list', 'create', 'delete', 'show'", actionStr),
+		}
+	}
+}
+
+// executeGitTagList lists git tags with optional filtering.
+func (te *ToolExecutor) executeGitTagList(params map[string]interface{}) *ToolResult {
+	// Optional: filter by pattern
+	pattern, hasPattern := params["pattern"].(string)
+
+	// Optional: max number of results
+	maxResults := 50
+	if mr, ok := params["max_results"].(float64); ok {
+		maxResults = int(mr)
+	} else if mr, ok := params["max_results"].(int); ok {
+		maxResults = mr
+	} else if mr, ok := params["max_results"].(string); ok {
+		if n, err := strconv.Atoi(mr); err == nil {
+			maxResults = n
+		}
+	}
+
+	// Sort order (default: version sort)
+	sortOrder := "version"
+	if so, ok := params["sort"].(string); ok {
+		sortOrder = so
+	}
+
+	args := []string{"tag", "--sort=" + sortOrder}
+
+	if hasPattern {
+		args = append(args, pattern)
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git tag list failed: %s", string(output)),
+		}
+	}
+
+	tagLines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	// Filter empty lines
+	var tags []string
+	for _, line := range tagLines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			tags = append(tags, line)
+		}
+	}
+
+	// Limit results
+	if len(tags) > maxResults {
+		tags = tags[:maxResults]
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output: fmt.Sprintf("Found %d tag(s):\n\n%s", len(tags), strings.Join(tags, "\n")),
+		Extra: map[string]interface{}{
+			"tool":       "git_tag",
+			"action":     "list",
+			"totalTags":  len(tagLines),
+			"returned":   len(tags),
+			"pattern":    pattern,
+			"sortOrder":  sortOrder,
+		},
+	}
+
+	if !hasPattern {
+		result.Extra["pattern"] = "(none)"
+	}
+
+	return result
+}
+
+// executeGitTagCreate creates a new git tag.
+func (te *ToolExecutor) executeGitTagCreate(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"].(string)
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	// Validate tag name
+	if !isValidTagName(name) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid tag name: %s. Tag names must not contain spaces, tildes, carets, colons, or question marks", name),
+		}
+	}
+
+	// Check if tag already exists
+	checkCmd := exec.Command("git", "tag", "-l", name)
+	checkOutput, err := checkCmd.CombinedOutput()
+	if err == nil && strings.TrimSpace(string(checkOutput)) == name {
+		// Check if it's an existing tag
+		existingCmd := exec.Command("git", "tag", "-v", name, "/dev/null")
+		_, existingErr := existingCmd.CombinedOutput()
+		if existingErr == nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("tag '%s' already exists", name),
+				Extra: map[string]interface{}{
+					"tool":  "git_tag",
+					"action": "create",
+					"name":  name,
+				},
+			}
+		}
+	}
+
+	// Check for optional message
+	message, hasMessage := params["message"].(string)
+
+	// Check for optional force flag
+	force := false
+	if f, ok := params["force"].(bool); ok {
+		force = f
+	}
+
+	// Check for optional light weight flag
+	annotated := true // default
+	if lw, ok := params["annotated"].(bool); ok {
+		annotated = lw
+	} else if lw, ok := params["lightweight"].(bool); ok {
+		annotated = !lw
+	}
+
+	args := []string{"tag"}
+
+	if annotated {
+		args = append(args, "-a")
+		if hasMessage {
+			args = append(args, "-m", message)
+		} else {
+			// Lightweight annotated tag with no message
+			args = append(args, "-m", "")
+		}
+	}
+
+	if force {
+		args = append(args, "-f")
+	}
+
+	args = append(args, name)
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git tag create failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":        "git_tag",
+				"action":      "create",
+				"name":        name,
+				"annotated":   annotated,
+				"force":       force,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Created %s tag '%s'", map[bool]string{true: "annotated", false: "lightweight"}[annotated], name),
+		Extra: map[string]interface{}{
+			"tool":      "git_tag",
+			"action":    "create",
+			"name":      name,
+			"annotated": annotated,
+			"message":   message,
+		},
+	}
+}
+
+// executeGitTagDelete deletes a git tag.
+func (te *ToolExecutor) executeGitTagDelete(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"].(string)
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	// Check if tag exists
+	checkCmd := exec.Command("git", "tag", "-l", name)
+	checkOutput, err := checkCmd.CombinedOutput()
+	if err == nil && strings.TrimSpace(string(checkOutput)) != name {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("tag '%s' does not exist", name),
+			Extra: map[string]interface{}{
+				"tool":   "git_tag",
+				"action": "delete",
+				"name":   name,
+			},
+		}
+	}
+
+	args := []string{"tag", "-d", name}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git tag delete failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_tag",
+				"action": "delete",
+				"name":   name,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Deleted tag '%s'", name),
+		Extra: map[string]interface{}{
+			"tool":   "git_tag",
+			"action": "delete",
+			"name":   name,
+		},
+	}
+}
+
+// executeGitTagShow shows details about a specific git tag.
+func (te *ToolExecutor) executeGitTagShow(params map[string]interface{}) *ToolResult {
+	name, hasName := params["name"].(string)
+	if !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: name",
+		}
+	}
+
+	// First check if tag exists
+	checkCmd := exec.Command("git", "tag", "-l", name)
+	checkOutput, err := checkCmd.CombinedOutput()
+	if err == nil && strings.TrimSpace(string(checkOutput)) != name {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("tag '%s' does not exist", name),
+			Extra: map[string]interface{}{
+				"tool":   "git_tag",
+				"action": "show",
+				"name":   name,
+			},
+		}
+	}
+
+	// Get tag details using git show (includes tagger, date, message, object ref)
+	args := []string{"show", name}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git show %s failed: %s", name, string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_tag",
+				"action": "show",
+				"name":   name,
+			},
+		}
+	}
+
+	// Parse tag details from the output
+	tagType := "tag"
+	tagger := ""
+	taggerDate := ""
+	objectRef := ""
+	message := ""
+
+	outputStr := string(output)
+	lines := strings.Split(outputStr, "\n")
+
+	for i, line := range lines {
+		if strings.HasPrefix(line, "tag ") {
+			parts := strings.SplitN(line, " ", 3)
+			if len(parts) >= 2 {
+				tagType = strings.TrimSpace(parts[1])
+			}
+		}
+		if strings.HasPrefix(line, "Tagger:") {
+			tagger = strings.TrimSpace(strings.TrimPrefix(line, "Tagger:"))
+		}
+		if strings.HasPrefix(line, "Date:") {
+			taggerDate = strings.TrimSpace(strings.TrimPrefix(line, "Date:"))
+		}
+		if strings.HasPrefix(line, "Object:") {
+			objectRef = strings.TrimSpace(line)
+		}
+		// Message starts after the blank line following the tag metadata
+		if i > 0 && strings.TrimSpace(lines[i-1]) == "" && tagger != "" {
+			if message == "" {
+				message = strings.TrimSpace(line)
+			} else {
+				message += "\n" + strings.TrimSpace(line)
+			}
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  outputStr,
+		Extra: map[string]interface{}{
+			"tool":       "git_tag",
+			"action":     "show",
+			"name":       name,
+			"type":       tagType,
+			"tagger":     tagger,
+			"taggerDate": taggerDate,
+			"objectRef":  objectRef,
+			"message":    strings.TrimSpace(message),
+		},
+	}
+}
+
+// isValidTagName checks if a git tag name is valid.
+func isValidTagName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// Git tag names cannot contain: spaces, ~, ^, :, ?, *, [, \
+	for _, ch := range name {
+		switch ch {
+		case ' ', '~', '^', ':', '?', '*', '[', '\\':
+			return false
+		}
+	}
+	// Cannot start with - or /
+	if name[0] == '-' || name[0] == '/' {
+		return false
+	}
+	return true
 }
 

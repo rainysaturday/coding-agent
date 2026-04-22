@@ -1034,6 +1034,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"process_management": {"action"},
 		"env_var": {"action"},
 		"file_compare": {"file1", "file2"},
+		"changelog":     {},
+		"git_tag":       {"action"},
 	}
 
 	for _, tool := range toolDefs {
