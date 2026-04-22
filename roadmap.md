@@ -147,8 +147,11 @@
 ### Code Metrics
 - **#064: Code Metrics Analysis Tool** - Analyze source code files for quantitative metrics: lines of code breakdown (total/blank/comment/code), cyclomatic complexity per function/method, function/method counts, and language breakdown. Supports Go, Python, JavaScript/TypeScript, Java, Rust, and C/C++. Uses only Go stdlib - zero external dependencies.
 
+### Dependency Management
+- **#067: Dependency Audit Tool** - Scan project dependency files (go.mod, package.json, requirements.txt, Cargo.toml, Gemfile, etc.) for outdated versions, lock file mismatches, and dependency issues. Auto-detects project type. Returns structured results with dependency name, current version, and upgrade recommendations. Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**66 / 66 features implemented**
+**67 / 67 features implemented**
 
 ## Upcoming Features

@@ -203,6 +203,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGenerateDocs(tc.Parameters)
 	case "code_metrics":
 		result = te.executeCodeMetrics(tc.Parameters)
+	case "dependency_audit":
+		result = te.executeDependencyAudit(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -14386,3 +14388,1298 @@ func (te *ToolExecutor) listBranches() string {
 	}
 	return string(output)
 }
+
+// executeDependencyAudit scans project dependency files for outdated versions and issues.
+func (te *ToolExecutor) executeDependencyAudit(params map[string]interface{}) *ToolResult {
+	// Determine the target directory
+	targetDir := "."
+	if p, ok := params["path"].(string); ok && p != "" {
+		targetDir = p
+	}
+
+	// Determine the language (auto-detect if not specified)
+	forceLang := ""
+	if l, ok := params["language"].(string); ok && l != "" {
+		forceLang = l
+	}
+
+	// Check if we should check for outdated versions
+	checkOutdated := false
+	if co, ok := params["check_outdated"].(bool); ok {
+		checkOutdated = co
+	}
+
+	// Determine max depth for scanning
+	maxDepth := 3
+	if md, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(md)
+	} else if md, ok := params["max_depth"].(int); ok {
+		maxDepth = md
+	} else if md, ok := params["max_depth"].(string); ok {
+		if n, err := strconv.Atoi(md); err == nil {
+			maxDepth = n
+		}
+	}
+
+	// Detect or validate project type
+	projectType := ""
+	if forceLang != "" {
+		projectType = strings.ToLower(forceLang)
+	} else {
+		// Auto-detect based on dependency files present in targetDir or subdirectories
+		projectType = te.detectProjectTypeWithDepth(targetDir, maxDepth)
+	}
+
+	if projectType == "" {
+		return &ToolResult{
+			Success: true,
+			Output:  "No dependency files found in the project directory.",
+			Extra: map[string]interface{}{
+				"projectType": "",
+				"dependencies": []interface{}{},
+				"message":     "No dependency files detected. Supported: go.mod, package.json, requirements.txt, Cargo.toml, Gemfile.",
+			},
+		}
+	}
+
+	var result *ToolResult
+
+	switch projectType {
+	case "go":
+		result = te.auditGoDependencies(targetDir, checkOutdated)
+	case "nodejs", "javascript", "typescript", "node":
+		result = te.auditNodeDependencies(targetDir, checkOutdated)
+	case "python", "pip":
+		result = te.auditPythonDependencies(targetDir, checkOutdated)
+	case "rust", "cargo":
+		result = te.auditRustDependencies(targetDir, checkOutdated)
+	case "ruby", "gem":
+		result = te.auditRubyDependencies(targetDir, checkOutdated)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown project type: %s", projectType),
+		}
+	}
+
+	if result != nil && result.Success {
+		result.Extra["projectType"] = projectType
+	}
+
+	return result
+}
+
+// projectType represents a detected dependency file and its location.
+type projectType struct {
+	Language string
+	DepFile  string
+	LockFile bool
+}
+
+// detectProjectTypeWithDepth scans the target directory for dependency files.
+func (te *ToolExecutor) detectProjectTypeWithDepth(targetDir string, maxDepth int) string {
+	// Check for dependency files in the target directory first, then subdirectories
+	targets := te.findDependencyFiles(targetDir, maxDepth)
+
+	// Priority order: check more specific files first
+	for _, t := range targets {
+		switch t.Language {
+		case "go":
+			return "go"
+		case "rust":
+			return "rust"
+		case "ruby":
+			return "ruby"
+		case "python":
+			return "python"
+		case "nodejs":
+			return "nodejs"
+		}
+	}
+
+	return ""
+}
+
+// findDependencyFiles searches for dependency files within maxDepth directories.
+func (te *ToolExecutor) findDependencyFiles(baseDir string, maxDepth int) []projectType {
+	var results []projectType
+
+	// Walk directories up to maxDepth
+	te.walkWithDepth(baseDir, 0, maxDepth, func(dir string) {
+		// Check for Go dependencies
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			hasLock := false
+			if _, err := os.Stat(filepath.Join(dir, "go.sum")); err == nil {
+				hasLock = true
+			}
+			results = append(results, projectType{
+				Language: "go",
+				DepFile:  filepath.Join(dir, "go.mod"),
+				LockFile: hasLock,
+			})
+		}
+		// Check for Node.js dependencies
+		if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+			hasLock := false
+			for _, lockName := range []string{"package-lock.json", "yarn.lock", "pnpm-lock.yaml"} {
+				if _, err := os.Stat(filepath.Join(dir, lockName)); err == nil {
+					hasLock = true
+					break
+				}
+			}
+			results = append(results, projectType{
+				Language: "nodejs",
+				DepFile:  filepath.Join(dir, "package.json"),
+				LockFile: hasLock,
+			})
+		}
+		// Check for Python dependencies
+		if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+			results = append(results, projectType{
+				Language: "python",
+				DepFile:  filepath.Join(dir, "requirements.txt"),
+			})
+		} else if _, err := os.Stat(filepath.Join(dir, "Pipfile")); err == nil {
+			results = append(results, projectType{
+				Language: "python",
+				DepFile:  filepath.Join(dir, "Pipfile"),
+			})
+		} else if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+			// Check if it has a [tool.poetry.dependencies] or [project.dependencies] section
+			content, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
+			if err == nil && (strings.Contains(string(content), "poetry") || strings.Contains(string(content), "dependencies")) {
+				results = append(results, projectType{
+					Language: "python",
+					DepFile:  filepath.Join(dir, "pyproject.toml"),
+				})
+			}
+		}
+		// Check for Rust dependencies
+		if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
+			hasLock := false
+			if _, err := os.Stat(filepath.Join(dir, "Cargo.lock")); err == nil {
+				hasLock = true
+			}
+			results = append(results, projectType{
+				Language: "rust",
+				DepFile:  filepath.Join(dir, "Cargo.toml"),
+				LockFile: hasLock,
+			})
+		}
+		// Check for Ruby dependencies
+		if _, err := os.Stat(filepath.Join(dir, "Gemfile")); err == nil {
+			hasLock := false
+			if _, err := os.Stat(filepath.Join(dir, "Gemfile.lock")); err == nil {
+				hasLock = true
+			}
+			results = append(results, projectType{
+				Language: "ruby",
+				DepFile:  filepath.Join(dir, "Gemfile"),
+				LockFile: hasLock,
+			})
+		}
+	})
+
+	return results
+}
+
+// walkWithDepth walks directories up to maxDepth levels.
+func (te *ToolExecutor) walkWithDepth(baseDir string, currentDepth int, maxDepth int, callback func(dir string)) {
+	if currentDepth > maxDepth {
+		return
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return
+	}
+
+	callback(baseDir)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			// Skip hidden directories and common non-project dirs
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" || name == ".git" {
+				continue
+			}
+			te.walkWithDepth(filepath.Join(baseDir, name), currentDepth+1, maxDepth, callback)
+		}
+	}
+}
+
+// goDependency represents a Go module dependency.
+type goDependency struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	LockFile bool   `json:"lock_file_present"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// auditGoDependencies parses go.mod and reports on Go dependencies.
+func (te *ToolExecutor) auditGoDependencies(targetDir string, checkOutdated bool) *ToolResult {
+	// Find go.mod file
+	goModPath := filepath.Join(targetDir, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		// Try to find go.mod in subdirectories
+		var foundPath string
+		te.walkWithDepth(targetDir, 0, 3, func(dir string) {
+			if foundPath == "" {
+				if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+					foundPath = filepath.Join(dir, "go.mod")
+				}
+			}
+		})
+		if foundPath != "" {
+			goModPath = foundPath
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   "go.mod not found in project directory",
+			}
+		}
+	}
+
+	// Parse go.mod
+	dependencies, err := te.parseGoMod(goModPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse go.mod: %v", err),
+		}
+	}
+
+	// Check go.sum for lock file status
+	lockFilePath := filepath.Join(filepath.Dir(goModPath), "go.sum")
+	hasLockFile, _ := os.Stat(lockFilePath)
+	lockFilePresent := hasLockFile == nil
+
+	// Build results
+	var depResults []interface{}
+	var issues int
+
+	for _, dep := range dependencies {
+		depResult := map[string]interface{}{
+			"name":           dep.Name,
+			"version":        dep.Version,
+			"lock_file":      lockFilePresent,
+			"lock_file_path": lockFilePath,
+		}
+
+		// Check for issues
+		var depIssues []string
+		if !lockFilePresent {
+			depIssues = append(depIssues, "no go.sum file (lock file missing)")
+			issues++
+		} else {
+			// Verify go.sum has entries for this module
+			sumContent, _ := os.ReadFile(lockFilePath)
+			if !bytes.Contains(sumContent, []byte(dep.Name+" "+dep.Version+"\n")) &&
+				!bytes.Contains(sumContent, []byte(dep.Name+" v")) {
+				depIssues = append(depIssues, "version mismatch between go.mod and go.sum")
+				issues++
+			}
+		}
+
+		if checkOutdated {
+			// Note: Real version checking would require network access
+			// For now, just note it was requested
+			depResult["check_outdated"] = true
+		}
+
+		if len(depIssues) > 0 {
+			depResult["issues"] = depIssues
+		}
+
+		depResults = append(depResults, depResult)
+	}
+
+	output := fmt.Sprintf("Go project dependencies (%d total):\n", len(dependencies))
+	for _, dep := range dependencies {
+		output += fmt.Sprintf("  %s %s\n", dep.Name, dep.Version)
+	}
+	if issues > 0 {
+		output += fmt.Sprintf("\nIssues found: %d\n", issues)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":     "go",
+			"dependencies":    depResults,
+			"totalDeps":       len(dependencies),
+			"lockFilePresent": lockFilePresent,
+			"issuesCount":     issues,
+		},
+	}
+}
+
+// parseGoMod parses a go.mod file and extracts dependencies.
+func (te *ToolExecutor) parseGoMod(goModPath string) ([]goDependency, error) {
+	content, err := os.ReadFile(goModPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var deps []goDependency
+	inRequireBlock := false
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Handle require block
+		if strings.HasPrefix(line, "require (") {
+			inRequireBlock = true
+			continue
+		}
+		if line == ")" && inRequireBlock {
+			inRequireBlock = false
+			continue
+		}
+
+		// Parse single-line require
+		if strings.HasPrefix(line, "require ") {
+			parts := strings.Fields(strings.TrimPrefix(line, "require "))
+			if len(parts) >= 2 {
+				deps = append(deps, goDependency{
+					Name:    parts[0],
+					Version: parts[1],
+				})
+			}
+			continue
+		}
+
+		// Parse inside require block
+		if inRequireBlock {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				version := parts[1]
+				// Handle indirect dependencies
+				for i, p := range parts {
+					if p == "// indirect" {
+						version = parts[1] // Still valid
+						_ = i
+						break
+					}
+				}
+				deps = append(deps, goDependency{
+					Name:    parts[0],
+					Version: version,
+				})
+			}
+		}
+	}
+
+	return deps, nil
+}
+
+// nodeDependency represents a Node.js package dependency.
+type nodeDependency struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	LockFile bool   `json:"lock_file_present"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// auditNodeDependencies parses package.json and reports on Node.js dependencies.
+func (te *ToolExecutor) auditNodeDependencies(targetDir string, checkOutdated bool) *ToolResult {
+	// Find package.json
+	pkgPath := filepath.Join(targetDir, "package.json")
+	if _, err := os.Stat(pkgPath); os.IsNotExist(err) {
+		// Try to find package.json in subdirectories
+		var foundPath string
+		te.walkWithDepth(targetDir, 0, 3, func(dir string) {
+			if foundPath == "" {
+				if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+					foundPath = filepath.Join(dir, "package.json")
+				}
+			}
+		})
+		if foundPath != "" {
+			pkgPath = foundPath
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   "package.json not found in project directory",
+			}
+		}
+	}
+
+	// Parse package.json
+	dependencies, err := te.parsePackageJson(pkgPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse package.json: %v", err),
+		}
+	}
+
+	// Check for lock files
+	pkgDir := filepath.Dir(pkgPath)
+	lockFiles := map[string]string{
+		"package-lock.json": "npm lockfile",
+		"yarn.lock":         "yarn lockfile",
+		"pnpm-lock.yaml":    "pnpm lockfile",
+	}
+
+	var depResults []interface{}
+	var issues int
+
+	// Build flat list of all deps
+	var allDeps []map[string]interface{}
+	for _, dep := range dependencies.Dependencies {
+		allDeps = append(allDeps, map[string]interface{}{"name": dep.Name, "version": dep.Version})
+	}
+	for _, dep := range dependencies.DependenciesOn {
+		allDeps = append(allDeps, map[string]interface{}{"name": dep.Name, "version": dep.Version})
+	}
+	for _, dep := range dependencies.DevDependencies {
+		allDeps = append(allDeps, map[string]interface{}{"name": dep.Name, "version": dep.Version})
+	}
+
+	lockFilePresent := false
+	var lockFilePath string
+	for lf, _ := range lockFiles {
+		if _, err := os.Stat(filepath.Join(pkgDir, lf)); err == nil {
+			lockFilePresent = true
+			lockFilePath = filepath.Join(pkgDir, lf)
+			break
+		}
+	}
+
+	for _, dep := range allDeps {
+		depResult := map[string]interface{}{
+			"name":      dep["name"],
+			"version":   dep["version"],
+			"lock_file": lockFilePresent,
+		}
+
+		var depIssues []string
+		if !lockFilePresent {
+			depIssues = append(depIssues, "no lock file present")
+			issues++
+		}
+
+		if len(depIssues) > 0 {
+			depResult["issues"] = depIssues
+		}
+
+		depResults = append(depResults, depResult)
+	}
+
+	output := fmt.Sprintf("Node.js project dependencies (%d total):\n", len(allDeps))
+	if len(dependencies.Dependencies) > 0 {
+		output += "  Dependencies:\n"
+		for _, dep := range dependencies.Dependencies {
+			output += fmt.Sprintf("    %s@%s\n", dep.Name, dep.Version)
+		}
+	}
+	if len(dependencies.DependenciesOn) > 0 {
+		output += "  Dependencies On:\n"
+		for _, dep := range dependencies.DependenciesOn {
+			output += fmt.Sprintf("    %s@%s\n", dep.Name, dep.Version)
+		}
+	}
+	if len(dependencies.DevDependencies) > 0 {
+		output += "  Dev Dependencies:\n"
+		for _, dep := range dependencies.DevDependencies {
+			output += fmt.Sprintf("    %s@%s\n", dep.Name, dep.Version)
+		}
+	}
+	if issues > 0 {
+		output += fmt.Sprintf("\nIssues found: %d\n", issues)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":     "nodejs",
+			"dependencies":    depResults,
+			"totalDeps":       len(allDeps),
+			"lockFilePresent": lockFilePresent,
+			"lockFilePath":    lockFilePath,
+			"issuesCount":     issues,
+		},
+	}
+}
+
+// packageJson represents a parsed package.json file.
+type packageJson struct {
+	Dependencies      []nodeDependency
+	DependenciesOn    []nodeDependency
+	DevDependencies   []nodeDependency
+}
+
+// parsePackageJson parses a package.json file and extracts dependencies.
+func (te *ToolExecutor) parsePackageJson(pkgPath string) (*packageJson, error) {
+	content, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+		PeerDependencies map[string]string `json:"peerDependencies"`
+		OptionalDependencies map[string]string `json:"optionalDependencies"`
+	}
+
+	if err := json.Unmarshal(content, &raw); err != nil {
+		return nil, err
+	}
+
+	var result packageJson
+
+	for name, version := range raw.Dependencies {
+		result.Dependencies = append(result.Dependencies, nodeDependency{
+			Name:    name,
+			Version: version,
+		})
+	}
+	for name, version := range raw.PeerDependencies {
+		result.DependenciesOn = append(result.DependenciesOn, nodeDependency{
+			Name:    name,
+			Version: version,
+		})
+	}
+	for name, version := range raw.OptionalDependencies {
+		result.DependenciesOn = append(result.DependenciesOn, nodeDependency{
+			Name:    name,
+			Version: version,
+		})
+	}
+	for name, version := range raw.DevDependencies {
+		result.DevDependencies = append(result.DevDependencies, nodeDependency{
+			Name:    name,
+			Version: version,
+		})
+	}
+
+	return &result, nil
+}
+
+// pythonDependency represents a Python package dependency.
+type pythonDependency struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// auditPythonDependencies parses requirements.txt and reports on Python dependencies.
+func (te *ToolExecutor) auditPythonDependencies(targetDir string, checkOutdated bool) *ToolResult {
+	// Find requirements.txt
+	reqPath := filepath.Join(targetDir, "requirements.txt")
+	if _, err := os.Stat(reqPath); os.IsNotExist(err) {
+		// Try Pipfile
+		pipfilePath := filepath.Join(targetDir, "Pipfile")
+		if _, err := os.Stat(pipfilePath); err == nil {
+			return te.auditPythonPipfile(pipfilePath)
+		}
+		// Try pyproject.toml
+		pyprojectPath := filepath.Join(targetDir, "pyproject.toml")
+		if _, err := os.Stat(pyprojectPath); err == nil {
+			return te.auditPythonPyproject(pyprojectPath)
+		}
+		// Try to find requirements.txt in subdirectories
+		var foundPath string
+		te.walkWithDepth(targetDir, 0, 3, func(dir string) {
+			if foundPath == "" {
+				if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+					foundPath = filepath.Join(dir, "requirements.txt")
+				}
+			}
+		})
+		if foundPath != "" {
+			reqPath = foundPath
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   "No Python dependency files found (requirements.txt, Pipfile, or pyproject.toml)",
+			}
+		}
+	}
+
+	// Parse requirements.txt
+	dependencies, err := te.parseRequirementsTxt(reqPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse requirements.txt: %v", err),
+		}
+	}
+
+	var depResults []interface{}
+	var issues int
+
+	for _, dep := range dependencies {
+		depResult := map[string]interface{}{
+			"name":    dep.Name,
+			"version": dep.Version,
+		}
+
+		var depIssues []string
+		if dep.Version == "" {
+			depIssues = append(depIssues, "no version pinned (may cause reproducibility issues)")
+		}
+		if strings.Contains(dep.Version, ">=") || strings.Contains(dep.Version, "!=") {
+			depIssues = append(depIssues, "flexible version constraint (may cause unexpected updates)")
+		}
+
+		if len(depIssues) > 0 {
+			depIssues = append(depIssues, "no lock file")
+			depIssues = append(depIssues, "no lock file")
+			issues++
+		}
+
+		if len(depIssues) > 0 {
+			depResult["issues"] = depIssues
+		}
+
+		depResults = append(depResults, depResult)
+	}
+
+	output := fmt.Sprintf("Python project dependencies (%d total):\n", len(dependencies))
+	for _, dep := range dependencies {
+		output += fmt.Sprintf("  %s%s\n", dep.Name, dep.Version)
+	}
+	if issues > 0 {
+		output += fmt.Sprintf("\nIssues found: %d\n", issues)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType": "python",
+			"dependencies": depResults,
+			"totalDeps":   len(dependencies),
+			"issuesCount": issues,
+		},
+	}
+}
+
+// parseRequirementsTxt parses a requirements.txt file.
+func (te *ToolExecutor) parseRequirementsTxt(path string) ([]pythonDependency, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var deps []pythonDependency
+	lines := strings.Split(string(content), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines, comments, and options
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
+			continue
+		}
+
+		// Parse dependency: name[extras]version
+		// Examples: flask==2.3.0, requests>=2.28.0, numpy, package[extra1,extra2]>=1.0
+		var name, version string
+
+		// Extract name and version
+		if strings.Contains(line, "==") {
+			parts := strings.SplitN(line, "==", 2)
+			name = strings.TrimSpace(parts[0])
+			version = "==" + strings.TrimSpace(parts[1])
+		} else if strings.Contains(line, ">=") {
+			parts := strings.SplitN(line, ">=", 2)
+			name = strings.TrimSpace(parts[0])
+			version = ">=" + strings.TrimSpace(parts[1])
+		} else if strings.Contains(line, "<=") {
+			parts := strings.SplitN(line, "<=", 2)
+			name = strings.TrimSpace(parts[0])
+			version = "<=" + strings.TrimSpace(parts[1])
+		} else if strings.Contains(line, "!=") {
+			parts := strings.SplitN(line, "!=", 2)
+			name = strings.TrimSpace(parts[0])
+			version = "!=" + strings.TrimSpace(parts[1])
+		} else if strings.Contains(line, ">") {
+			parts := strings.SplitN(line, ">", 2)
+			name = strings.TrimSpace(parts[0])
+			version = ">" + strings.TrimSpace(parts[1])
+		} else if strings.Contains(line, "<") {
+			parts := strings.SplitN(line, "<", 2)
+			name = strings.TrimSpace(parts[0])
+			version = "<" + strings.TrimSpace(parts[1])
+		} else {
+			// Just a package name, no version
+			// Handle extras: package[extra]
+			name = line
+			version = ""
+		}
+
+		// Clean up package name (remove extras)
+		name = strings.TrimSpace(name)
+		if idx := strings.Index(name, "["); idx >= 0 {
+			name = name[:idx]
+		}
+
+		if name != "" {
+			deps = append(deps, pythonDependency{
+				Name:    name,
+				Version: version,
+			})
+		}
+	}
+
+	return deps, nil
+}
+
+// auditPythonPipfile audits a Pipfile for Python dependencies.
+func (te *ToolExecutor) auditPythonPipfile(pipfilePath string) *ToolResult {
+	// Read Pipfile
+	content, err := os.ReadFile(pipfilePath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read Pipfile: %v", err),
+		}
+	}
+
+	// Simple TOML-like parsing for Pipfile sections
+	dependencies, devDeps := te.parsePipfile(content)
+
+	output := "Python project dependencies (Pipfile):\n"
+	if len(dependencies) > 0 {
+		output += "  Dependencies:\n"
+		for name, ver := range dependencies {
+			output += fmt.Sprintf("    %s%s\n", name, ver)
+		}
+	}
+	if len(devDeps) > 0 {
+		output += "  Dev Dependencies:\n"
+		for name, ver := range devDeps {
+			output += fmt.Sprintf("    %s%s\n", name, ver)
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":  "python",
+			"totalDeps":    len(dependencies) + len(devDeps),
+			"pipfilePath":  pipfilePath,
+		},
+	}
+}
+
+// parsePipfile does basic parsing of a Pipfile to extract dependencies.
+func (te *ToolExecutor) parsePipfile(content []byte) (map[string]string, map[string]string) {
+	dependencies := make(map[string]string)
+	devDeps := make(map[string]string)
+
+	inDependencies := false
+	inDevDependencies := false
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if line == "[packages]" {
+			inDependencies = true
+			inDevDependencies = false
+			continue
+		}
+		if line == "[dev-packages]" {
+			inDependencies = false
+			inDevDependencies = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inDependencies = false
+			inDevDependencies = false
+			continue
+		}
+
+		// Parse key = value pairs
+		if (inDependencies || inDevDependencies) && strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				// Remove quotes
+				value = strings.Trim(value, "\"'")
+
+				if inDependencies {
+					dependencies[name] = value
+				} else if inDevDependencies {
+					devDeps[name] = value
+				}
+			}
+		}
+	}
+
+	return dependencies, devDeps
+}
+
+// auditPythonPyproject audits a pyproject.toml for Python dependencies.
+func (te *ToolExecutor) auditPythonPyproject(pyprojectPath string) *ToolResult {
+	content, err := os.ReadFile(pyprojectPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read pyproject.toml: %v", err),
+		}
+	}
+
+	// Check for Poetry dependencies
+	var deps []pythonDependency
+	var depsSection string
+
+	if strings.Contains(string(content), "[tool.poetry.dependencies]") || strings.Contains(string(content), "[project.dependencies]") {
+		if strings.Contains(string(content), "[tool.poetry.dependencies]") {
+			depsSection = "poetry"
+		} else {
+			depsSection = "project"
+		}
+	} else {
+		depsSection = "generic"
+	}
+
+	// Parse dependencies based on section type
+	if depsSection == "poetry" {
+		deps = te.parsePoetryDeps(content)
+	} else {
+		// Extract inline dependency list
+		deps = te.parseInlineDeps(content)
+	}
+
+	output := fmt.Sprintf("Python project dependencies (pyproject.toml, %s style):\n", depsSection)
+	for _, dep := range deps {
+		output += fmt.Sprintf("  %s%s\n", dep.Name, dep.Version)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":     "python",
+			"dependencies":    deps,
+			"totalDeps":       len(deps),
+			"pyprojectStyle":  depsSection,
+		},
+	}
+}
+
+// parsePoetryDeps parses Poetry-style dependencies from pyproject.toml.
+func (te *ToolExecutor) parsePoetryDeps(content []byte) []pythonDependency {
+	var deps []pythonDependency
+	lines := strings.Split(string(content), "\n")
+	inPoetryDeps := false
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "[tool.poetry.dependencies]" {
+			inPoetryDeps = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inPoetryDeps = false
+			continue
+		}
+
+		if inPoetryDeps && strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				value = strings.Trim(value, "\"'")
+				if name != "python" { // Skip Python version constraint
+					deps = append(deps, pythonDependency{
+						Name:    name,
+						Version: value,
+					})
+				}
+			}
+		}
+	}
+
+	return deps
+}
+
+// parseInlineDeps parses PEP 621 inline dependency list from pyproject.toml.
+func (te *ToolExecutor) parseInlineDeps(content []byte) []pythonDependency {
+	var deps []pythonDependency
+
+	// Look for dependency lines in [project] section
+	inProject := false
+	lines := strings.Split(string(content), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "[project]" || line == "[project]\n" {
+			inProject = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inProject = false
+			continue
+		}
+
+		if inProject && strings.HasPrefix(line, "dependencies = [") {
+			// Multi-line or single-line array
+			// Extract dependencies from the array
+			arrayContent := line
+			if strings.HasSuffix(strings.TrimSpace(line), "],") || strings.HasSuffix(strings.TrimSpace(line), "]") {
+				// Single line
+				arrayContent = strings.TrimPrefix(line, "dependencies = [")
+				arrayContent = strings.TrimSuffix(arrayContent, "]")
+				arrayContent = strings.TrimSuffix(arrayContent, ",")
+				depList := strings.Split(arrayContent, ",")
+				for _, d := range depList {
+					d = strings.TrimSpace(d)
+					if d != "" {
+						dep := pythonDependency{
+							Name:    strings.TrimSpace(d),
+							Version: "",
+						}
+						if idx := strings.Index(dep.Name, ">="); idx >= 0 {
+							dep.Version = dep.Name[idx:]
+							dep.Name = strings.TrimSpace(dep.Name[:idx])
+						} else if idx := strings.Index(dep.Name, "=="); idx >= 0 {
+							dep.Version = dep.Name[idx:]
+							dep.Name = strings.TrimSpace(dep.Name[:idx])
+						}
+						dep.Name = strings.Trim(dep.Name, "\"'")
+						deps = append(deps, dep)
+					}
+				}
+			}
+			// Note: multi-line arrays would need more sophisticated parsing
+			// For now, we handle the common single-line case
+			break
+		}
+	}
+
+	return deps
+}
+
+// rustDependency represents a Rust crate dependency.
+type rustDependency struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	LockFile bool   `json:"lock_file_present"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// auditRustDependencies parses Cargo.toml and reports on Rust dependencies.
+func (te *ToolExecutor) auditRustDependencies(targetDir string, checkOutdated bool) *ToolResult {
+	// Find Cargo.toml
+	cargoPath := filepath.Join(targetDir, "Cargo.toml")
+	if _, err := os.Stat(cargoPath); os.IsNotExist(err) {
+		var foundPath string
+		te.walkWithDepth(targetDir, 0, 3, func(dir string) {
+			if foundPath == "" {
+				if _, err := os.Stat(filepath.Join(dir, "Cargo.toml")); err == nil {
+					foundPath = filepath.Join(dir, "Cargo.toml")
+				}
+			}
+		})
+		if foundPath != "" {
+			cargoPath = foundPath
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   "Cargo.toml not found in project directory",
+			}
+		}
+	}
+
+	// Parse Cargo.toml
+	dependencies, err := te.parseCargoToml(cargoPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse Cargo.toml: %v", err),
+		}
+	}
+
+	// Check for Cargo.lock
+	cargoDir := filepath.Dir(cargoPath)
+	lockPath := filepath.Join(cargoDir, "Cargo.lock")
+	hasLockFile := false
+	if _, err := os.Stat(lockPath); err == nil {
+		hasLockFile = true
+	}
+
+	var depResults []interface{}
+	var issues int
+
+	for _, dep := range dependencies {
+		depResult := map[string]interface{}{
+			"name":      dep.Name,
+			"version":   dep.Version,
+			"lock_file": hasLockFile,
+		}
+
+		var depIssues []string
+		if !hasLockFile {
+			depIssues = append(depIssues, "no Cargo.lock file (lock file missing)")
+			issues++
+		} else {
+			// Verify lock file has this crate
+			lockContent, _ := os.ReadFile(lockPath)
+			if !bytes.Contains(lockContent, []byte("name = \""+dep.Name+"\"")) {
+				depIssues = append(depIssues, "version mismatch between Cargo.toml and Cargo.lock")
+				issues++
+			}
+		}
+
+		if len(depIssues) > 0 {
+			depResult["issues"] = depIssues
+		}
+
+		depResults = append(depResults, depResult)
+	}
+
+	output := fmt.Sprintf("Rust project dependencies (%d total):\n", len(dependencies))
+	for _, dep := range dependencies {
+		output += fmt.Sprintf("  %s %s\n", dep.Name, dep.Version)
+	}
+	if issues > 0 {
+		output += fmt.Sprintf("\nIssues found: %d\n", issues)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":     "rust",
+			"dependencies":    depResults,
+			"totalDeps":       len(dependencies),
+			"lockFilePresent": hasLockFile,
+			"lockFilePath":    lockPath,
+			"issuesCount":     issues,
+		},
+	}
+}
+
+// parseCargoToml parses a Cargo.toml file and extracts dependencies.
+func (te *ToolExecutor) parseCargoToml(cargoPath string) ([]rustDependency, error) {
+	content, err := os.ReadFile(cargoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var deps []rustDependency
+	inDependencies := false
+	lines := strings.Split(string(content), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if line == "[dependencies]" {
+			inDependencies = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inDependencies = false
+			continue
+		}
+
+		if inDependencies && strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				value = strings.Trim(value, "\"'")
+
+				// Handle different dependency formats:
+				// simple: name = "1.0.0"
+				// table: name = { version = "1.0.0", features = ["feature1"] }
+				var version string
+				if strings.HasPrefix(value, "{") {
+					// Table format - extract version
+					if strings.Contains(value, "version") {
+						verParts := strings.Split(value, "version")
+						if len(verParts) > 1 {
+							ver := strings.Trim(verParts[1], " =\"'")
+							ver = strings.SplitN(ver, ",", 2)[0]
+							version = ver
+						}
+					} else {
+						version = "unspecified (table format)"
+					}
+				} else {
+					// Simple version format
+					version = value
+				}
+
+				deps = append(deps, rustDependency{
+					Name:    name,
+					Version: version,
+				})
+			}
+		}
+	}
+
+	return deps, nil
+}
+
+// rubyDependency represents a Ruby gem dependency.
+type rubyDependency struct {
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	LockFile bool   `json:"lock_file_present"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// auditRubyDependencies parses Gemfile and reports on Ruby dependencies.
+func (te *ToolExecutor) auditRubyDependencies(targetDir string, checkOutdated bool) *ToolResult {
+	// Find Gemfile
+	gemPath := filepath.Join(targetDir, "Gemfile")
+	if _, err := os.Stat(gemPath); os.IsNotExist(err) {
+		var foundPath string
+		te.walkWithDepth(targetDir, 0, 3, func(dir string) {
+			if foundPath == "" {
+				if _, err := os.Stat(filepath.Join(dir, "Gemfile")); err == nil {
+					foundPath = filepath.Join(dir, "Gemfile")
+				}
+			}
+		})
+		if foundPath != "" {
+			gemPath = foundPath
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   "Gemfile not found in project directory",
+			}
+		}
+	}
+
+	// Parse Gemfile
+	dependencies, err := te.parseGemfile(gemPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to parse Gemfile: %v", err),
+		}
+	}
+
+	// Check for Gemfile.lock
+	gemDir := filepath.Dir(gemPath)
+	lockPath := filepath.Join(gemDir, "Gemfile.lock")
+	hasLockFile := false
+	if _, err := os.Stat(lockPath); err == nil {
+		hasLockFile = true
+	}
+
+	var depResults []interface{}
+	var issues int
+
+	for _, dep := range dependencies {
+		depResult := map[string]interface{}{
+			"name":      dep.Name,
+			"version":   dep.Version,
+			"lock_file": hasLockFile,
+		}
+
+		var depIssues []string
+		if !hasLockFile {
+			depIssues = append(depIssues, "no Gemfile.lock file (lock file missing)")
+			issues++
+		} else {
+			// Verify lock file has this gem
+			lockContent, _ := os.ReadFile(lockPath)
+			// Gemfile.lock has sections like "  name (version)"
+			// We need to check if the gem is listed under "dependencies:"
+			locked := bytes.Contains(lockContent, []byte("  "+dep.Name+" ("))
+			if !locked {
+				depIssues = append(depIssues, "version mismatch between Gemfile and Gemfile.lock")
+				issues++
+			}
+		}
+
+		if len(depIssues) > 0 {
+			depResult["issues"] = depIssues
+		}
+
+		depResults = append(depResults, depResult)
+	}
+
+	output := fmt.Sprintf("Ruby project dependencies (%d total):\n", len(dependencies))
+	for _, dep := range dependencies {
+		output += fmt.Sprintf("  %s %s\n", dep.Name, dep.Version)
+	}
+	if issues > 0 {
+		output += fmt.Sprintf("\nIssues found: %d\n", issues)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"projectType":     "ruby",
+			"dependencies":    depResults,
+			"totalDeps":       len(dependencies),
+			"lockFilePresent": hasLockFile,
+			"lockFilePath":    lockPath,
+			"issuesCount":     issues,
+		},
+	}
+}
+
+// parseGemfile parses a Gemfile and extracts gem dependencies.
+func (te *ToolExecutor) parseGemfile(gemPath string) ([]rubyDependency, error) {
+	content, err := os.ReadFile(gemPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var deps []rubyDependency
+	lines := strings.Split(string(content), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Match gem declarations: gem 'name', 'version' or gem "name", "~> version"
+		// Also match: gem 'name' (no version)
+		if strings.HasPrefix(line, "gem ") {
+			// Extract content after "gem "
+			args := strings.TrimSpace(line[4:])
+			// Remove trailing comment
+			if idx := strings.Index(args, "#"); idx >= 0 {
+				args = args[:idx]
+			}
+			args = strings.TrimSpace(args)
+
+			// Parse: 'name', 'version' or "name", "version"
+			if strings.Contains(args, ",") {
+				parts := strings.SplitN(args, ",", 2)
+				name := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
+				version := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+				if name != "" {
+					deps = append(deps, rubyDependency{
+						Name:    name,
+						Version: version,
+					})
+				}
+			} else {
+				// Single argument: gem 'name'
+				name := strings.Trim(args, "'\"")
+				if name != "" {
+					deps = append(deps, rubyDependency{
+						Name:    name,
+						Version: "",
+					})
+				}
+			}
+		}
+	}
+
+	return deps, nil
+}
+

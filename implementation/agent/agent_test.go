@@ -1042,7 +1042,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_revert":    {"action"},
 		"git_rebase":    {"action"},
 		"generate_docs": {"path"},
-		"code_metrics": {"path"},
+		"code_metrics":  {"path"},
+		"dependency_audit": {},
 	}
 
 	for _, tool := range toolDefs {

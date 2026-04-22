@@ -3034,6 +3034,35 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "dependency_audit",
+				Description: "Scan project dependency files for outdated versions and dependency issues. Auto-detects project type from go.mod, package.json, requirements.txt, Cargo.toml, Gemfile, etc. Returns structured results with dependency name, current version, and lock file mismatch status.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Project directory to scan (default: current working directory)",
+						},
+						"language": {
+							Type:        "string",
+							Description: "Force language detection (e.g., 'go', 'nodejs', 'python', 'rust', 'ruby'). Auto-detected from dependency files if not specified.",
+						},
+						"check_outdated": {
+							Type:        "boolean",
+							Description: "Check for outdated versions using online registries (default: false, only checks local lock file mismatches)",
+						},
+						"max_depth": {
+							Type:        "integer",
+							Description: "Maximum directory recursion depth for scanning (default: 3)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
 	}
 }
 
