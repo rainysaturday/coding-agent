@@ -117,8 +117,11 @@
 ### File Management
 - **#054: File Rename with Reference Update** - Rename or move a file and automatically update all code references (imports, includes, requires, etc.) across the codebase. Supports custom search paths to limit the scope of reference updates. Uses only Go stdlib (no external dependencies).
 
+### Process Management
+- **#055: Process Management Tool** - Manage running processes and check system resources: process_list (list/filter processes), process_kill (kill by PID or name), port_check (check TCP/UDP ports), system_info (CPU/memory/disk usage).
+
 ## Completed Feature Count
 
-**54 / 54 features implemented**
+**55 / 55 features implemented**
 
 ## Upcoming Features

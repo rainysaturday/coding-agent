@@ -1562,6 +1562,23 @@ AVAILABLE TOOLS:
     Example use case: run_lint() to auto-detect and lint the current project, run_lint(command='go vet ./...') to run go vet specifically, run_lint(command='eslint .', args=['--fix']) to auto-fix ESLint issues.
     Note: Auto-detection runs 'go vet ./...' or 'gofmt -l .' for Go projects, 'flake8 .' or 'pylint .' for Python projects, 'eslint .' for Node.js projects.
 
+29. process_management
+    Description: Manage running processes and check system resources. Supports four actions: process_list, process_kill, port_check, and system_info.
+    Parameters:
+      - action (string, required): Action to perform: 'process_list', 'process_kill', 'port_check', or 'system_info'
+      - filter (string, optional): Regex pattern to filter process names (for process_list)
+      - user (string, optional): Filter by username (for process_list, Linux only)
+      - limit (integer, optional): Maximum number of results (for process_list, default: 50)
+      - sort (string, optional): Sort by 'pid', 'cpu', or 'memory' (for process_list, default: 'pid')
+      - pid (integer, optional): Process ID to kill (for process_kill)
+      - name (string, optional): Process name to kill (for process_kill)
+      - force (boolean, optional): Use SIGKILL instead of SIGTERM (for process_kill, default: false)
+      - port (integer, optional): Port number to check (for port_check)
+      - protocol (string, optional): Protocol to check: 'tcp' or 'udp' (for port_check, default: 'tcp')
+      - format (string, optional): Output format: 'short' or 'detailed' (for system_info, default: 'short')
+    How to call: Use process_management when you need to manage running processes, check if ports are in use, or view system resource usage.
+    Example use case: process_management(action='process_list', filter='python') to find Python processes, process_management(action='port_check', port=8080) to check if port 8080 is in use, process_management(action='system_info') to view CPU/memory/disk usage.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2490,6 +2507,63 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "process_management",
+				Description: "Manage running processes and check system resources. Supports four actions: process_list (list/filter processes), process_kill (kill by PID or name), port_check (check if a TCP/UDP port is in use), and system_info (CPU/memory/disk usage).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'process_list', 'process_kill', 'port_check', or 'system_info'",
+						},
+						"filter": {
+							Type:        "string",
+							Description: "Regex pattern to filter process names (for process_list)",
+						},
+						"user": {
+							Type:        "string",
+							Description: "Filter by username (for process_list, Linux only)",
+						},
+						"limit": {
+							Type:        "integer",
+							Description: "Maximum number of results (for process_list, default: 50)",
+						},
+						"sort": {
+							Type:        "string",
+							Description: "Sort order: 'pid', 'cpu', or 'memory' (for process_list, default: 'pid')",
+						},
+						"pid": {
+							Type:        "integer",
+							Description: "Process ID to kill (for process_kill)",
+						},
+						"name": {
+							Type:        "string",
+							Description: "Process name to kill (for process_kill, kills first match)",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Use SIGKILL instead of SIGTERM (for process_kill, default: false)",
+						},
+						"port": {
+							Type:        "integer",
+							Description: "Port number to check (for port_check)",
+						},
+						"protocol": {
+							Type:        "string",
+							Description: "Protocol to check: 'tcp' or 'udp' (for port_check, default: 'tcp')",
+						},
+						"format": {
+							Type:        "string",
+							Description: "Output format: 'short' or 'detailed' (for system_info, default: 'short')",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

@@ -13,9 +13,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/template"
 	"time"
 )
@@ -178,6 +180,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeProjectDiagnostics(tc.Parameters)
 	case "run_lint":
 		result = te.executeRunLint(tc.Parameters)
+	case "process_management":
+		result = te.executeProcessManagement(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -7483,4 +7487,1036 @@ func (te *ToolExecutor) generateLintSummary(output string, linted bool, command 
 	summary.WriteString(fmt.Sprintf("\nCommand: %s", command))
 
 	return summary.String()
+}
+
+// executeProcessManagement handles process management operations: process_list, process_kill, port_check, system_info.
+func (te *ToolExecutor) executeProcessManagement(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action (process_list, process_kill, port_check, system_info)",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "process_list":
+		return te.executeProcessList(params)
+	case "process_kill":
+		return te.executeProcessKill(params)
+	case "port_check":
+		return te.executePortCheck(params)
+	case "system_info":
+		return te.executeSystemInfo(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error: fmt.Sprintf("unknown action: %s. Valid actions: process_list, process_kill, port_check, system_info", actionStr),
+		}
+	}
+}
+
+// processEntry represents a single process in the process list.
+type processEntry struct {
+	PID        int     `json:"pid"`
+	Name       string  `json:"name"`
+	User       string  `json:"user,omitempty"`
+	CPUPercent float64 `json:"cpu_percent,omitempty"`
+	MemoryMB   float64 `json:"memory_mb,omitempty"`
+	CommandLine string `json:"command_line,omitempty"`
+}
+
+// executeProcessList lists running processes with optional filtering.
+func (te *ToolExecutor) executeProcessList(params map[string]interface{}) *ToolResult {
+	// Filter by name/regex
+	filter, hasFilter := params["filter"].(string)
+	// Filter by user
+	user, hasUser := params["user"].(string)
+	// Limit results
+	limit := 50
+	hasLimit := false
+	if limitParam, ok := params["limit"]; ok {
+		hasLimit = true
+		switch v := limitParam.(type) {
+		case float64:
+			limit = int(v)
+		case int:
+			limit = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				limit = n
+			}
+		}
+	}
+	// Sort order
+	sortBy := "pid"
+	hasSort := false
+	if sortParam, ok := params["sort"]; ok {
+		hasSort = true
+		switch v := sortParam.(type) {
+		case string:
+			sortBy = v
+		}
+	}
+
+	// Get processes based on OS
+	var processes []processEntry
+	var err error
+
+	switch getOS() {
+	case "linux":
+		processes, err = te.listProcessesFromProc(user)
+	case "darwin":
+		processes, err = te.listProcessesFromPs(user)
+	default:
+		// Windows or other - fall back to ps
+		processes, err = te.listProcessesFromPs(user)
+	}
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to list processes: %v", err),
+		}
+	}
+
+	// Apply filter if specified
+	if hasFilter && filter != "" {
+		re, err2 := regexp.Compile(filter)
+		if err2 != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("invalid filter regex: %v", err2),
+			}
+		}
+		filtered := make([]processEntry, 0, len(processes))
+		for _, p := range processes {
+			if re.MatchString(p.Name) || re.MatchString(p.CommandLine) {
+				filtered = append(filtered, p)
+			}
+		}
+		processes = filtered
+	}
+
+	// Apply sort
+	switch sortBy {
+	case "cpu":
+		sort.Slice(processes, func(i, j int) bool {
+			return processes[i].CPUPercent > processes[j].CPUPercent
+		})
+	case "memory":
+		sort.Slice(processes, func(i, j int) bool {
+			return processes[i].MemoryMB > processes[j].MemoryMB
+		})
+	default: // "pid"
+		sort.Slice(processes, func(i, j int) bool {
+			return processes[i].PID < processes[j].PID
+		})
+	}
+
+	// Limit results
+	if len(processes) > limit {
+		processes = processes[:limit]
+	}
+
+	// Format output
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Found %d process(es):\n\n", len(processes)))
+	output.WriteString(fmt.Sprintf("%-8s %-20s %-10s %-10s %s\n", "PID", "NAME", "MEMORY(MB)", "CPU%", "COMMAND"))
+	output.WriteString(strings.Repeat("-", 90) + "\n")
+
+	for _, p := range processes {
+		cmd := p.CommandLine
+		if len(cmd) > 45 {
+			cmd = cmd[:42] + "..."
+		}
+		output.WriteString(fmt.Sprintf("%-8d %-20s %-10.1f %-10.1f %s\n",
+			p.PID, p.Name, p.MemoryMB, p.CPUPercent, cmd))
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"tool":           "process_management",
+			"action":         "process_list",
+			"totalProcesses": len(processes),
+		},
+	}
+
+	if hasFilter {
+		result.Extra["filter"] = filter
+	}
+	if hasUser {
+		result.Extra["user"] = user
+	}
+	if hasLimit {
+		result.Extra["limit"] = limit
+	}
+	if hasSort {
+		result.Extra["sort"] = sortBy
+	}
+
+	return result
+}
+
+// listProcessesFromProc reads processes from /proc filesystem (Linux).
+func (te *ToolExecutor) listProcessesFromProc(userFilter string) ([]processEntry, error) {
+	var processes []processEntry
+
+	// Read /proc for process directories
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("cannot read /proc: %v", err)
+	}
+
+	// Get system memory info for memory percentage calculation
+	var totalMemKB uint64
+	memInfo, err := os.ReadFile("/proc/meminfo")
+	if err == nil {
+		re := regexp.MustCompile(`MemTotal:\s+(\d+) kB`)
+		if matches := re.FindSubmatch(memInfo); len(matches) > 1 {
+			if val, err2 := strconv.ParseUint(string(matches[1]), 10, 64); err2 == nil {
+				totalMemKB = val
+			}
+		}
+	}
+
+	// Get UID to username mapping
+	uidMap := te.buildUIDMap()
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check if directory name is a PID (numeric)
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+
+		// Read process name from /proc/[pid]/comm
+		commPath := filepath.Join("/proc", entry.Name(), "comm")
+		comm, err := os.ReadFile(commPath)
+		if err != nil {
+			continue // Skip inaccessible processes
+		}
+		name := strings.TrimSpace(string(comm))
+
+		// Read command line from /proc/[pid]/cmdline
+		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		cmdLineStr := ""
+		if err == nil {
+			// cmdline is null-separated, replace nulls with spaces
+			cmdLineStr = strings.ReplaceAll(string(cmdline), "\x00", " ")
+			cmdLineStr = strings.TrimSpace(cmdLineStr)
+		}
+
+		// Read memory info from /proc/[pid]/status
+		var memoryMB float64
+		status, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "status"))
+		if err == nil && totalMemKB > 0 {
+			re := regexp.MustCompile(`VmRSS:\s+(\d+) kB`)
+			if matches := re.FindSubmatch(status); len(matches) > 1 {
+				if vmRSS, err2 := strconv.ParseUint(string(matches[1]), 10, 64); err2 == nil {
+					memoryMB = float64(vmRSS) / 1024.0
+				}
+			}
+		}
+
+		// Read CPU time from /proc/[pid]/stat
+		var cpuPercent float64
+		stat, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if err == nil {
+			cpuPercent = te.calculateCPUPercent(stat)
+		}
+
+		// Get username from UID
+		var username string
+		if uidMap != nil {
+			if stat, err := os.Stat(filepath.Join("/proc", entry.Name())); err == nil {
+				if sys, ok := stat.Sys().(*syscall.Stat_t); ok {
+					uid := sys.Uid
+					if uname, exists := uidMap[uid]; exists {
+						username = uname
+					}
+				}
+			}
+		}
+
+		// Apply user filter
+		if userFilter != "" && username != "" && username != userFilter {
+			continue
+		}
+
+		processes = append(processes, processEntry{
+			PID:         pid,
+			Name:        name,
+			User:        username,
+			CPUPercent:  cpuPercent,
+			MemoryMB:    memoryMB,
+			CommandLine: cmdLineStr,
+		})
+	}
+
+	return processes, nil
+}
+
+// calculateCPUPercent calculates CPU usage from /proc/[pid]/stat data.
+func (te *ToolExecutor) calculateCPUPercent(stat []byte) float64 {
+	// Parse /proc/[pid]/stat format
+	// Format: pid (comm) state utime stime ...
+	re := regexp.MustCompile(`^\d+\s+\(.+?\)\s+\S+\s+(?:\d+\s+){11}(\d+)\s+(\d+)`)
+	if matches := re.FindSubmatch(stat); len(matches) > 2 {
+		utime, err1 := strconv.ParseUint(string(matches[1]), 10, 64)
+		stime, err2 := strconv.ParseUint(string(matches[2]), 10, 64)
+		if err1 == nil && err2 == nil {
+			// Calculate total ticks
+			totalTicks := float64(utime + stime)
+			// Get uptime
+			uptimeData, err := os.ReadFile("/proc/uptime")
+			if err == nil {
+				reUptime := regexp.MustCompile(`^(\d+\.\d+)`)
+				if uptimeMatches := reUptime.FindSubmatch(uptimeData); len(uptimeMatches) > 1 {
+					if uptimeSec, err3 := strconv.ParseFloat(string(uptimeMatches[1]), 64); err3 == nil {
+						// Get clock ticks per second
+						ticksPerSec := float64(os.Getpagesize()) // fallback; should be sysconf(_SC_CLK_TCK)
+						if ticksPerSec == 0 {
+							ticksPerSec = 100 // Common default
+						}
+						// Calculate percentage
+						seconds := totalTicks / ticksPerSec
+						pct := (seconds / uptimeSec) * 100.0
+						if pct > 100 {
+							pct = 100
+						}
+						return pct
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// buildUIDMap creates a mapping from UID to username by reading /etc/passwd.
+func (te *ToolExecutor) buildUIDMap() map[uint32]string {
+	uidMap := make(map[uint32]string)
+	passwd, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return nil
+	}
+	re := regexp.MustCompile(`^(\w+):x:(\d+):`)
+	for _, line := range strings.Split(string(passwd), "\n") {
+		if matches := re.FindStringSubmatch(line); len(matches) > 2 {
+			if uid, err := strconv.ParseUint(matches[2], 10, 32); err == nil {
+				uidMap[uint32(uid)] = matches[1]
+			}
+		}
+	}
+	return uidMap
+}
+
+// listProcessesFromPs lists processes using the ps command (macOS/Windows fallback).
+func (te *ToolExecutor) listProcessesFromPs(userFilter string) ([]processEntry, error) {
+	// Use ps with custom format for cross-platform compatibility
+	args := []string{
+		"ps", "-eo", "pid,comm,rss,pcpu,args",
+		"--sort", "pid",
+	}
+
+	cmd := exec.Command("ps", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ps command failed: %v", err)
+	}
+
+	var processes []processEntry
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	// Skip header line
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		// Parse ps output: PID COMMAND RSS PCPU COMMAND_LINE
+		parts := strings.Fields(line)
+		if len(parts) < 5 {
+			continue
+		}
+
+		pid, err := strconv.Atoi(parts[0])
+		if err != nil {
+			continue
+		}
+
+		name := parts[1]
+		rssKB, _ := strconv.ParseUint(parts[2], 10, 64)
+		cpuPct, _ := strconv.ParseFloat(parts[3], 64)
+
+		// Command line is everything after RSS and CPU%
+		cmdLine := strings.Join(parts[4:], " ")
+
+		// Apply user filter (ps without -u doesn't show user, skip filtering)
+		if userFilter != "" {
+			continue // Can't filter by user without user column
+		}
+
+		processes = append(processes, processEntry{
+			PID:         pid,
+			Name:        name,
+			CPUPercent:  cpuPct,
+			MemoryMB:    float64(rssKB) / 1024.0,
+			CommandLine: cmdLine,
+		})
+	}
+
+	return processes, nil
+}
+
+// executeProcessKill kills a process by PID or name.
+func (te *ToolExecutor) executeProcessKill(params map[string]interface{}) *ToolResult {
+	pidParam, hasPID := params["pid"]
+	nameParam, hasName := params["name"]
+	force := false
+	if f, ok := params["force"].(bool); ok {
+		force = f
+	}
+
+	if !hasPID && !hasName {
+		return &ToolResult{
+			Success: false,
+			Error:   "must provide either 'pid' (integer) or 'name' (string) to kill",
+		}
+	}
+
+	var targetPIDs []int
+
+	if hasPID {
+		var pid int
+		switch v := pidParam.(type) {
+		case float64:
+			pid = int(v)
+		case int:
+			pid = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				pid = n
+			} else {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("invalid PID: %v", v),
+				}
+			}
+		}
+		targetPIDs = append(targetPIDs, pid)
+	}
+
+	if hasName {
+		nameStr, ok := nameParam.(string)
+		if !ok {
+			return &ToolResult{
+				Success: false,
+				Error:   "process name must be a string",
+			}
+		}
+
+		// Find processes by name
+		processes, err := te.listProcessesFromPs("")
+		if err != nil {
+			// Try Linux /proc approach
+			processes, err = te.listProcessesFromProc("")
+			if err != nil {
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("failed to find processes named '%s': %v", nameStr, err),
+				}
+			}
+		}
+
+		found := false
+		for _, p := range processes {
+			if p.Name == nameStr {
+				targetPIDs = append(targetPIDs, p.PID)
+				found = true
+			}
+		}
+		if !found {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("no process found with name '%s'", nameStr),
+			}
+		}
+	}
+
+	// Kill each process
+	var killed []int
+	var failed []int
+	sig := syscall.SIGTERM
+	if force {
+		sig = syscall.SIGKILL
+	}
+
+	for _, pid := range targetPIDs {
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			failed = append(failed, pid)
+			continue
+		}
+		if err := proc.Signal(sig); err != nil {
+			failed = append(failed, pid)
+		} else {
+			killed = append(killed, pid)
+		}
+	}
+
+	result := &ToolResult{
+		Success: len(failed) == 0,
+	}
+
+	var output strings.Builder
+	if len(killed) > 0 {
+		output.WriteString(fmt.Sprintf("Sent %s to PID(s) %s\n",
+			sig.String(), strings.Join(intSliceToString(killed), ", ")))
+	}
+	if len(failed) > 0 {
+		result.Success = false
+		result.Error = fmt.Sprintf("Failed to kill PID(s) %s", strings.Join(intSliceToString(failed), ", "))
+		output.WriteString(result.Error)
+	}
+
+	result.Output = output.String()
+
+	return result
+}
+
+// executePortCheck checks if a specific port is in use.
+func (te *ToolExecutor) executePortCheck(params map[string]interface{}) *ToolResult {
+	portParam, hasPort := params["port"]
+	if !hasPort {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: port",
+		}
+	}
+
+	var port int
+	switch v := portParam.(type) {
+	case float64:
+		port = int(v)
+	case int:
+		port = v
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			port = n
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("invalid port number: %v", v),
+			}
+		}
+	}
+
+	if port < 1 || port > 65535 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid port number: %d (must be 1-65535)", port),
+		}
+	}
+
+	protocol := "tcp"
+	if p, ok := params["protocol"].(string); ok {
+		if p == "udp" || p == "tcp" {
+			protocol = p
+		} else {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("invalid protocol: %s (must be 'tcp' or 'udp')", p),
+			}
+		}
+	}
+
+	var inUse bool
+	var ownerInfo string
+	var err error
+
+	switch getOS() {
+	case "linux":
+		inUse, ownerInfo, err = te.checkPortLinux(port, protocol)
+	case "darwin":
+		inUse, ownerInfo, err = te.checkPortDarwin(port, protocol)
+	default:
+		// Windows or other - try netstat
+		inUse, ownerInfo, err = te.checkPortNetstat(port, protocol)
+	}
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to check port %d/%s: %v", port, protocol, err),
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Extra: map[string]interface{}{
+			"tool":        "process_management",
+			"action":      "port_check",
+			"port":        port,
+			"protocol":    protocol,
+			"inUse":       inUse,
+			"ownerInfo":   ownerInfo,
+		},
+	}
+
+	if inUse {
+		result.Output = fmt.Sprintf("Port %d/%s is IN USE. %s", port, protocol, ownerInfo)
+	} else {
+		result.Output = fmt.Sprintf("Port %d/%s is available.", port, protocol)
+	}
+
+	return result
+}
+
+// checkPortLinux checks port availability using /proc/net/tcp and /proc/net/udp.
+func (te *ToolExecutor) checkPortLinux(port int, protocol string) (bool, string, error) {
+	if protocol == "tcp" || protocol == "both" {
+		// Check /proc/net/tcp and /proc/net/tcp6
+		tcpFiles := []string{"/proc/net/tcp", "/proc/net/tcp6"}
+		for _, tcpFile := range tcpFiles {
+			data, err := os.ReadFile(tcpFile)
+			if err != nil {
+				continue
+			}
+
+			portHex := fmt.Sprintf("%X", port)
+			for _, line := range strings.Split(string(data), "\n") {
+				parts := strings.Fields(line)
+				if len(parts) < 2 {
+					continue
+				}
+				// Format: local_address:port state ...
+				addrPort := parts[0]
+				colonIdx := strings.LastIndex(addrPort, ":")
+				if colonIdx == -1 {
+					continue
+				}
+				heardPort := strings.ToUpper(addrPort[colonIdx+1:])
+				if heardPort == portHex {
+					// Found the port in use
+					pid := ""
+					if inode := parts[9]; inode != "0" && len(inode) > 0 {
+						// Find the PID by looking through /proc/*/fd
+						entries, _ := os.ReadDir("/proc")
+						for _, entry := range entries {
+							if !entry.IsDir() {
+								continue
+							}
+							fdDir := filepath.Join("/proc", entry.Name(), "fd")
+							fdEntries, _ := os.ReadDir(fdDir)
+							for _, fd := range fdEntries {
+								link, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
+								if err == nil && strings.Contains(link, inode) {
+									pid = entry.Name()
+									break
+								}
+							}
+							if pid != "" {
+								break
+							}
+						}
+					}
+					owner := fmt.Sprintf("PID %s", pid)
+					if pid == "" {
+						owner = "Unknown owner"
+					}
+					return true, owner, nil
+				}
+			}
+		}
+	}
+
+	if protocol == "udp" || protocol == "both" {
+		udpFiles := []string{"/proc/net/udp", "/proc/net/udp6"}
+		for _, udpFile := range udpFiles {
+			data, err := os.ReadFile(udpFile)
+			if err != nil {
+				continue
+			}
+
+			portHex := fmt.Sprintf("%X", port)
+			for _, line := range strings.Split(string(data), "\n") {
+				parts := strings.Fields(line)
+				if len(parts) < 2 {
+					continue
+				}
+				addrPort := parts[0]
+				colonIdx := strings.LastIndex(addrPort, ":")
+				if colonIdx == -1 {
+					continue
+				}
+				heardPort := strings.ToUpper(addrPort[colonIdx+1:])
+				if heardPort == portHex {
+					return true, "UDP listener on port " + fmt.Sprint(port), nil
+				}
+			}
+		}
+	}
+
+	return false, "", nil
+}
+
+// checkPortDarwin checks port availability using lsof on macOS.
+func (te *ToolExecutor) checkPortDarwin(port int, protocol string) (bool, string, error) {
+	args := []string{
+		"-i", fmt.Sprintf("%s:%d", protocol, port),
+		"-n", "-P",
+	}
+
+	cmd := exec.Command("lsof", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// lsof returns non-zero when port is not in use
+		// Check if the error is just "no process found"
+		if strings.Contains(string(output), "COMMAND") {
+			return false, "", nil
+		}
+		return false, "", fmt.Errorf("lsof error: %v", err)
+	}
+
+	// Port is in use - parse the output for owner info
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) > 1 {
+		// First data line: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+		parts := strings.Fields(lines[1])
+		if len(parts) >= 3 {
+			owner := fmt.Sprintf("Process: %s (PID: %s)", parts[0], parts[1])
+			if len(parts) > 2 {
+				owner = fmt.Sprintf("Process: %s (PID: %s) by user: %s", parts[0], parts[1], parts[2])
+			}
+			return true, owner, nil
+		}
+	}
+
+	return true, fmt.Sprintf("Port %d/%s is in use", port, protocol), nil
+}
+
+// checkPortNetstat checks port availability using netstat (Windows/fallback).
+func (te *ToolExecutor) checkPortNetstat(port int, protocol string) (bool, string, error) {
+	var args []string
+	protocolUpper := strings.ToUpper(protocol)
+
+	if protocolUpper == "TCP" || protocol == "" {
+		args = []string{"netstat", "-an", "-o", "-p", "TCP"}
+	} else {
+		args = []string{"netstat", "-an", "-o", "-p", protocolUpper}
+	}
+
+	cmd := exec.Command("cmd", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, "", fmt.Errorf("netstat error: %v", err)
+	}
+
+	portStr := fmt.Sprintf(":%d", port)
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, portStr) && (strings.Contains(line, "LISTENING") || strings.Contains(line, protocolUpper)) {
+			// Extract PID from last column
+			parts := strings.Fields(line)
+			if len(parts) > 0 {
+				pid := parts[len(parts)-1]
+				return true, fmt.Sprintf("PID: %s", pid), nil
+			}
+		}
+	}
+
+	return false, "", nil
+}
+
+// executeSystemInfo shows system resource usage (CPU, memory, disk).
+func (te *ToolExecutor) executeSystemInfo(params map[string]interface{}) *ToolResult {
+	format := "short"
+	if f, ok := params["format"].(string); ok {
+		format = f
+	}
+
+	var output strings.Builder
+	var extra map[string]interface{}
+
+	switch getOS() {
+	case "linux":
+		memory, cpu, disk := te.getLinuxResources()
+		output.WriteString(fmt.Sprintf("System Resource Usage (Linux):\n\n"))
+		output.WriteString(fmt.Sprintf("Memory:\n"))
+		output.WriteString(fmt.Sprintf("  Total:    %.1f GB\n", float64(memory.Total)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Used:     %.1f GB\n", float64(memory.Used)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Available: %.1f GB\n", float64(memory.Available)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Usage:    %.1f%%\n\n", memory.UsagePercent))
+
+		output.WriteString(fmt.Sprintf("CPU:\n"))
+		output.WriteString(fmt.Sprintf("  Load Average: %.2f, %.2f, %.2f\n", cpu.Load1, cpu.Load5, cpu.Load15))
+		output.WriteString(fmt.Sprintf("  Cores:        %d\n\n", cpu.Cores))
+
+		output.WriteString(fmt.Sprintf("Disk:\n"))
+		output.WriteString(fmt.Sprintf("  Total:    %.1f GB\n", float64(disk.Total)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Used:     %.1f GB\n", float64(disk.Used)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Available: %.1f GB\n", float64(disk.Available)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Usage:    %.1f%%\n", disk.UsagePercent))
+
+		extra = map[string]interface{}{
+			"tool":         "process_management",
+			"action":       "system_info",
+			"memory":       memory,
+			"cpu":          cpu,
+			"disk":         disk,
+			"format":       format,
+		}
+
+	case "darwin":
+		memory, cpu := te.getDarwinResources()
+		output.WriteString(fmt.Sprintf("System Resource Usage (macOS):\n\n"))
+		output.WriteString(fmt.Sprintf("Memory:\n"))
+		output.WriteString(fmt.Sprintf("  Total:     %.1f GB\n", float64(memory.Total)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Used:      %.1f GB\n", float64(memory.Used)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Available: %.1f GB\n", float64(memory.Available)/1024/1024/1024))
+		output.WriteString(fmt.Sprintf("  Usage:     %.1f%%\n\n", memory.UsagePercent))
+
+		output.WriteString(fmt.Sprintf("CPU:\n"))
+		output.WriteString(fmt.Sprintf("  Cores:  %d\n", cpu.Cores))
+
+		extra = map[string]interface{}{
+			"tool":   "process_management",
+			"action": "system_info",
+			"memory": memory,
+			"cpu":    cpu,
+			"format": format,
+		}
+
+	default:
+		output.WriteString(fmt.Sprintf("System Resource Usage (%s):\n\n", getOS()))
+		output.WriteString("Resource details not available for this platform.\n")
+
+		extra = map[string]interface{}{
+			"tool":   "process_management",
+			"action": "system_info",
+			"format": format,
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra:   extra,
+	}
+
+	return result
+}
+
+// resourceInfo holds system resource usage data.
+type resourceInfo struct {
+	Total        uint64  `json:"total"`
+	Used         uint64  `json:"used"`
+	Available    uint64  `json:"available"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
+// cpuInfo holds CPU information.
+type cpuInfo struct {
+	Cores  int     `json:"cores"`
+	Load1  float64 `json:"load_1"`
+	Load5  float64 `json:"load_5"`
+	Load15 float64 `json:"load_15"`
+}
+
+// diskInfo holds disk usage information.
+type diskInfo struct {
+	Total        uint64  `json:"total"`
+	Used         uint64  `json:"used"`
+	Available    uint64  `json:"available"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
+// getLinuxResources reads system resource info from /proc and /sys on Linux.
+func (te *ToolExecutor) getLinuxResources() (*resourceInfo, *cpuInfo, *diskInfo) {
+	// Memory info
+	memory := te.getLinuxMemory()
+
+	// CPU info
+	cpu := te.getLinuxCPU()
+
+	// Disk info
+	disk := te.getLinuxDisk()
+
+	return memory, cpu, disk
+}
+
+// getLinuxMemory reads memory info from /proc/meminfo.
+func (te *ToolExecutor) getLinuxMemory() *resourceInfo {
+	mem := &resourceInfo{}
+
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return mem
+	}
+
+	parseMemInfo := func(key string) uint64 {
+		re := regexp.MustCompile(key + `:\s+(\d+) kB`)
+		matches := re.FindSubmatch(data)
+		if len(matches) > 1 {
+			if val, err := strconv.ParseUint(string(matches[1]), 10, 64); err == nil {
+				return val * 1024 // Convert kB to bytes
+			}
+		}
+		return 0
+	}
+
+	mem.Total = parseMemInfo("MemTotal")
+	mem.Available = parseMemInfo("MemAvailable")
+	if mem.Total > 0 && mem.Available > 0 {
+		mem.Used = mem.Total - mem.Available
+	} else {
+		mem.Used = parseMemInfo("MemTotal") - parseMemInfo("MemFree") - parseMemInfo("Buffers") - parseMemInfo("Cached")
+	}
+
+	if mem.Total > 0 {
+		mem.UsagePercent = float64(mem.Used) / float64(mem.Total) * 100
+	}
+
+	return mem
+}
+
+// getLinuxCPU reads CPU info from /proc/loadavg and /proc/cpuinfo.
+func (te *ToolExecutor) getLinuxCPU() *cpuInfo {
+	cpu := &cpuInfo{}
+
+	// Load averages from /proc/loadavg
+	loadData, err := os.ReadFile("/proc/loadavg")
+	if err == nil {
+		re := regexp.MustCompile(`^(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)`)
+		if matches := re.FindSubmatch(loadData); len(matches) > 3 {
+			cpu.Load1, _ = strconv.ParseFloat(string(matches[1]), 64)
+			cpu.Load5, _ = strconv.ParseFloat(string(matches[2]), 64)
+			cpu.Load15, _ = strconv.ParseFloat(string(matches[3]), 64)
+		}
+	}
+
+	// CPU cores from /proc/cpuinfo
+	cpuData, err := os.ReadFile("/proc/cpuinfo")
+	if err == nil {
+		cpu.Cores = strings.Count(string(cpuData), "processor")
+		if cpu.Cores == 0 {
+			// Fallback: use runtime.NumCPU()
+			cpu.Cores = runtime.NumCPU()
+		}
+	} else {
+		cpu.Cores = runtime.NumCPU()
+	}
+
+	return cpu
+}
+
+// getLinuxDisk reads disk usage using syscall.Statfs.
+func (te *ToolExecutor) getLinuxDisk() *diskInfo {
+	disk := &diskInfo{}
+
+	var stat syscall.Statfs_t
+	err := syscall.Statfs("/", &stat)
+	if err != nil {
+		return disk
+	}
+
+	total := uint64(stat.Bsize) * uint64(stat.Blocks)
+	available := uint64(stat.Bsize) * uint64(stat.Bavail)
+	used := total - (uint64(stat.Bsize) * uint64(stat.Bfree))
+
+	disk.Total = total
+	disk.Used = used
+	disk.Available = available
+
+	if total > 0 {
+		disk.UsagePercent = float64(used) / float64(total) * 100
+	}
+
+	return disk
+}
+
+// getDarwinResources reads system resource info from sysctl on macOS.
+func (te *ToolExecutor) getDarwinResources() (*resourceInfo, *cpuInfo) {
+	memory := &resourceInfo{}
+	cpu := &cpuInfo{}
+
+	// Memory info
+	memoryTotal, _ := exec.Command("sysctl", "-n", "hw.memsize").CombinedOutput()
+	if val, err := strconv.ParseUint(strings.TrimSpace(string(memoryTotal)), 10, 64); err == nil {
+		memory.Total = val
+	}
+
+	// Memory pages
+	pageSize, _ := exec.Command("sysctl", "-n", "hw.pagesize").CombinedOutput()
+	pageSizeVal := uint64(4096) // Default
+	if val, err := strconv.ParseUint(strings.TrimSpace(string(pageSize)), 10, 64); err == nil {
+		pageSizeVal = val
+	}
+
+	// Get memory stats via vm_stat
+	vmStat, err := exec.Command("vm_stat").CombinedOutput()
+	if err == nil {
+		pageSizeBytes := float64(pageSizeVal)
+		pages := make(map[string]float64)
+		for _, line := range strings.Split(strings.TrimSpace(string(vmStat)), "\n") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				key := strings.Trim(parts[0], ".")
+				if val, err := strconv.ParseFloat(strings.Trim(parts[1], " "), 64); err == nil {
+					pages[key] = val * pageSizeBytes
+				}
+			}
+		}
+
+		// Calculate used memory (active + inactive + wired - speculative)
+		used := pages["Pages wired down"] + pages["Pages active"] + pages["Pages inactive"]
+		if spec, ok := pages["Pages speculative"]; ok {
+			used -= spec
+		}
+		memory.Used = uint64(used)
+		memory.Available = memory.Total - memory.Used
+
+		if memory.Total > 0 {
+			memory.UsagePercent = float64(memory.Used) / float64(memory.Total) * 100
+		}
+	}
+
+	// CPU info
+	cpuCores, _ := exec.Command("sysctl", "-n", "hw.ncpu").CombinedOutput()
+	if val, err := strconv.Atoi(strings.TrimSpace(string(cpuCores))); err == nil {
+		cpu.Cores = val
+	}
+
+	return memory, cpu
+}
+
+// getOS returns the current operating system.
+func getOS() string {
+	return runtime.GOOS
+}
+
+// intSliceToString converts []int to []string.
+func intSliceToString(ints []int) []string {
+	strs := make([]string, len(ints))
+	for i, v := range ints {
+		strs[i] = strconv.Itoa(v)
+	}
+	return strs
 }
