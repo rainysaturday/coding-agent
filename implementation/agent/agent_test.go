@@ -1036,6 +1036,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"file_compare": {"file1", "file2"},
 		"changelog":     {},
 		"git_tag":       {"action"},
+		"run_build":     {},
 	}
 
 	for _, tool := range toolDefs {

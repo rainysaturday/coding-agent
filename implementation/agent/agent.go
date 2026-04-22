@@ -2749,6 +2749,31 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "run_build",
+				Description: "Execute a build command for the current project. Auto-detects project type (Go, Node.js, Rust, Java/Maven, Java/Gradle, Python) and runs appropriate build commands. Supports custom command override.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "Custom build command to run (e.g., 'go build ./cmd/...', 'npm run build', 'cargo build'). If omitted, auto-detects from project files.",
+						},
+						"args": {
+							Type:        "array",
+							Description: "Additional arguments for the build command. Can be an array of strings or a single space-separated string.",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum execution time in seconds (default: 120)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
 	}
 }
 

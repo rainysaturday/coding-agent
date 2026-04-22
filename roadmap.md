@@ -132,8 +132,11 @@
 ### Changelog Generation
 - **#058: Changelog Generator Tool** - Generate changelog entries from git commit history. Groups conventional commits by category (Features, Bug Fixes, Breaking Changes, etc.) following Keep a Changelog format. Supports 'generate' (output to stdout) and 'add' (append to CHANGELOG.md) actions. Handles tag ranges, unreleased commits, and custom headers. Uses only Go stdlib - zero external dependencies.
 
+### Build Execution
+- **#060: Run Build Tool** - Execute project build commands with auto-detection of project type (Go, Node.js, Rust, Java/Maven, Java/Gradle, Python). Supports custom command override, arguments, and configurable timeout. Returns structured results with exit code and output.
+
 ## Completed Feature Count
 
-**59 / 59 features implemented**
+**60 / 60 features implemented**
 
 ## Upcoming Features

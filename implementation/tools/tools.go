@@ -190,6 +190,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeChangelog(tc.Parameters)
 	case "git_tag":
 		result = te.executeGitTag(tc.Parameters)
+	case "run_build":
+		result = te.executeRunBuild(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -10003,5 +10005,153 @@ func isValidTagName(name string) bool {
 		return false
 	}
 	return true
+}
+
+// executeRunBuild executes a build command for the current project and returns structured results.
+// Auto-detects project type from common project files (go.mod, package.json, Cargo.toml, etc.).
+func (te *ToolExecutor) executeRunBuild(params map[string]interface{}) *ToolResult {
+	// Determine build command
+	command, hasCommand := params["command"].(string)
+
+	if !hasCommand || command == "" {
+		// Auto-detect project type
+		command = te.detectBuildCommand()
+	}
+
+	if command == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "no project type detected. Supported project types: Go (go.mod), Node.js (package.json), Rust (Cargo.toml), Java/Maven (pom.xml), Java/Gradle (build.gradle), Python (setup.py, pyproject.toml), Makefile with build target. Provide a custom 'command' parameter to override.",
+		}
+	}
+
+	// Build arguments
+	var args []string
+	if argsParam, hasArgs := params["args"]; hasArgs {
+		switch v := argsParam.(type) {
+		case []interface{}:
+			for _, a := range v {
+				args = append(args, fmt.Sprintf("%v", a))
+			}
+		case string:
+			args = append(args, v)
+		}
+	}
+
+	// Determine timeout (default: 120 seconds / 2 minutes, builds can be slower)
+	timeoutSeconds := 120
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Build full command
+	fullCmd := command
+	if len(args) > 0 {
+		fullCmd = command + " " + strings.Join(args, " ")
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", fullCmd)
+
+	// Set working directory to current directory
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+
+	// Execute command
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Extract exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	}
+
+	// Truncate output if too long
+	maxOutputLen := 10000
+	if len(outputStr) > maxOutputLen {
+		outputStr = outputStr[:maxOutputLen] + "\n... [output truncated, exceeded 10000 character limit]"
+	}
+
+	// Determine if build succeeded
+	passed := exitCode == 0
+
+	result := &ToolResult{
+		Success:  passed,
+		ExitCode: exitCode,
+		Output:   outputStr,
+		Extra: map[string]interface{}{
+			"tool":    "run_build",
+			"passed":  passed,
+			"command": command,
+		},
+	}
+
+	return result
+}
+
+// detectBuildCommand auto-detects the build command based on project files.
+func (te *ToolExecutor) detectBuildCommand() string {
+	cwd, _ := os.Getwd()
+
+	// Check for Go project
+	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+		return "go build ./..."
+	}
+
+	// Check for Node.js project
+	if _, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil {
+		return "npm run build"
+	}
+
+	// Check for Rust project
+	if _, err := os.Stat(filepath.Join(cwd, "Cargo.toml")); err == nil {
+		return "cargo build"
+	}
+
+	// Check for Java/Maven project
+	if _, err := os.Stat(filepath.Join(cwd, "pom.xml")); err == nil {
+		return "mvn compile"
+	}
+
+	// Check for Java/Gradle project
+	if _, err := os.Stat(filepath.Join(cwd, "build.gradle")); err == nil {
+		return "gradle build"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "build.gradle.kts")); err == nil {
+		return "gradle build"
+	}
+
+	// Check for Python project
+	if _, err := os.Stat(filepath.Join(cwd, "setup.py")); err == nil {
+		return "python -m build"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "pyproject.toml")); err == nil {
+		return "python -m build"
+	}
+
+	// Check for Makefile with build target
+	if _, err := os.Stat(filepath.Join(cwd, "Makefile")); err == nil {
+		content, _ := os.ReadFile(filepath.Join(cwd, "Makefile"))
+		if bytes.Contains(content, []byte("build:")) || bytes.Contains(content, []byte("build :")) {
+			return "make build"
+		}
+	}
+
+	return ""
 }
 
