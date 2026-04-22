@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -198,6 +199,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitMerge(tc.Parameters)
 	case "generate_docs":
 		result = te.executeGenerateDocs(tc.Parameters)
+	case "code_metrics":
+		result = te.executeCodeMetrics(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -12797,3 +12800,653 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+
+// ===== Code Metrics Analysis Tool =====
+
+// fileMetrics holds metrics for a single file.
+type fileMetrics struct {
+	Path       string       `json:"path"`
+	Language   string       `json:"language"`
+	Lines      lineCounts   `json:"lines"`
+	Functions  []funcMetric `json:"functions"`
+	Complexity int          `json:"complexity"`
+}
+
+// lineCounts holds line breakdown counts.
+type lineCounts struct {
+	Total   int `json:"total"`
+	Code    int `json:"code"`
+	Blank   int `json:"blank"`
+	Comment int `json:"comment"`
+}
+
+// funcMetric holds metrics for a single function.
+type funcMetric struct {
+	Name       string `json:"name"`
+	Line       int    `json:"line"`
+	Complexity int    `json:"complexity"`
+}
+
+// codeMetricsOutput is the top-level output structure.
+type codeMetricsOutput struct {
+	Summary summaryMetrics `json:"summary"`
+	Files   []fileMetrics  `json:"files"`
+}
+
+// summaryMetrics holds aggregate metrics.
+type summaryMetrics struct {
+	TotalFiles     int            `json:"total_files"`
+	TotalLines     int            `json:"total_lines"`
+	TotalCodeLines int            `json:"total_code_lines"`
+	TotalBlankLines int           `json:"total_blank_lines"`
+	TotalCommentLines int         `json:"total_comment_lines"`
+	TotalFunctions int            `json:"total_functions"`
+	AvgComplexity  float64        `json:"avg_complexity"`
+	MaxComplexity  int            `json:"max_complexity"`
+	Languages      map[string]int `json:"languages"`
+}
+
+// detectLanguage detects the programming language from a file path or extension.
+func detectCodeMetricsLanguage(path string, forced string) string {
+	if forced != "" {
+		return strings.ToLower(forced)
+	}
+	ext := filepath.Ext(path)
+	langs := map[string]string{
+		".go": "go", ".py": "python", ".js": "javascript", ".jsx": "javascript",
+		".ts": "typescript", ".tsx": "typescript", ".java": "java",
+		".rs": "rust", ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp",
+	}
+	if lang, ok := langs[ext]; ok {
+		return lang
+	}
+	return ""
+}
+
+// isSourceFile checks if a file is a source file (not binary).
+func isSourceFile(path string) bool {
+	ext := filepath.Ext(path)
+	supported := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".jsx": true,
+		".ts": true, ".tsx": true, ".java": true, ".rs": true,
+		".c": true, ".h": true, ".cpp": true, ".hpp": true,
+	}
+	return supported[ext]
+}
+
+// isCommentLine checks if a line is a comment.
+func isCommentLine(line string, lang string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	switch lang {
+	case "go", "java", "c", "cpp", "rust":
+		return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*")
+	case "python":
+		return strings.HasPrefix(trimmed, "#")
+	case "javascript", "typescript":
+		return strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*")
+	default:
+		return false
+	}
+}
+
+// isInsideBlockComment checks if the line is inside a block comment (for single-line detection).
+func isInsideBlockComment(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "/*") && strings.Contains(trimmed, "*/") {
+		return true // single-line block comment
+	}
+	return false
+}
+
+// countLines counts total, blank, comment, and code lines in source content.
+func countLines(content string, lang string) lineCounts {
+	counts := lineCounts{}
+	lines := strings.Split(content, "\n")
+	counts.Total = len(lines)
+	
+	inBlockComment := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		
+		if trimmed == "" {
+			counts.Blank++
+			continue
+		}
+		
+		// Handle block comments
+		switch lang {
+		case "go", "java", "c", "cpp", "javascript", "typescript":
+			if inBlockComment {
+				counts.Comment++
+				if strings.Contains(trimmed, "*/") {
+					inBlockComment = false
+				}
+				continue
+			}
+			if strings.HasPrefix(trimmed, "/*") {
+				counts.Comment++
+				if !strings.Contains(trimmed, "*/") {
+					inBlockComment = true
+				}
+				continue
+			}
+			if strings.HasPrefix(trimmed, "//") {
+				counts.Comment++
+				continue
+			}
+		case "python":
+			if strings.HasPrefix(trimmed, "#") {
+				counts.Comment++
+				continue
+			}
+		case "rust":
+			if strings.HasPrefix(trimmed, "//") {
+				counts.Comment++
+				continue
+			}
+			if strings.HasPrefix(trimmed, "/*") {
+				counts.Comment++
+				if !strings.Contains(trimmed, "*/") {
+					inBlockComment = true
+				}
+				continue
+			}
+			if inBlockComment {
+				counts.Comment++
+				if strings.Contains(trimmed, "*/") {
+					inBlockComment = false
+				}
+				continue
+			}
+		}
+		
+		counts.Code++
+	}
+	return counts
+}
+
+// complexityPoints returns the number of decision points in a line.
+func complexityPoints(line string) int {
+	points := 0
+	trimmed := strings.TrimSpace(line)
+	
+	// Control flow keywords (only count when not inside a comment or string)
+	keywords := []string{"if ", "if(", "else if", "else if(", "for ", "for(", "while ", "while(", "switch ", "switch(", "case ", "catch ", "except "}
+	for _, kw := range keywords {
+		if strings.Contains(trimmed, kw) {
+			points++
+		}
+	}
+	
+	// Logical operators
+	points += strings.Count(trimmed, "&&")
+	points += strings.Count(trimmed, "||")
+	
+	// Ternary operator
+	points += strings.Count(trimmed, "?")
+	
+	return points
+}
+
+// detectFunctions finds functions/methods in source code for a given language.
+func detectFunctions(content string, lang string) []funcMetric {
+	var funcs []funcMetric
+	lines := strings.Split(content, "\n")
+	
+	switch lang {
+	case "go":
+		// Go: func name(...) {
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "func ") {
+				name := strings.TrimPrefix(trimmed, "func ")
+				name = strings.SplitN(name, "(", 2)[0]
+				// Remove receiver info for method receivers like func (r *Receiver) Name(
+				if strings.HasPrefix(name, "(") {
+					continue // skip receiver declarations without name
+				}
+				complexity := 1
+				// Look ahead for complexity in function body (up to 20 lines or until closing brace)
+				depth := 1
+				for j := i + 1; j < len(lines) && j < i+200 && depth > 0; j++ {
+					ln := strings.TrimSpace(lines[j])
+					if strings.HasPrefix(ln, "/*") || strings.HasPrefix(ln, "//") {
+						continue
+					}
+					if strings.Contains(ln, "{") {
+						depth++
+					}
+					if strings.Contains(ln, "}") {
+						depth--
+						if depth == 0 {
+							break
+						}
+					}
+					complexity += complexityPoints(ln)
+				}
+				funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: complexity,
+				})
+			}
+		}
+	case "python":
+		// Python: def name(...)
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "def ") && !strings.HasPrefix(trimmed, "def __") {
+				name := strings.TrimPrefix(trimmed, "def ")
+				name = strings.SplitN(name, "(", 2)[0]
+				complexity := 1
+				// Python complexity: count indented lines with keywords
+				baseIndent := -1
+				for j := i + 1; j < len(lines); j++ {
+					ln := lines[j]
+					trimmed := strings.TrimSpace(ln)
+					if trimmed == "" {
+						continue
+					}
+					ind := len(ln) - len(strings.TrimLeft(ln, " 	"))
+					if baseIndent == -1 {
+						baseIndent = ind
+					}
+					if ind <= baseIndent && trimmed != "" {
+						break
+					complexity += complexityPoints(trimmed)
+				}
+			}
+			funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: complexity,
+				})
+			}
+		}
+	case "javascript", "typescript":
+		// JS/TS: function name, const name = , arrow functions, method definitions
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			// function name(...)
+			if matched, _ := regexp.MatchString(`^(async\s+)?function\s+(\w+)`, trimmed); matched {
+				submatches := regexp.MustCompile(`^(async\s+)?function\s+(\w+)`).FindStringSubmatch(trimmed)
+				name := submatches[2]
+				complexity := 1
+				depth := 0
+				for j := i + 1; j < len(lines) && j < i+200 && depth > -1; j++ {
+					ln := strings.TrimSpace(lines[j])
+					if strings.Contains(ln, "{") {
+						depth++
+					}
+					if strings.Contains(ln, "}") {
+						depth--
+						if depth == 0 {
+							break
+						}
+					}
+					if depth > 0 {
+						complexity += complexityPoints(ln)
+					}
+				}
+				funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: complexity,
+				})
+			} else if matched, _ := regexp.MatchString(`^(\w+)\s*[=:]\s*(async\s+)?function`, trimmed); matched {
+				submatches := regexp.MustCompile(`^(\w+)\s*[=:]\s*(async\s+)?function`).FindStringSubmatch(trimmed)
+				name := submatches[1]
+				complexity := 1
+				funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: complexity,
+				})
+			} else if matched, _ := regexp.MatchString(`^(\w+)\s*[=:]\s*\(.*\)\s*=>`, trimmed); matched {
+				submatches := regexp.MustCompile(`^(\w+)\s*[=:]\s*\(.*\)\s*=>`).FindStringSubmatch(trimmed)
+				name := submatches[1]
+				funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: 1,
+				})
+			} else if matched, _ := regexp.MatchString(`^(\w+)\s*\(.*\)\s*\{`, trimmed); matched {
+				// Method in class: name(...) {
+				submatches := regexp.MustCompile(`^(\w+)\s*\(`).FindStringSubmatch(trimmed)
+				if len(submatches) > 1 {
+					name := submatches[1]
+					if name != "if" && name != "for" && name != "while" && name != "switch" && name != "catch" {
+						complexity := 1
+						depth := 0
+						for j := i + 1; j < len(lines) && j < i+200 && depth > -1; j++ {
+							ln := strings.TrimSpace(lines[j])
+							if strings.Contains(ln, "{") {
+								depth++
+							}
+							if strings.Contains(ln, "}") {
+								depth--
+								if depth == 0 {
+									break
+								}
+							}
+							if depth > 0 {
+								complexity += complexityPoints(ln)
+							}
+						}
+						funcs = append(funcs, funcMetric{
+							Name:       name,
+							Line:       i + 1,
+							Complexity: complexity,
+						})
+					}
+				}
+			}
+		}
+	case "java":
+		// Java: modifier returnType methodName(...) {
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if matched, _ := regexp.MatchString(`^(public|private|protected|static|final|abstract|\s)+\s+\w+(\[\])*\s+(\w+)\s*\(`, trimmed); matched {
+				submatches := regexp.MustCompile(`^(\w+)\s*\(`).FindStringSubmatch(trimmed)
+				if len(submatches) > 1 {
+					name := submatches[1]
+					if name != "if" && name != "for" && name != "while" && name != "switch" && name != "catch" && name != "new" && name != "return" && name != "throw" {
+						complexity := 1
+						depth := 0
+						for j := i + 1; j < len(lines) && j < i+200 && depth > -1; j++ {
+							ln := strings.TrimSpace(lines[j])
+							if strings.Contains(ln, "{") {
+								depth++
+							}
+							if strings.Contains(ln, "}") {
+								depth--
+								if depth == 0 {
+									break
+								}
+							}
+							if depth > 0 {
+								complexity += complexityPoints(ln)
+							}
+						}
+						funcs = append(funcs, funcMetric{
+							Name:       name,
+							Line:       i + 1,
+							Complexity: complexity,
+						})
+					}
+				}
+			}
+		}
+	case "rust":
+		// Rust: fn name(...)
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "fn ") || strings.HasPrefix(trimmed, "pub fn ") {
+				name := strings.Fields(trimmed)[1]
+				complexity := 1
+				depth := 0
+				for j := i + 1; j < len(lines) && j < i+200 && depth > -1; j++ {
+					ln := strings.TrimSpace(lines[j])
+					if strings.Contains(ln, "{") {
+						depth++
+					}
+					if strings.Contains(ln, "}") {
+						depth--
+						if depth == 0 {
+							break
+						}
+					}
+					if depth > 0 {
+						complexity += complexityPoints(ln)
+					}
+				}
+				funcs = append(funcs, funcMetric{
+					Name:       name,
+					Line:       i + 1,
+					Complexity: complexity,
+				})
+			}
+		}
+	case "c", "cpp":
+		// C/C++: returnType name(...) {
+		for i, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if matched, _ := regexp.MatchString(`^[\w\s\*\&]+\s+(\w+)\s*\(`, trimmed); matched {
+				submatches := regexp.MustCompile(`^[\w\s\*\&]+\s+(\w+)\s*\(`).FindStringSubmatch(trimmed)
+				if len(submatches) > 1 {
+					name := submatches[1]
+					if name != "if" && name != "for" && name != "while" && name != "switch" && name != "catch" && name != "return" && name != "sizeof" {
+						complexity := 1
+						depth := 0
+						for j := i + 1; j < len(lines) && j < i+200 && depth > -1; j++ {
+							ln := strings.TrimSpace(lines[j])
+							if strings.Contains(ln, "{") {
+								depth++
+							}
+							if strings.Contains(ln, "}") {
+								depth--
+								if depth == 0 {
+									break
+								}
+							}
+							if depth > 0 {
+								complexity += complexityPoints(ln)
+							}
+						}
+						funcs = append(funcs, funcMetric{
+							Name:       name,
+							Line:       i + 1,
+							Complexity: complexity,
+						})
+					}
+				}
+			}
+		}
+	}
+	return funcs
+}
+
+// collectFiles returns a list of files matching the criteria.
+func collectFiles(path string, maxDepth int, globPattern string) ([]string, error) {
+	var files []string
+	
+	if maxDepth == 0 {
+		// Single file mode
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if isSourceFile(path) {
+				files = append(files, path)
+			}
+		}
+		return files, nil
+	}
+	
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %v", err)
+	}
+	
+	if info, err := os.Stat(absPath); err != nil {
+		return nil, fmt.Errorf("path not found: %s", path)
+	} else if info.IsDir() {
+		// Directory mode
+		pattern := "**"
+		if globPattern != "" {
+			pattern = "**/" + globPattern
+		}
+		
+		matches, err := filepath.Glob(filepath.Join(absPath, pattern))
+		if err != nil {
+			return nil, fmt.Errorf("glob error: %v", err)
+		}
+		
+		for _, match := range matches {
+			if isSourceFile(match) {
+				// Check depth
+				rel, err := filepath.Rel(absPath, match)
+				if err == nil {
+					depth := strings.Count(rel, string(filepath.Separator))
+					if depth <= maxDepth {
+						files = append(files, match)
+					}
+				}
+			}
+		}
+	} else {
+		// Single file
+		if isSourceFile(absPath) {
+			files = append(files, absPath)
+		}
+	}
+	
+	return files, nil
+}
+
+// executeCodeMetrics analyzes code files and returns metrics.
+func (te *ToolExecutor) executeCodeMetrics(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+	
+	language := ""
+	if lang, ok := params["language"].(string); ok {
+		language = lang
+	}
+	
+	maxDepth := 5
+	if md, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(md)
+	}
+	
+	globPattern := ""
+	if gp, ok := params["glob"].(string); ok {
+		globPattern = gp
+	}
+	
+	files, err := collectFiles(path, maxDepth, globPattern)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to collect files: %v", err),
+		}
+	}
+	
+	if len(files) == 0 {
+		output := codeMetricsOutput{
+			Summary: summaryMetrics{
+				TotalFiles:  0,
+				Languages:   make(map[string]int),
+			},
+			Files: []fileMetrics{},
+		}
+		jsonBytes, _ := json.Marshal(output)
+		return &ToolResult{
+			Success: true,
+			Output:  string(jsonBytes),
+		}
+	}
+	
+	var allFiles []fileMetrics
+	summary := summaryMetrics{
+		Languages: make(map[string]int),
+	}
+	
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue // Skip files we can't read
+		}
+		
+		lang := detectCodeMetricsLanguage(file, language)
+		if lang == "" {
+			continue // Skip unsupported languages
+		}
+		
+		lineCounts := countLines(string(content), lang)
+		functions := detectFunctions(string(content), lang)
+		
+		var fileComplexity int
+		totalFuncComplexity := 0
+		for _, fn := range functions {
+			if fn.Complexity > fileComplexity {
+				fileComplexity = fn.Complexity
+			}
+			totalFuncComplexity += fn.Complexity
+		}
+		
+		if len(functions) > 0 {
+			avgFnComplexity := float64(totalFuncComplexity) / float64(len(functions))
+			fileComplexity = int(math.Round(avgFnComplexity))
+		}
+		
+		allFiles = append(allFiles, fileMetrics{
+			Path:       file,
+			Language:   lang,
+			Lines:      lineCounts,
+			Functions:  functions,
+			Complexity: fileComplexity,
+		})
+		
+		summarizeFileMetrics(&summary, file, lang, lineCounts, functions, fileComplexity)
+	}
+	
+	if summary.TotalFunctions > 0 {
+		totalComplexity := 0
+		for _, f := range allFiles {
+			for _, fn := range f.Functions {
+				totalComplexity += fn.Complexity
+			}
+		}
+		summary.AvgComplexity = math.Round(float64(totalComplexity)/float64(summary.TotalFunctions)*10) / 10
+	}
+	
+	// Set max complexity
+	for _, f := range allFiles {
+		if f.Complexity > summary.MaxComplexity {
+			summary.MaxComplexity = f.Complexity
+		}
+	}
+	
+	// Ensure files slice is never null in JSON
+	if allFiles == nil {
+		allFiles = []fileMetrics{}
+	}
+	
+	output := codeMetricsOutput{
+		Summary: summary,
+		Files:   allFiles,
+	}
+	
+	jsonBytes, err := json.Marshal(output)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to marshal output: %v", err),
+		}
+	}
+	
+	return &ToolResult{
+		Success: true,
+		Output:  string(jsonBytes),
+	}
+}
+
+// summarizeFileMetrics updates the summary with file-level metrics.
+func summarizeFileMetrics(summary *summaryMetrics, path, lang string, lc lineCounts, funcs []funcMetric, complexity int) {
+	summary.TotalFiles++
+	summary.TotalLines += lc.Total
+	summary.TotalCodeLines += lc.Code
+	summary.TotalBlankLines += lc.Blank
+	summary.TotalCommentLines += lc.Comment
+	summary.TotalFunctions += len(funcs)
+	
+	if lang != "" {
+		summary.Languages[lang]++
+	}
+}

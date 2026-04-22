@@ -2897,6 +2897,35 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "code_metrics",
+				Description: "Analyze source code files for metrics: lines of code (total/blank/comment/code), cyclomatic complexity, function/method counts, and language breakdown. Supports Go, Python, JavaScript/TypeScript, Java, Rust, and C/C++.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File or directory path to analyze",
+						},
+						"language": {
+							Type:        "string",
+							Description: "Force language detection (e.g., 'go', 'python', 'javascript'). Auto-detected from extension if not specified.",
+						},
+						"max_depth": {
+							Type:        "integer",
+							Description: "Maximum directory recursion depth (default: 5, use 0 for current file only)",
+						},
+						"glob": {
+							Type:        "string",
+							Description: "Glob pattern to filter files (e.g., '*.go', 'src/**/*.py')",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
 	}
 }
 

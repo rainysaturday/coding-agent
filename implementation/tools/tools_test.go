@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -3397,5 +3398,302 @@ func TestExecute_GitMerge_PR_MissingPRNumber(t *testing.T) {
 	}
 	if !strings.Contains(result.Error, "pr_number") {
 		t.Errorf("Expected 'pr_number' error, got: %s", result.Error)
+	}
+}
+
+// Test executeCodeMetrics with a single Go file
+func TestExecute_CodeMetrics_SingleFile(t *testing.T) {
+	executor := NewToolExecutor()
+	
+	// Create a test Go file
+	testFile := "/tmp/test_metrics_main.go"
+	content := `package main
+
+import "fmt"
+
+// Hello is the main entry point
+func main() {
+	fmt.Println("hello")
+}
+
+// add returns the sum of a and b
+func add(a, b int) int {
+	if a > 0 && b > 0 {
+		return a + b
+	}
+	return 0
+}`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	defer os.Remove(testFile)
+
+	result := executor.Execute(&ToolCall{
+		Name: "code_metrics",
+		Parameters: map[string]interface{}{
+			"path": testFile,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+
+	// Parse and verify the JSON output
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Output), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	// Check summary
+	summary, ok := output["summary"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected summary in output")
+	}
+
+	if int(summary["total_files"].(float64)) != 1 {
+		t.Errorf("expected 1 file, got %v", summary["total_files"])
+	}
+
+	if int(summary["total_functions"].(float64)) != 2 {
+		t.Errorf("expected 2 functions, got %v", summary["total_functions"])
+	}
+
+	// Check files
+	files, ok := output["files"].([]interface{})
+	if !ok {
+		t.Fatal("expected files in output")
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file entry, got %d", len(files))
+	}
+}
+
+// Test executeCodeMetrics with a directory
+func TestExecute_CodeMetrics_Directory(t *testing.T) {
+	executor := NewToolExecutor()
+	
+	// Create a temp directory with test files
+	tmpDir, err := os.MkdirTemp("", "code_metrics_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Write a Go file
+	goFile := filepath.Join(tmpDir, "main.go")
+	goContent := `package main
+func main() {}
+func helper() int {
+	return 1
+}`
+	if err := os.WriteFile(goFile, []byte(goContent), 0644); err != nil {
+		t.Fatalf("failed to write go file: %v", err)
+	}
+
+	// Write a Python file
+	pyFile := filepath.Join(tmpDir, "app.py")
+	pyContent := `def main():
+    pass
+
+def process(x):
+    if x > 0:
+        return x
+    return 0
+`
+	if err := os.WriteFile(pyFile, []byte(pyContent), 0644); err != nil {
+		t.Fatalf("failed to write py file: %v", err)
+	}
+
+	result := executor.Execute(&ToolCall{
+		Name: "code_metrics",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Output), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	summary := output["summary"].(map[string]interface{})
+	totalFiles := int(summary["total_files"].(float64))
+	if totalFiles != 2 {
+		t.Errorf("expected 2 files, got %d", totalFiles)
+	}
+
+	languages := summary["languages"].(map[string]interface{})
+	if int(languages["go"].(float64)) != 1 {
+		t.Errorf("expected 1 Go file, got %v", languages["go"])
+	}
+	if int(languages["python"].(float64)) != 1 {
+		t.Errorf("expected 1 Python file, got %v", languages["python"])
+	}
+}
+
+// Test executeCodeMetrics with non-existent path
+func TestExecute_CodeMetrics_NonExistentPath(t *testing.T) {
+	executor := NewToolExecutor()
+
+	result := executor.Execute(&ToolCall{
+		Name: "code_metrics",
+		Parameters: map[string]interface{}{
+			"path": "/non/existent/path",
+		},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for non-existent path")
+	}
+}
+
+// Test executeCodeMetrics with missing path parameter
+func TestExecute_CodeMetrics_MissingPath(t *testing.T) {
+	executor := NewToolExecutor()
+
+	result := executor.Execute(&ToolCall{
+		Name: "code_metrics",
+		Parameters: map[string]interface{}{},
+	})
+
+	if result.Success {
+		t.Fatal("expected failure for missing path parameter")
+	}
+}
+
+// Test executeCodeMetrics with unsupported file type
+func TestExecute_CodeMetrics_UnsupportedFileType(t *testing.T) {
+	executor := NewToolExecutor()
+	
+	testFile := "/tmp/test_metrics_readme.md"
+	if err := os.WriteFile(testFile, []byte("# README\nThis is a test."), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+	defer os.Remove(testFile)
+
+	result := executor.Execute(&ToolCall{
+		Name: "code_metrics",
+		Parameters: map[string]interface{}{
+			"path": testFile,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("expected success, got error: %s", result.Error)
+	}
+
+	var output map[string]interface{}
+	if err := json.Unmarshal([]byte(result.Output), &output); err != nil {
+		t.Fatalf("failed to parse output: %v", err)
+	}
+
+	summary := output["summary"].(map[string]interface{})
+	if int(summary["total_files"].(float64)) != 0 {
+		t.Errorf("expected 0 files for unsupported type, got %v", summary["total_files"])
+	}
+}
+
+// Test detectCodeMetricsLanguage
+func TestDetectCodeMetricsLanguage(t *testing.T) {
+	tests := []struct {
+		path     string
+		forced   string
+		expected string
+	}{
+		{"file.go", "", "go"},
+		{"file.py", "", "python"},
+		{"file.js", "", "javascript"},
+		{"file.ts", "", "typescript"},
+		{"file.tsx", "", "typescript"},
+		{"file.java", "", "java"},
+		{"file.rs", "", "rust"},
+		{"file.c", "", "c"},
+		{"file.h", "", "c"},
+		{"file.cpp", "", "cpp"},
+		{"file.hpp", "", "cpp"},
+		{"file.go", "python", "python"}, // forced overrides
+		{"file.xyz", "", ""},            // unsupported
+	}
+
+	for _, tt := range tests {
+		result := detectCodeMetricsLanguage(tt.path, tt.forced)
+		if result != tt.expected {
+			t.Errorf("detectCodeMetricsLanguage(%q, %q) = %q, want %q",
+				tt.path, tt.forced, result, tt.expected)
+		}
+	}
+}
+
+// Test countLines
+func TestCountLines(t *testing.T) {
+	content := `package main
+
+// This is a comment
+/* block comment */
+func main() {
+	fmt.Println("hello")
+}
+`
+	// Total: 7 lines (including trailing newline creates 8, but let's count)
+	// Blank: 2 (line 1 is not blank, line 3 after comment is blank, line 4 is blank)
+	// Actually let me count: "package main", "", "// This is a comment", "/* block comment */", "func main() {", "\tfmt.Println(\"hello\")", "}", ""
+	// That's 8 lines: 5 code, 2 blank, 1 comment (the // one) + 1 comment (the /* one, but it ends on the same line)
+	// For Go: // and /* are comments. /* ends on the same line, so it's still 1 comment line.
+	
+	counts := countLines(content, "go")
+	
+	// The content has:
+	// "package main" - code
+	// "" - blank
+	// "// This is a comment" - comment
+	// "/* block comment */" - comment
+	// "func main() {" - code
+	// "\tfmt.Println(\"hello\")" - code
+	// "}" - code
+	// "" - blank
+	// Total: 8 lines (split by \n)
+	
+	if counts.Total != 8 {
+		t.Errorf("expected 8 total lines, got %d", counts.Total)
+	}
+	if counts.Blank != 2 {
+		t.Errorf("expected 2 blank lines, got %d", counts.Blank)
+	}
+	if counts.Comment != 2 {
+		t.Errorf("expected 2 comment lines, got %d", counts.Comment)
+	}
+	if counts.Code != 4 {
+		t.Errorf("expected 4 code lines, got %d", counts.Code)
+	}
+}
+
+// Test complexityPoints
+func TestComplexityPoints(t *testing.T) {
+	tests := []struct {
+		line     string
+		expected int
+	}{
+		{"if x > 0 {", 1},
+		{"for i := 0; i < n; i++ {", 1},
+		{"while true {", 1},
+		{"switch x {", 1},
+		{"case 1:", 1},
+		{"if a && b {", 2}, // if + &&
+		{"if a || b {", 2}, // if + ||
+		{"x = a ? b : c", 1}, // ternary
+		{"simple line", 0},
+		{"x = y + z", 0},
+	}
+
+	for _, tt := range tests {
+		result := complexityPoints(tt.line)
+		if result != tt.expected {
+			t.Errorf("complexityPoints(%q) = %d, want %d", tt.line, result, tt.expected)
+		}
 	}
 }

@@ -142,8 +142,11 @@
 ### Documentation
 - **#063: Documentation Generator Tool** - Generate documentation for code files with language auto-detection (Go, Python, JavaScript/TypeScript, Java, Rust, C/C++, and more). Supports markdown and inline docstring output formats with configurable detail levels. Uses only Go stdlib - zero external dependencies.
 
+### Code Metrics
+- **#064: Code Metrics Analysis Tool** - Analyze source code files for quantitative metrics: lines of code breakdown (total/blank/comment/code), cyclomatic complexity per function/method, function/method counts, and language breakdown. Supports Go, Python, JavaScript/TypeScript, Java, Rust, and C/C++. Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**63 / 63 features implemented**
+**64 / 64 features implemented**
 
 ## Upcoming Features
