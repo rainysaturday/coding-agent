@@ -168,6 +168,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCodeNavigation(tc.Parameters)
 	case "check_links":
 		result = te.executeCheckLinks(tc.Parameters)
+	case "git_stash":
+		result = te.executeGitStash(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -5225,4 +5227,288 @@ func scanHTMLLine(line string, lineNum int) []linkInfo {
 func isExternalLink(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "//")
+}
+
+// executeGitStash manages git stashes with list, save, pop, apply, and drop actions.
+func (te *ToolExecutor) executeGitStash(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action (list, save, pop, apply, drop)",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "list":
+		return te.gitStashList(params)
+	case "save":
+		return te.gitStashSave(params)
+	case "pop":
+		return te.gitStashPop(params)
+	case "apply":
+		return te.gitStashApply(params)
+	case "drop":
+		return te.gitStashDrop(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s. Valid actions: list, save, pop, apply, drop", actionStr),
+		}
+	}
+}
+
+// gitStashList lists all stashes with their messages and dates.
+func (te *ToolExecutor) gitStashList(params map[string]interface{}) *ToolResult {
+	// Use --format for structured output: index:message:date
+	args := []string{"stash", "list", "--format=%(refname:short)%09%(subject)%09%(authordate:short)"}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git stash list failed: %s", string(output)),
+		}
+	}
+
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr == "" {
+		return &ToolResult{
+			Success: true,
+			Output:  "No stashes found.",
+			Extra: map[string]interface{}{
+				"tool":          "git_stash",
+				"action":        "list",
+				"stashCount":    0,
+				"message":       "No stashes found",
+			},
+		}
+	}
+
+	// Count stashes
+	lines := strings.Split(outputStr, "\n")
+	stashCount := 0
+	var formattedStashes strings.Builder
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		stashCount++
+		formattedStashes.WriteString(line + "\n")
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  formattedStashes.String(),
+		Extra: map[string]interface{}{
+			"tool":        "git_stash",
+			"action":      "list",
+			"stashCount":  stashCount,
+			"message":     fmt.Sprintf("Found %d stash(es)", stashCount),
+		},
+	}
+
+	return result
+}
+
+// gitStashSave creates a new stash.
+func (te *ToolExecutor) gitStashSave(params map[string]interface{}) *ToolResult {
+	message, hasMessage := params["message"]
+	includeUntracked := false
+	if u, ok := params["include_untracked"].(bool); ok && u {
+		includeUntracked = true
+	}
+	includeIgnored := false
+	if i, ok := params["include_ignored"].(bool); ok && i {
+		includeIgnored = true
+	}
+
+	// Build stash args
+	args := []string{"stash", "push"}
+
+	// Add message
+	if hasMessage {
+		msgStr, ok := message.(string)
+		if !ok || msgStr == "" {
+			return &ToolResult{
+				Success: false,
+				Error:   "message must be a non-empty string",
+			}
+		}
+		args = append(args, "-m", msgStr)
+	}
+
+	// Add flags for untracked and ignored files
+	if includeUntracked && includeIgnored {
+		args = append(args, "-u") // -u includes both untracked and ignored
+	} else if includeUntracked {
+		args = append(args, "-u") // -u includes untracked files
+	} else if includeIgnored {
+		args = append(args, "--include-untracked") // --include-untracked includes ignored files too
+	}
+
+	// Optionally specify a pathspec to stash only specific files
+	if pathspec, ok := params["pathspec"].(string); ok && pathspec != "" {
+		args = append(args, "--", pathspec)
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git stash push failed: %s", string(output)),
+		}
+	}
+
+	// Extract stash reference (e.g., "stash@{0}")
+	var stashRef string
+	refRe := regexp.MustCompile(`(stash@\{\d+\})`)
+	if matches := refRe.FindStringSubmatch(string(output)); len(matches) > 1 {
+		stashRef = matches[1]
+	}
+
+	var msg string
+	if hasMessage {
+		msgStr, _ := message.(string)
+		msg = fmt.Sprintf("Stashed with message: %s", msgStr)
+	} else {
+		msg = "Changes stashed successfully"
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Created stash: %s\n%s", stashRef, msg),
+		Extra: map[string]interface{}{
+			"tool":           "git_stash",
+			"action":         "save",
+			"stashRef":       stashRef,
+			"includeUntracked": includeUntracked,
+			"includeIgnored":   includeIgnored,
+			"hasMessage":       hasMessage,
+			"message":          msg,
+		},
+	}
+}
+
+// gitStashPop applies and removes the most recent stash.
+func (te *ToolExecutor) gitStashPop(params map[string]interface{}) *ToolResult {
+	// Default to most recent stash (stash@{0})
+	stashRef, _ := params["stash_ref"].(string)
+	if stashRef == "" {
+		stashRef = "stash@{0}"
+	}
+
+	args := []string{"stash", "pop", stashRef}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Check if the stash doesn't exist
+		if strings.Contains(string(output), "did not match") {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("stash '%s' does not exist. Use git_stash action='list' to see available stashes.", stashRef),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git stash pop failed: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":     "git_stash",
+			"action":   "pop",
+			"stashRef": stashRef,
+			"message":  fmt.Sprintf("Popped stash %s", stashRef),
+		},
+	}
+}
+
+// gitStashApply applies a stash without removing it.
+func (te *ToolExecutor) gitStashApply(params map[string]interface{}) *ToolResult {
+	stashRef, hasRef := params["stash_ref"].(string)
+	if !hasRef || stashRef == "" {
+		// Default to most recent stash
+		stashRef = "stash@{0}"
+	}
+
+	args := []string{"stash", "apply", stashRef}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		if strings.Contains(string(output), "did not match") {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("stash '%s' does not exist. Use git_stash action='list' to see available stashes.", stashRef),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git stash apply failed: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":     "git_stash",
+			"action":   "apply",
+			"stashRef": stashRef,
+			"message":  fmt.Sprintf("Applied stash %s (stash preserved)", stashRef),
+		},
+	}
+}
+
+// gitStashDrop removes a specific stash.
+func (te *ToolExecutor) gitStashDrop(params map[string]interface{}) *ToolResult {
+	stashRef, hasRef := params["stash_ref"].(string)
+	if !hasRef || stashRef == "" {
+		// Default to most recent stash
+		stashRef = "stash@{0}"
+	}
+
+	args := []string{"stash", "drop", stashRef}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		if strings.Contains(string(output), "did not match") {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("stash '%s' does not exist. Use git_stash action='list' to see available stashes.", stashRef),
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git stash drop failed: %s", string(output)),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":     "git_stash",
+			"action":   "drop",
+			"stashRef": stashRef,
+			"message":  fmt.Sprintf("Dropped stash %s", stashRef),
+		},
+	}
 }

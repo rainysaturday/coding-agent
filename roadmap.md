@@ -52,6 +52,9 @@
 - **#037: Git Commit Tool** - Commit staged changes with descriptive messages, amend support
 - **#049: Git Branch Tool** - Unified branch management with list, create, checkout, delete, rename, and set_upstream actions; branch name validation; upstream tracking
 
+### Git Tools (Extended)
+- **#050: Git Stash Tool** - Manage git stashes with list, save, pop, apply, and drop actions; stash message support; stashed file metadata
+
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
 - **#015: Tool Prefix Prompt** - Tool definitions in system prompt
@@ -104,6 +107,6 @@
 
 ## Completed Feature Count
 
-**49 / 49 features implemented**
+**50 / 50 features implemented**
 
 ## Upcoming Features

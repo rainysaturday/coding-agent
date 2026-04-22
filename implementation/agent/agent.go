@@ -1393,7 +1393,19 @@ AVAILABLE TOOLS:
     How to call: Use git_branch to manage branches. List all branches with action='list', create a new branch with action='create' name='feature-xyz', or switch branches with action='checkout' name='main'.
     Example use case: git_branch(action='list'), git_branch(action='create', name='feature/auth'), git_branch(action='checkout', name='feature/auth'), git_branch(action='delete', name='feature/old')
 
-17. find
+17. git_stash
+    Description: Manage git stashes: list, save (push), pop, apply, and drop. Use stash to temporarily set aside uncommitted changes.
+    Parameters:
+      - action (string, required): One of: 'list', 'save', 'pop', 'apply', 'drop'
+      - message (string, optional): Stash message/description (for save action)
+      - stash_ref (string, optional): Stash reference like 'stash@{0}' (for pop, apply, drop). Default is the most recent stash.
+      - include_untracked (boolean, optional): Include untracked files in the stash (for save action, default: false)
+      - include_ignored (boolean, optional): Include ignored files in the stash (for save action, default: false)
+      - pathspec (string, optional): Restrict stashing to specific file(s) or directory (for save action)
+    How to call: Use git_stash to temporarily save uncommitted changes. List stashes with action='list', save changes with action='save', or restore with action='pop'.
+    Example use case: git_stash(action='list'), git_stash(action='save', message='WIP auth changes'), git_stash(action='pop'), git_stash(action='drop', stash_ref='stash@{1}')
+
+18. find
     Description: Search file contents for matches to a regex pattern. Returns file paths, line numbers, and matching content.
     Parameters:
       - pattern (string, required): Regular expression pattern to search for (Go regex syntax)
@@ -1403,7 +1415,7 @@ AVAILABLE TOOLS:
     How to call: Use find to search for patterns across the codebase. Returns structured results with file, line, and content.
     Example use case: find(pattern='func.*HandleRequest', paths=['*.go']) or find(pattern='TODO', case_insensitive=true)
 
-18. web_fetch
+19. web_fetch
     Description: Fetch content from a URL using HTTP GET. Useful for looking up documentation, API specs, or any publicly accessible web resource.
     Parameters:
       - url (string, required): The URL to fetch (http or https only)
@@ -1412,7 +1424,7 @@ AVAILABLE TOOLS:
     How to call: Use web_fetch to retrieve content from the web, such as documentation or API references.
     Example use case: web_fetch(url='https://example.com/docs')
 
-19. move_file
+20. move_file
     Description: Move or rename a file from source to destination path. Creates parent directories for the destination if they don't already exist.
     Parameters:
       - source (string, required): Source file path to move/rename
@@ -1927,6 +1939,43 @@ func buildTools() []inference.ToolDefinition {
 						"branch": {
 							Type:        "string",
 							Description: "Remote branch name for set_upstream",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_stash",
+				Description: "Manage git stashes: list, save (push), pop, apply, and drop. Use stash to temporarily set aside uncommitted changes.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Stash action: 'list', 'save', 'pop', 'apply', or 'drop'",
+						},
+						"message": {
+							Type:        "string",
+							Description: "Stash message/description (for save action)",
+						},
+						"stash_ref": {
+							Type:        "string",
+							Description: "Stash reference like 'stash@{0}' (for pop, apply, drop). Default is the most recent stash.",
+						},
+						"include_untracked": {
+							Type:        "boolean",
+							Description: "Include untracked files in the stash (for save action, default: false)",
+						},
+						"include_ignored": {
+							Type:        "boolean",
+							Description: "Include ignored files in the stash (for save action, default: false)",
+						},
+						"pathspec": {
+							Type:        "string",
+							Description: "Restrict stashing to specific file(s) or directory (for save action)",
 						},
 					},
 					Required: []string{"action"},
