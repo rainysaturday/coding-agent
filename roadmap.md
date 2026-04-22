@@ -169,11 +169,12 @@
 
 ## Completed Feature Count
 
-**76 / 76 features implemented**
+**77 / 77 features implemented**
 
 ### Git Tools (Extended)
 - **#075: Git Cherry-Pick Tool** - Cherry-pick commits from one branch to another with conflict handling. Supports: cherry-pick (apply a commit or range of commits), abort (cancel in-progress cherry-pick), list (show commits available to cherry-pick from a branch), and preview (dry-run to see what changes a cherry-pick would produce); conflict detection with structured output; commit message customization; allow-empty support; branch validation
 - **#076: Git Push Tool** - Push commits and tags to remote git repositories. Five actions: push (push current branch to upstream), push_remote (push specific branch to specific remote with optional target renaming), force_push (safe --force-with-lease or --force modes), set_upstream (set upstream tracking), push_tags (push tags to remote); dry-run support; branch validation
+- **#077: Code Structure Analyzer Tool** - Analyze source code files and generate a structured summary including functions, types, interfaces, variables, constants, and imports. Supports Go (using AST parser), Python, JavaScript/TypeScript, Rust, Java, and Ruby. Returns structured JSON with all found elements including line numbers, signatures, parameters, and visibility.
 
 ## Upcoming Features
 

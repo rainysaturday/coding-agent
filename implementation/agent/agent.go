@@ -1782,6 +1782,18 @@ AVAILABLE TOOLS:
     How to call: Use git_push(action='push') to push current branch, git_push(action='push_remote', remote='origin', source_branch='feature', target_branch='main') to push to a different branch, git_push(action='force_push', force_hard=true) for safe force push.
     Example use case: git_push(action='push', set_upstream=true) for first push to set tracking, git_push(action='set_upstream') to set upstream for current branch, git_push(action='push_tags') to push all tags, git_push(action='push_remote', source_branch='my-fix', target_branch='hotfix-1.0', remote='upstream') to push to a different branch on another remote.
 
+40. code_structure
+   Description: Analyze source code files and generate a structured summary including functions, types, interfaces, variables, constants, and imports. Supports Go (using AST parser), Python, JavaScript/TypeScript, Rust, Java, and Ruby. Returns structured JSON.
+   Parameters:
+     - path (string, required): File or directory path to analyze
+     - language (string, optional): Force specific language ('go', 'python', 'javascript', 'typescript', 'rust', 'java', 'ruby')
+     - max_depth (integer, optional): Maximum directory depth (default: 5)
+     - glob (string, optional): Glob pattern to filter files
+     - include_tests (boolean, optional): Include test files (default: false)
+     - include_private (boolean, optional): Include private items (default: true)
+   How to call: Use code_structure to quickly understand unfamiliar codebases. Analyze entire directories or specific files. Results include functions, types, interfaces, exports, and statistics.
+   Example use case: code_structure(path='src/') to analyze all source files, code_structure(path='main.go', language='go') for a specific Go file.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -3611,6 +3623,43 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "code_structure",
+				Description: "Analyze source code files and generate a structured summary including functions, types, interfaces, variables, constants, and imports. Supports Go (using AST parser), Python, JavaScript/TypeScript, Rust, Java, and Ruby. Returns structured JSON with all found elements including line numbers, signatures, parameters, and visibility. Helps quickly understand unfamiliar codebases.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File or directory path to analyze. If a directory, all source files will be scanned recursively.",
+						},
+						"language": {
+							Type:        "string",
+							Description: "Force specific language: 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'ruby'. Auto-detected from file extensions if not specified.",
+						},
+						"max_depth": {
+							Type:        "integer",
+							Description: "Maximum directory depth for recursive analysis (default: 5)",
+						},
+						"glob": {
+							Type:        "string",
+							Description: "Glob pattern to filter files (e.g., '*.go', '**/*.py')",
+						},
+						"include_tests": {
+							Type:        "boolean",
+							Description: "Include test files in analysis (default: false)",
+						},
+						"include_private": {
+							Type:        "boolean",
+							Description: "Include private/underscore-prefixed items in analysis (default: true)",
+						},
+					},
+					Required: []string{"path"},
 				},
 			},
 		},

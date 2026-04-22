@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"math"
 	"net/http"
@@ -21,6 +24,7 @@ import (
 	"syscall"
 	"text/template"
 	"time"
+	"unicode"
 )
 
 // ToolResult represents the result of a tool execution.
@@ -223,6 +227,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitPush(tc.Parameters)
 	case "git_commit_msg":
 		result = te.executeGitCommitMsg(tc.Parameters)
+	case "code_structure":
+		result = te.executeCodeStructure(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -15701,3 +15707,1409 @@ func (te *ToolExecutor) parseGemfile(gemPath string) ([]rubyDependency, error) {
 	return deps, nil
 }
 
+// ==================== Code Structure Analyzer Tool ====================
+
+
+// codeStructureItem represents a single code element found in a file.
+type codeStructureItem struct {
+	Type       string             `json:"type"`
+	Name       string             `json:"name"`
+	Signature  string             `json:"signature"`
+	Line       int                `json:"line"`
+	Params     []string           `json:"params"`
+	Returns    string             `json:"returns"`
+	Visibility string             `json:"visibility"`
+	Fields     []codeStructureField `json:"fields,omitempty"`
+	Methods    []codeStructureMethod `json:"methods,omitempty"`
+	Doc        string             `json:"doc,omitempty"`
+}
+
+// codeStructureField represents a field within a struct/class/type.
+type codeStructureField struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Line int    `json:"line"`
+	Tag  string `json:"tag,omitempty"`
+}
+
+// codeStructureMethod represents a method within an interface.
+type codeStructureMethod struct {
+	Name      string `json:"name"`
+	Signature string `json:"signature"`
+	Line      int    `json:"line"`
+}
+
+// codeStructureFile represents the structure of a single file.
+type codeStructureFile struct {
+	Path         string              `json:"path"`
+	Language     string              `json:"language"`
+	Package      string              `json:"package,omitempty"`
+	Imports      []string            `json:"imports,omitempty"`
+	Items        []codeStructureItem `json:"items"`
+	TotalItems   int                 `json:"total_items"`
+	LineCount    int                 `json:"line_count"`
+	HasMain      bool                `json:"has_main"`
+	Exported     int                 `json:"exported"`
+	Private      int                 `json:"private"`
+}
+
+// codeStructureOutput is the top-level output structure.
+type codeStructureOutput struct {
+	Path       string              `json:"path"`
+	Language   string              `json:"language"`
+	Files      []codeStructureFile `json:"files"`
+	TotalFiles int                 `json:"total_files"`
+	TotalItems int                 `json:"total_items"`
+	ByType     map[string]int      `json:"by_type"`
+	ByLanguage map[string]int      `json:"by_language"`
+}
+
+// executeCodeStructure analyzes source files and generates a structured summary.
+func (te *ToolExecutor) executeCodeStructure(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	forcedLang := ""
+	if lang, ok := params["language"].(string); ok {
+		forcedLang = strings.ToLower(lang)
+	}
+
+	maxDepth := 5
+	if md, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(md)
+	}
+
+	globPattern := ""
+	if gp, ok := params["glob"].(string); ok {
+		globPattern = gp
+	}
+
+	includeTests := false
+	if it, ok := params["include_tests"].(bool); ok {
+		includeTests = it
+	}
+
+	includePrivate := true
+	if ip, ok := params["include_private"].(bool); ok {
+		includePrivate = ip
+	}
+
+	files, err := te.collectCodeStructureFiles(path, maxDepth, globPattern, includeTests, includePrivate)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to collect files: %v", err),
+		}
+	}
+
+	if len(files) == 0 {
+		output := codeStructureOutput{
+			Path:       path,
+			TotalFiles: 0,
+			Files:      []codeStructureFile{},
+			ByType:     make(map[string]int),
+			ByLanguage: make(map[string]int),
+		}
+		jsonBytes, _ := json.Marshal(output)
+		return &ToolResult{
+			Success: true,
+			Output:  string(jsonBytes),
+		}
+	}
+
+	var allFiles []codeStructureFile
+	totalItems := 0
+	byType := make(map[string]int)
+	byLanguage := make(map[string]int)
+
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+
+		lang := detectCodeStructureLanguage(file, forcedLang)
+		if lang == "" {
+			continue
+		}
+
+		items := parseCodeStructure(file, string(content), lang, includePrivate)
+
+		if len(items) == 0 {
+			items = []codeStructureItem{{
+				Type:      "empty",
+				Name:      filepath.Base(file),
+				Signature: "empty file",
+				Line:      1,
+			}}
+		}
+
+		fileStruct := codeStructureFile{
+			Path:       file,
+			Language:   lang,
+			Items:      items,
+			TotalItems: len(items),
+			LineCount:  strings.Count(string(content), "\n") + 1,
+		}
+
+		// Detect package name for Go files
+		if lang == "go" {
+			for _, item := range items {
+				if item.Type == "package" {
+					fileStruct.Package = item.Name
+				}
+				if item.Type == "import" {
+					impName := item.Name
+					if idx := strings.LastIndex(impName, "/"); idx >= 0 {
+						impName = impName[idx+1:]
+					}
+					fileStruct.Imports = append(fileStruct.Imports, impName)
+				}
+			}
+		}
+
+		// Check for main function
+		for _, item := range items {
+			if item.Type == "function" && item.Name == "main" {
+				fileStruct.HasMain = true
+			}
+		}
+
+		// Count exported vs private
+		exported := 0
+		private := 0
+		for _, item := range items {
+			if item.Type != "empty" {
+				if item.Visibility == "public" {
+					exported++
+				} else {
+					private++
+				}
+			}
+		}
+		fileStruct.Exported = exported
+		fileStruct.Private = private
+
+		allFiles = append(allFiles, fileStruct)
+		totalItems += len(items)
+
+		for _, item := range items {
+			if item.Type != "empty" {
+				byType[item.Type]++
+				byLanguage[lang]++
+			}
+		}
+	}
+
+	output := codeStructureOutput{
+		Path:       path,
+		Language:   forcedLang,
+		Files:      allFiles,
+		TotalFiles: len(allFiles),
+		TotalItems: totalItems,
+		ByType:     byType,
+		ByLanguage: byLanguage,
+	}
+
+	jsonBytes, err := json.Marshal(output)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to marshal output: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(jsonBytes),
+		Extra: map[string]interface{}{
+			"tool":       "code_structure",
+			"path":       path,
+			"totalFiles": len(allFiles),
+			"totalItems": totalItems,
+		},
+	}
+}
+
+// collectCodeStructureFiles discovers source files to analyze.
+func (te *ToolExecutor) collectCodeStructureFiles(path string, maxDepth int, globPattern string, includeTests, includePrivate bool) ([]string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("path not found: %v", err)
+	}
+
+	var targetFiles []string
+
+	if info.IsDir() {
+		pattern := globPattern
+		if pattern == "" {
+			pattern = "**/*"
+		}
+
+		candidates, err := te.globRecursive(pattern, maxDepth*100)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, file := range candidates {
+			fileInfo, err := os.Stat(file)
+			if err != nil || fileInfo.IsDir() {
+				continue
+			}
+
+			lang := detectCodeStructureLanguage(file, "")
+			if lang == "" {
+				continue
+			}
+
+			if !includeTests && isTestFile(file) {
+				continue
+			}
+
+			targetFiles = append(targetFiles, file)
+		}
+	} else {
+		lang := detectCodeStructureLanguage(path, "")
+		if lang == "" {
+			ext := filepath.Ext(path)
+			return nil, fmt.Errorf("unsupported file type: %s", ext)
+		}
+
+		if !includeTests && isTestFile(path) {
+			return nil, fmt.Errorf("test file excluded: %s", path)
+		}
+
+		targetFiles = append(targetFiles, path)
+	}
+
+	return targetFiles, nil
+}
+
+// detectCodeStructureLanguage detects the language from a file path.
+func detectCodeStructureLanguage(path, forced string) string {
+	if forced != "" {
+		return forced
+	}
+	ext := filepath.Ext(path)
+	langs := map[string]string{
+		".go":    "go",
+		".py":    "python",
+		".js":    "javascript",
+		".jsx":   "javascript",
+		".ts":    "typescript",
+		".tsx":   "typescript",
+		".rs":    "rust",
+		".java":  "java",
+		".rb":    "ruby",
+		".php":   "php",
+		".cs":    "csharp",
+		".swift": "swift",
+		".kt":    "kotlin",
+		".scala": "scala",
+		".c":     "c",
+		".cpp":   "cpp",
+		".h":     "c",
+		".hpp":   "cpp",
+	}
+	if lang, ok := langs[ext]; ok {
+		return lang
+	}
+	return ""
+}
+
+// isTestFile checks if a file is a test file.
+func isTestFile(path string) bool {
+	base := filepath.Base(path)
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.HasSuffix(base, "_test.py") ||
+		strings.HasSuffix(base, ".test.js") ||
+		strings.HasSuffix(base, ".test.ts") ||
+		strings.HasSuffix(base, "_spec.rb") ||
+		strings.HasPrefix(base, "test_")
+}
+
+// parseCodeStructure parses a source file and extracts code structure elements.
+func parseCodeStructure(filePath, content string, language string, includePrivate bool) []codeStructureItem {
+	switch language {
+	case "go":
+		return parseGoStructure(content)
+	case "python":
+		return parsePythonStructure(content)
+	case "javascript", "typescript":
+		return parseJSXSTructure(content, language)
+	case "rust":
+		return parseRustStructure(content)
+	case "java":
+		return parseJavaStructure(content)
+	case "ruby":
+		return parseRubyStructure(content)
+	default:
+		return parseGenericStructure(content, language)
+	}
+}
+
+// ==================== Go Parser (using ast) ====================
+
+// parseGoStructure parses Go source using the ast package.
+func parseGoStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "file.go", content, parser.ParseComments)
+	if err != nil {
+		return parseGoRegexStructure(content)
+	}
+
+	// Package declaration
+	if file.Name != nil {
+		items = append(items, codeStructureItem{
+			Type:       "package",
+			Name:       file.Name.Name,
+			Signature:  fmt.Sprintf("package %s", file.Name.Name),
+			Line:       fset.Position(file.Name.Pos()).Line,
+			Visibility: "public",
+		})
+	}
+
+	// Imports
+	for _, imp := range file.Imports {
+		items = append(items, codeStructureItem{
+			Type:       "import",
+			Name:       imp.Path.Value,
+			Signature:  fmt.Sprintf("import %s", imp.Path.Value),
+			Line:       fset.Position(imp.Pos()).Line,
+			Visibility: "private",
+		})
+	}
+
+	// Top-level declarations
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.ValueSpec:
+					for _, name := range s.Names {
+						var itemType string
+						switch d.Tok {
+						case token.TYPE:
+							itemType = "type_alias"
+						case token.CONST:
+							itemType = "constant"
+						case token.VAR:
+							itemType = "variable"
+						}
+
+						visibility := "private"
+						if name.IsExported() {
+							visibility = "public"
+						}
+
+						sig := name.Name
+						if s.Type != nil {
+							sig = fmt.Sprintf("%s %s", name.Name, formatGoType(s.Type))
+						}
+
+						items = append(items, codeStructureItem{
+							Type:       itemType,
+							Name:       name.Name,
+							Signature:  sig,
+							Line:       fset.Position(name.Pos()).Line,
+							Visibility: visibility,
+						})
+					}
+				case *ast.TypeSpec:
+					visibility := "private"
+					if s.Name.IsExported() {
+						visibility = "public"
+					}
+
+					var itemType string
+					var fields []codeStructureField
+					var methods []codeStructureMethod
+					var signature string
+
+					switch t := s.Type.(type) {
+					case *ast.StructType:
+						itemType = "struct"
+						signature = fmt.Sprintf("type %s struct", s.Name.Name)
+						for _, field := range t.Fields.List {
+							if len(field.Names) > 0 {
+								for _, fieldName := range field.Names {
+									fields = append(fields, codeStructureField{
+										Name: fieldName.Name,
+										Type: formatGoType(field.Type),
+										Line: fset.Position(field.Pos()).Line,
+									})
+								}
+							} else {
+								fields = append(fields, codeStructureField{
+									Name: formatGoType(field.Type),
+									Type: formatGoType(field.Type),
+									Line: fset.Position(field.Pos()).Line,
+								})
+							}
+						}
+					case *ast.InterfaceType:
+						itemType = "interface"
+						signature = fmt.Sprintf("type %s interface", s.Name.Name)
+						for _, method := range t.Methods.List {
+							if len(method.Names) > 0 {
+								for _, mName := range method.Names {
+									methods = append(methods, codeStructureMethod{
+										Name:      mName.Name,
+										Signature: formatGoMethodSignature(method, fset),
+										Line:      fset.Position(method.Pos()).Line,
+									})
+								}
+							}
+						}
+					default:
+						itemType = "type_alias"
+						signature = fmt.Sprintf("type %s = %s", s.Name.Name, formatGoType(s.Type))
+					}
+
+					items = append(items, codeStructureItem{
+						Type:       itemType,
+						Name:       s.Name.Name,
+						Signature:  signature,
+						Line:       fset.Position(s.Name.Pos()).Line,
+						Visibility: visibility,
+						Fields:     fields,
+						Methods:    methods,
+					})
+				}
+			}
+
+		case *ast.FuncDecl:
+			visibility := "private"
+			if d.Name.IsExported() {
+				visibility = "public"
+			}
+
+			var params []string
+			var returns string
+			if d.Type.Params != nil {
+				for _, param := range d.Type.Params.List {
+					for _, name := range param.Names {
+						params = append(params, fmt.Sprintf("%s %s", name.Name, formatGoType(param.Type)))
+					}
+					if len(param.Names) == 0 {
+						params = append(params, formatGoType(param.Type))
+					}
+				}
+			}
+			if d.Type.Results != nil {
+				returns = formatFieldList(d.Type.Results)
+			}
+
+			sig := fmt.Sprintf("func %s", d.Name.Name)
+			if len(params) > 0 {
+				sig += "(" + strings.Join(params, ", ") + ")"
+			} else if d.Type.Params != nil && len(d.Type.Params.List) > 0 {
+				sig += "()"
+			}
+			if returns != "" {
+				sig += " " + returns
+			}
+
+			var doc string
+			if d.Doc != nil && len(d.Doc.List) > 0 {
+				doc = strings.TrimSpace(d.Doc.List[0].Text)
+			}
+
+			items = append(items, codeStructureItem{
+				Type:       "function",
+				Name:       d.Name.Name,
+				Signature:  sig,
+				Line:       fset.Position(d.Name.Pos()).Line,
+				Visibility: visibility,
+				Params:     params,
+				Returns:    returns,
+				Doc:        doc,
+			})
+		}
+	}
+
+	return items
+}
+
+// parseGoRegexStructure is a fallback regex-based Go parser.
+func parseGoRegexStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "package ") {
+			pkg := strings.TrimPrefix(trimmed, "package ")
+			items = append(items, codeStructureItem{
+				Type:       "package",
+				Name:       pkg,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "func ") {
+			funcName, params, returns := extractGoFunctionInfo(trimmed)
+			visibility := "private"
+			if len(funcName) > 0 && unicode.IsUpper(rune(funcName[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "function",
+				Name:       funcName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+				Params:     params,
+				Returns:    returns,
+			})
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "type ") {
+			typeName := extractGoTypeName(trimmed)
+			visibility := "private"
+			if len(typeName) > 0 && unicode.IsUpper(rune(typeName[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "struct",
+				Name:       typeName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+
+		if (strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "const ")) {
+			declType := "variable"
+			if strings.HasPrefix(trimmed, "const ") {
+				declType = "constant"
+			}
+			name := extractSimpleName(trimmed[4:])
+			visibility := "private"
+			if len(name) > 0 && unicode.IsUpper(rune(name[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       declType,
+				Name:       name,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+	}
+
+	return items
+}
+
+// ==================== Python Parser ====================
+
+// parsePythonStructure parses Python source files.
+func parsePythonStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "class ") {
+			className := extractPythonClassName(trimmed)
+			items = append(items, codeStructureItem{
+				Type:       "class",
+				Name:       className,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "def ") {
+			funcName, params := extractPythonFunctionInfo(trimmed)
+			visibility := "private"
+			if !strings.HasPrefix(funcName, "_") {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "function",
+				Name:       funcName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+				Params:     params,
+			})
+			continue
+		}
+	}
+
+	return items
+}
+
+// ==================== JavaScript/TypeScript Parser ====================
+
+// parseJSXSTructure parses JavaScript and TypeScript source files.
+func parseJSXSTructure(content string, language string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		// Class definition
+		if strings.HasPrefix(trimmed, "class ") {
+			className := strings.Fields(trimmed)[1]
+			if idx := strings.Index(className, " extends"); idx > 0 {
+				className = className[:idx]
+			}
+			if idx := strings.Index(className, " implements"); idx > 0 {
+				className = className[:idx]
+			}
+			items = append(items, codeStructureItem{
+				Type:       "class",
+				Name:       className,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		// Interface (TypeScript)
+		if language == "typescript" && strings.HasPrefix(trimmed, "interface ") {
+			ifaceName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(ifaceName, " {"); idx > 0 {
+				ifaceName = ifaceName[:idx]
+			}
+			items = append(items, codeStructureItem{
+				Type:       "interface",
+				Name:       ifaceName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		// Type alias (TypeScript)
+		if language == "typescript" && strings.HasPrefix(trimmed, "type ") && strings.Contains(trimmed, " = ") {
+			typeName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(typeName, " {"); idx > 0 {
+				typeName = typeName[:idx]
+			}
+			items = append(items, codeStructureItem{
+				Type:       "type_alias",
+				Name:       typeName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		// Function declarations
+		if strings.HasPrefix(trimmed, "function ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 2 {
+				funcName := parts[1]
+				if idx := strings.Index(funcName, "("); idx > 0 {
+					funcName = funcName[:idx]
+				}
+				visibility := "private"
+				if len(funcName) > 0 && unicode.IsUpper(rune(funcName[0])) {
+					visibility = "public"
+				}
+				params := extractJSParenthesisParams(trimmed)
+				items = append(items, codeStructureItem{
+					Type:       "function",
+					Name:       funcName,
+					Signature:  trimmed,
+					Line:       lineNum,
+					Visibility: visibility,
+					Params:     params,
+				})
+			}
+			continue
+		}
+
+		// Arrow functions / const function = ...
+		if (strings.HasPrefix(trimmed, "const ") || strings.HasPrefix(trimmed, "let ")) {
+			parts := strings.Fields(trimmed)
+			if len(parts) >= 3 && strings.Contains(trimmed, "=>") {
+				varName := parts[1]
+				visibility := "private"
+				if len(varName) > 0 && unicode.IsUpper(rune(varName[0])) {
+					visibility = "public"
+				}
+				params := extractArrowFuncParams(trimmed)
+				items = append(items, codeStructureItem{
+					Type:       "function",
+					Name:       varName,
+					Signature:  trimmed,
+					Line:       lineNum,
+					Visibility: visibility,
+					Params:     params,
+				})
+			}
+			continue
+		}
+
+		// Exported variables
+		if strings.HasPrefix(trimmed, "export const ") || strings.HasPrefix(trimmed, "export let ") ||
+			strings.HasPrefix(trimmed, "export var ") {
+			varType := "const"
+			if strings.HasPrefix(trimmed, "export let ") {
+				varType = "let"
+			} else if strings.HasPrefix(trimmed, "export var ") {
+				varType = "var"
+			}
+			name := extractSimpleName(trimmed[len(varType)+7:])
+			items = append(items, codeStructureItem{
+				Type:       "variable",
+				Name:       name,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+		}
+
+		// Import/export statements
+		if strings.HasPrefix(trimmed, "import ") || strings.HasPrefix(trimmed, "export {") ||
+			strings.HasPrefix(trimmed, "export default") {
+			items = append(items, codeStructureItem{
+				Type:       "import",
+				Name:       trimmed,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+		}
+	}
+
+	return items
+}
+
+// ==================== Rust Parser ====================
+
+// parseRustStructure parses Rust source files.
+func parseRustStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		// Function
+		if strings.HasPrefix(trimmed, "fn ") {
+			parts := strings.Fields(trimmed)
+			funcName := ""
+			if len(parts) >= 2 {
+				funcName = parts[1]
+				if idx := strings.Index(funcName, "("); idx > 0 {
+					funcName = funcName[:idx]
+				}
+			}
+			visibility := "private"
+			if len(funcName) > 0 && unicode.IsUpper(rune(funcName[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "function",
+				Name:       funcName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+
+		// Struct
+		if strings.HasPrefix(trimmed, "struct ") {
+			typeName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(typeName, "{"); idx > 0 {
+				typeName = typeName[:idx]
+			}
+			visibility := "private"
+			if len(typeName) > 0 && unicode.IsUpper(rune(typeName[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "struct",
+				Name:       typeName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+
+		// Enum
+		if strings.HasPrefix(trimmed, "enum ") {
+			enumName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(enumName, "{"); idx > 0 {
+				enumName = enumName[:idx]
+			}
+			items = append(items, codeStructureItem{
+				Type:       "struct",
+				Name:       enumName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		// Trait
+		if strings.HasPrefix(trimmed, "trait ") {
+			traitName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(traitName, "{"); idx > 0 {
+				traitName = traitName[:idx]
+			}
+			visibility := "private"
+			if len(traitName) > 0 && unicode.IsUpper(rune(traitName[0])) {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "interface",
+				Name:       traitName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+
+		// Type alias
+		if strings.HasPrefix(trimmed, "type ") && strings.Contains(trimmed, "= ") {
+			typeName := strings.Fields(trimmed)[1]
+			if idx := strings.Index(typeName, ";"); idx > 0 {
+				typeName = typeName[:idx]
+			}
+			if idx := strings.Index(typeName, " "); idx > 0 {
+				typeName = typeName[:idx]
+			}
+			items = append(items, codeStructureItem{
+				Type:       "type_alias",
+				Name:       typeName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+	}
+
+	return items
+}
+
+// ==================== Java Parser ====================
+
+// parseJavaStructure parses Java source files.
+func parseJavaStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") ||
+			strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+
+		// Class
+		if strings.Contains(trimmed, "class ") && !strings.Contains(trimmed, "interface ") {
+			parts := strings.Fields(trimmed)
+			className := ""
+			for j, p := range parts {
+				if p == "class" && j+1 < len(parts) {
+					className = parts[j+1]
+					break
+				}
+			}
+			if className != "" {
+				items = append(items, codeStructureItem{
+					Type:       "class",
+					Name:       className,
+					Signature:  trimmed,
+					Line:       lineNum,
+					Visibility: "public",
+				})
+			}
+			continue
+		}
+
+		// Interface
+		if strings.Contains(trimmed, "interface ") {
+			parts := strings.Fields(trimmed)
+			ifaceName := ""
+			for j, p := range parts {
+				if p == "interface" && j+1 < len(parts) {
+					ifaceName = parts[j+1]
+					break
+				}
+			}
+			if ifaceName != "" {
+				items = append(items, codeStructureItem{
+					Type:       "interface",
+					Name:       ifaceName,
+					Signature:  trimmed,
+					Line:       lineNum,
+					Visibility: "public",
+				})
+			}
+			continue
+		}
+
+		// Method (basic detection)
+		if (strings.Contains(trimmed, "(") && strings.Contains(trimmed, ")")) ||
+			(strings.HasSuffix(trimmed, ";") && len(strings.Fields(trimmed)) >= 3) {
+			if !strings.HasPrefix(trimmed, "if ") && !strings.HasPrefix(trimmed, "for ") &&
+				!strings.HasPrefix(trimmed, "while ") && !strings.HasPrefix(trimmed, "switch ") {
+				methodName := extractJavaMethodName(trimmed)
+				if methodName != "" {
+					visibility := "private"
+					if strings.Contains(trimmed, "public") {
+						visibility = "public"
+					} else if strings.Contains(trimmed, "protected") {
+						visibility = "public"
+					}
+					items = append(items, codeStructureItem{
+						Type:       "function",
+						Name:       methodName,
+						Signature:  trimmed,
+						Line:       lineNum,
+						Visibility: visibility,
+					})
+				}
+			}
+		}
+	}
+
+	return items
+}
+
+// ==================== Ruby Parser ====================
+
+// parseRubyStructure parses Ruby source files.
+func parseRubyStructure(content string) []codeStructureItem {
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "class ") {
+			className := extractSimpleName(strings.Fields(trimmed)[1])
+			items = append(items, codeStructureItem{
+				Type:       "class",
+				Name:       className,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "module ") {
+			moduleName := extractSimpleName(strings.Fields(trimmed)[1])
+			items = append(items, codeStructureItem{
+				Type:       "interface",
+				Name:       moduleName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "def ") {
+			parts := strings.Fields(trimmed)
+			methodName := ""
+			if len(parts) >= 2 {
+				methodName = strings.Trim(parts[1], "()")
+			}
+			visibility := "private"
+			if strings.HasPrefix(trimmed, "def public ") || strings.HasPrefix(trimmed, "def self.") {
+				visibility = "public"
+			}
+			items = append(items, codeStructureItem{
+				Type:       "function",
+				Name:       methodName,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: visibility,
+			})
+			continue
+		}
+
+		// Constant
+		if matched, _ := regexp.MatchString(`^[A-Z][A-Z0-9_]+\s*=`, trimmed); matched {
+			name := extractSimpleName(trimmed)
+			items = append(items, codeStructureItem{
+				Type:       "constant",
+				Name:       name,
+				Signature:  trimmed,
+				Line:       lineNum,
+				Visibility: "public",
+			})
+		}
+	}
+
+	return items
+}
+
+// ==================== Generic Fallback Parser ====================
+
+// parseGenericStructure is a fallback parser for any file type.
+func parseGenericStructure(content string, language string) []codeStructureItem {
+	if language == "go" {
+		return parseGoRegexStructure(content)
+	}
+	if language == "python" {
+		return parsePythonStructure(content)
+	}
+	if language == "javascript" || language == "typescript" {
+		return parseJSXSTructure(content, language)
+	}
+	if language == "rust" {
+		return parseRustStructure(content)
+	}
+
+	var items []codeStructureItem
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		lineNum := i + 1
+		trimmed := strings.TrimSpace(line)
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		if strings.Contains(trimmed, "class ") || strings.Contains(trimmed, "struct ") {
+			keywords := []string{"class ", "struct "}
+			for _, kw := range keywords {
+				if strings.Contains(trimmed, kw) {
+					name := extractSimpleName(trimmed[strings.Index(trimmed, kw)+len(kw):])
+					items = append(items, codeStructureItem{
+						Type:       "class",
+						Name:       name,
+						Signature:  trimmed,
+						Line:       lineNum,
+						Visibility: "public",
+					})
+					break
+				}
+			}
+			continue
+		}
+
+		if strings.Contains(trimmed, "(") && strings.Contains(trimmed, ")") &&
+			!strings.Contains(trimmed, "if ") && !strings.Contains(trimmed, "for ") &&
+			!strings.Contains(trimmed, "while ") {
+			name := extractSimpleName(trimmed)
+			if len(name) > 0 && len(name) < 50 {
+				items = append(items, codeStructureItem{
+					Type:       "function",
+					Name:       name,
+					Signature:  trimmed,
+					Line:       lineNum,
+					Visibility: "public",
+				})
+			}
+		}
+	}
+
+	return items
+}
+
+// ==================== Go AST Helper Functions ====================
+
+// formatFieldList formats a field list (parameters or return types) back to string.
+func formatFieldList(fl *ast.FieldList) string {
+	if fl == nil || len(fl.List) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, f := range fl.List {
+		for _, name := range f.Names {
+			parts = append(parts, fmt.Sprintf("%s %s", name.Name, formatGoType(f.Type)))
+		}
+		if len(f.Names) == 0 {
+			parts = append(parts, formatGoType(f.Type))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatGoType formats a Go AST type node back to string.
+func formatGoType(node ast.Expr) string {
+	switch t := node.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.ArrayType:
+		return fmt.Sprintf("[]%s", formatGoType(t.Elt))
+	case *ast.MapType:
+		return fmt.Sprintf("map[%s]%s", formatGoType(t.Key), formatGoType(t.Value))
+	case *ast.StructType:
+		var fields []string
+		for _, f := range t.Fields.List {
+			if len(f.Names) > 0 {
+				for _, n := range f.Names {
+					fields = append(fields, fmt.Sprintf("%s %s", n.Name, formatGoType(f.Type)))
+				}
+			} else {
+				fields = append(fields, formatGoType(f.Type))
+			}
+		}
+		return fmt.Sprintf("struct{%s}", strings.Join(fields, " "))
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.StarExpr:
+		return fmt.Sprintf("*%s", formatGoType(t.X))
+	case *ast.SelectorExpr:
+		return fmt.Sprintf("%s.%s", formatGoType(t.X), t.Sel.Name)
+	default:
+		return "unknown"
+	}
+}
+
+// formatGoMethodSignature formats an interface method signature.
+func formatGoMethodSignature(method *ast.Field, fset *token.FileSet) string {
+	var names []string
+	for _, n := range method.Names {
+		names = append(names, n.Name)
+	}
+
+	if len(names) > 0 {
+		return fmt.Sprintf("%s %s", names[0], formatGoType(method.Type))
+	}
+	return formatGoType(method.Type)
+}
+
+// ==================== Parsing Helper Functions ====================
+
+// extractGoFunctionInfo extracts function info from a Go func line.
+func extractGoFunctionInfo(line string) (string, []string, string) {
+	rest := strings.TrimPrefix(line, "func ")
+
+	if strings.HasPrefix(rest, "(") {
+		endIdx := strings.Index(rest, ")")
+		if endIdx > 0 {
+			rest = strings.TrimSpace(rest[endIdx+1:])
+		}
+	}
+
+	parts := strings.Fields(rest)
+	funcName := ""
+	if len(parts) > 0 {
+		funcName = parts[0]
+	}
+
+	params := []string{}
+	if idx := strings.Index(rest, "("); idx > 0 {
+		inner := rest[idx:]
+		if closeIdx := strings.Index(inner, ")"); closeIdx > 0 {
+			inner = inner[1:closeIdx]
+			for _, p := range strings.Split(inner, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					params = append(params, p)
+				}
+			}
+		}
+	}
+
+	returns := ""
+	if idx := strings.Index(rest, "("); idx > 0 {
+		after := rest[idx:]
+		if closeIdx := strings.Index(after, ")"); closeIdx > 0 {
+			remainder := strings.TrimSpace(after[closeIdx+1:])
+			if remainder != "" && remainder[0] != '{' {
+				words := strings.Fields(remainder)
+				if len(words) > 0 {
+					returns = words[0]
+				}
+			}
+		}
+	}
+
+	return funcName, params, returns
+}
+
+// extractGoTypeName extracts type name from a "type X ..." line.
+func extractGoTypeName(line string) string {
+	rest := strings.TrimPrefix(line, "type ")
+	parts := strings.Fields(rest)
+	if len(parts) > 0 {
+		name := parts[0]
+		if idx := strings.Index(name, "["); idx > 0 {
+			name = name[:idx]
+		}
+		return name
+	}
+	return ""
+}
+
+// extractSimpleName extracts an identifier from text.
+func extractSimpleName(text string) string {
+	text = strings.TrimSpace(text)
+	parts := strings.Fields(text)
+	if len(parts) > 0 {
+		name := parts[0]
+		name = strings.TrimRight(name, "(){}[];=,:")
+		return name
+	}
+	return ""
+}
+
+// extractPythonClassName extracts class name from a class line.
+func extractPythonClassName(line string) string {
+	rest := strings.TrimPrefix(line, "class ")
+	parts := strings.Fields(rest)
+	if len(parts) > 0 {
+		name := parts[0]
+		name = strings.TrimRight(name, ":")
+		if idx := strings.Index(name, ":"); idx > 0 {
+			name = name[:idx]
+		}
+		return name
+	}
+	return ""
+}
+
+// extractPythonFunctionInfo extracts function name and params from a def line.
+func extractPythonFunctionInfo(line string) (string, []string) {
+	rest := strings.TrimPrefix(line, "def ")
+	parts := strings.Fields(rest)
+	if len(parts) == 0 {
+		return "", nil
+	}
+
+	funcName := parts[0]
+	params := []string{}
+
+	if idx := strings.Index(rest, "("); idx > 0 {
+		if closeIdx := strings.Index(rest[idx:], ")"); closeIdx > 0 {
+			inner := rest[idx+1 : idx+closeIdx]
+			for _, p := range strings.Split(inner, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" && p != "self" && p != "cls" {
+					params = append(params, p)
+				}
+			}
+		}
+	}
+
+	return funcName, params
+}
+
+// extractJSParenthesisParams extracts parameters from parentheses.
+func extractJSParenthesisParams(line string) []string {
+	params := []string{}
+	if idx := strings.Index(line, "("); idx >= 0 {
+		if closeIdx := strings.Index(line[idx:], ")"); closeIdx > 0 {
+			inner := line[idx+1 : idx+closeIdx]
+			for _, p := range strings.Split(inner, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					params = append(params, p)
+				}
+			}
+		}
+	}
+	return params
+}
+
+// extractArrowFuncParams extracts parameters from arrow function syntax.
+func extractArrowFuncParams(line string) []string {
+	if idx := strings.Index(line, "=>"); idx > 0 {
+		before := line[:idx]
+		if parenIdx := strings.Index(before, "("); parenIdx >= 0 {
+			if closeIdx := strings.Index(before[parenIdx:], ")"); closeIdx > 0 {
+				inner := before[parenIdx+1 : parenIdx+closeIdx]
+				if strings.Count(inner, ",") == 0 && !strings.Contains(inner, "(") {
+					return []string{strings.TrimSpace(inner)}
+				}
+				var params []string
+				for _, p := range strings.Split(inner, ",") {
+					p = strings.TrimSpace(p)
+					if p != "" {
+						params = append(params, p)
+					}
+				}
+				return params
+			}
+		}
+		singleParam := strings.TrimSpace(before)
+		if singleParam != "" {
+			return []string{singleParam}
+		}
+	}
+	return []string{}
+}
+
+// extractJavaMethodName extracts method name from a Java method signature.
+func extractJavaMethodName(line string) string {
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return ""
+	}
+
+	modifiers := map[string]bool{
+		"public": true, "private": true, "protected": true,
+		"static": true, "final": true, "abstract": true,
+		"synchronized": true, "native": true, "volatile": true, "transient": true,
+	}
+	returnTypes := map[string]bool{
+		"void": true, "int": true, "long": true, "float": true,
+		"double": true, "boolean": true, "char": true, "byte": true, "short": true,
+	}
+
+	for _, p := range parts {
+		if modifiers[p] || strings.HasPrefix(p, "<") || returnTypes[p] || strings.Contains(p, ".") {
+			continue
+		}
+		if strings.Contains(p, "(") {
+			return strings.TrimRight(p, "()")
+		}
+	}
+	return ""
+}
