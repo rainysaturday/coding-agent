@@ -284,6 +284,10 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **029-system-prompt-environment-info.md**: System prompt environment info
 - **030-patch-tool.md**: Patch tool
 - **031-github-copilot-backend.md**: GitHub Copilot backend support
+- **032-replace-lines-tool.md**: Replace lines tool
+- **033-file-search-tool.md**: File search tool (glob)
+- **034-conversation-save-load.md**: Conversation save/load
+- **035-sub-agent-tool.md**: Sub-agent tool
 
 ## Development
 
