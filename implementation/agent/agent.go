@@ -741,6 +741,8 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		msg = fmt.Sprintf("\n%s[Git] show %s:%s%s\n", ColorCyan, ref, path, ColorReset)
 	case "git_add":
 		msg = fmt.Sprintf("\n%s[Git] add (staging files)%s\n", ColorCyan, ColorReset)
+	case "git_commit":
+		msg = fmt.Sprintf("\n%s[Git] commit%s\n", ColorCyan, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -972,6 +974,15 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				}
 			}
 			return fmt.Sprintf("%s[Success] staged %s%s\n", ColorGreen, mode, ColorReset)
+		case "git_commit":
+			amend := false
+			if a, ok := result.Extra["amend"].(bool); ok {
+				amend = a
+			}
+			if amend {
+				return fmt.Sprintf("%s[Success] amended last commit%s\n", ColorGreen, ColorReset)
+			}
+			return fmt.Sprintf("%s[Success] committed changes%s\n", ColorGreen, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1171,6 +1182,14 @@ AVAILABLE TOOLS:
       - files (array, optional): List of file paths to stage. If omitted, stages all tracked modified files.
     How to call: Use git_add to stage files before committing. Without arguments, stages all tracked modified files.
     Example use case: Staging specific files for commit, staging all changes after reviewing them
+
+16. git_commit
+    Description: Commit staged changes with a descriptive message. Use this after git_add to save changes to the repository.
+    Parameters:
+      - message (string, required): Commit message describing the changes made
+      - amend (boolean, optional): Amend the most recent commit instead of creating a new one (default: false)
+    How to call: Use git_commit after git_add to save changes. Provide a clear, descriptive commit message.
+    Example use case: "git_commit message='Add new authentication module'" or "git_commit message='Fix login bug' amend=true"
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1547,6 +1566,27 @@ func buildTools() []inference.ToolDefinition {
 						"files": {
 							Type:        "array",
 							Description: "List of file paths to stage. If not provided, stages all tracked modified files (git add -u)",
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_commit",
+				Description: "Commit staged changes with a descriptive message. Use this after git_add to save changes to the repository.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"message": {
+							Type:        "string",
+							Description: "Commit message describing the changes",
+						},
+						"amend": {
+							Type:        "boolean",
+							Description: "Amend the most recent commit instead of creating a new one (default: false)",
 						},
 					},
 					Required: []string{},

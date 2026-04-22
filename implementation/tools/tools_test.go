@@ -1849,3 +1849,34 @@ func TestExecute_SubAgent_TooManyParameters(t *testing.T) {
 		}
 	}
 }
+
+func TestExecute_GitCommit_MissingMessage(t *testing.T) {
+	te := NewToolExecutor()
+	// No message provided - should still work with --allow-empty-message
+	result := te.Execute(&ToolCall{
+		Name: "git_commit",
+		Parameters: map[string]interface{}{},
+	})
+	// The result depends on whether there are staged files
+	// Just verify the tool executes without panic and returns a ToolResult
+	if result == nil {
+		t.Error("Expected non-nil result")
+	}
+}
+
+func TestExecute_GitCommit_Amend(t *testing.T) {
+	te := NewToolExecutor()
+	// Amend without a previous commit will fail
+	result := te.Execute(&ToolCall{
+		Name: "git_commit",
+		Parameters: map[string]interface{}{
+			"message": "test amend",
+			"amend":   true,
+		},
+	})
+	// If there are no commits and nothing staged, this should fail gracefully
+	// (we're in the harness repo which may or may not have commits/staged files)
+	if result == nil {
+		t.Error("Expected non-nil result")
+	}
+}

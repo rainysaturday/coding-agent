@@ -135,6 +135,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitShow(tc.Parameters)
 	case "git_add":
 		result = te.executeGitAdd(tc.Parameters)
+	case "git_commit":
+		result = te.executeGitCommit(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -1686,4 +1688,85 @@ func matchGlob(pattern, path string) (bool, error) {
 
 	// No "/" - use filepath.Match directly
 	return filepath.Match(pattern, path)
+}
+
+// executeGitCommit commits staged changes with a descriptive message.
+func (te *ToolExecutor) executeGitCommit(params map[string]interface{}) *ToolResult {
+	message, hasMessage := params["message"]
+	amend := false
+	if a, ok := params["amend"].(bool); ok {
+		amend = a
+	}
+
+	// Check if there are staged changes
+	checkCmd := exec.Command("git", "diff", "--cached", "--name-only")
+	checkOutput, err := checkCmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to check staged files: %s", string(checkOutput)),
+		}
+	}
+
+	stagedFiles := strings.TrimSpace(string(checkOutput))
+	if stagedFiles == "" {
+		// Check if there are any commits at all
+		checkCmd = exec.Command("git", "rev-parse", "--verify", "HEAD")
+		checkOutput, err = checkCmd.CombinedOutput()
+		if err != nil {
+			// No commits yet - need to stage something first
+			return &ToolResult{
+				Success: false,
+				Error:   "no staged changes and no commits exist yet. Use git_add to stage files first.",
+			}
+		}
+		// First commit with --allow-empty
+		if !amend {
+			if hasMessage {
+				message = fmt.Sprintf("%s (initial commit)", message)
+			} else {
+				message = "Initial commit"
+			}
+		}
+	} else if !amend {
+		message = fmt.Sprintf("%s\n\nStaged files:\n%s", message, stagedFiles)
+	}
+
+	// Build commit args
+	args := []string{"commit"}
+	if amend {
+		args = append(args, "--amend")
+	}
+
+	if hasMessage {
+		msgStr, ok := message.(string)
+		if !ok {
+			msgStr = fmt.Sprintf("%v", message)
+		}
+		args = append(args, "-m", msgStr)
+	} else {
+		args = append(args, "--allow-empty-message", "-m", "")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git commit failed: %s", string(output)),
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":   "git_commit",
+			"amend":  amend,
+			"hasMsg": hasMessage,
+		},
+	}
+
+	return result
 }

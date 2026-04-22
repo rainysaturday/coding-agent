@@ -1012,6 +1012,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"git_log":       {},
 		"git_show":      {"path"},
 		"git_add":       {},
+		"git_commit":    {},
 	}
 
 	for _, tool := range toolDefs {

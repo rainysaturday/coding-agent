@@ -49,6 +49,7 @@
   - `git_log` - View commit history with branch and count filters
   - `git_show` - View file content at specific git refs
   - `git_add` - Stage specific files or all tracked modified files
+- **#037: Git Commit Tool** - Commit staged changes with descriptive messages, amend support
 
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
@@ -77,4 +78,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**36 / 36 features implemented**
+**37 / 37 features implemented**
