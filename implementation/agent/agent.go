@@ -1620,7 +1620,21 @@ AVAILABLE TOOLS:
     How to call: Use git_merge for branch merging operations. Merge a branch with action='merge', check merge conflicts with action='status', abort a bad merge with action='abort', squash all commits into one with action='squash', or merge a GitHub PR with action='merge_pr'.
     Example use case: git_merge(action='merge', source='feature/auth'), git_merge(action='status') to check for conflicts, git_merge(action='abort') to cancel a merge, git_merge(action='squash', source='feature/new-api'), git_merge(action='merge_pr', pr_number=42, repo='owner/myproject', merge_method='squash')
 
-32. generate_docs
+33. git_revert
+    Description: Revert git changes with five actions: list (recent commits), commit (revert a specific commit by hash), files (revert specific files to last committed state), soft_reset (soft reset to a commit keeping changes staged), hard_reset (hard reset to a commit discarding all changes).
+    Parameters:
+      - action (string, required): One of: 'list', 'commit', 'files', 'soft_reset', 'hard_reset'
+      - hash (string, required for commit/soft_reset/hard_reset): Commit hash to revert to
+      - files (array, required for files action): File paths to revert (string or array of strings)
+      - max_count (integer, optional): Max commits to list (default: 20)
+      - dry_run (boolean, optional): Preview without making changes (default: false)
+      - force (boolean, optional): Force operation, bypassing branch protection (required for hard_reset on main/master)
+      - signoff (boolean, optional): Add Signed-off-by line to revert commit (for commit action)
+      - allow_empty (boolean, optional): Allow reverting to an empty commit (for commit action)
+    How to call: Use git_revert to undo changes. List commits with git_revert(action='list'), revert a commit with git_revert(action='commit', hash='abc123'), revert specific files with git_revert(action='files', files=['src/main.go']), reset branches with git_revert(action='soft_reset', hash='abc123') or git_revert(action='hard_reset', hash='abc123', force=true).
+    Example use case: git_revert(action='list'), git_revert(action='commit', hash='a1b2c3d'), git_revert(action='files', files=['src/config.js', 'README.md']), git_revert(action='soft_reset', hash='e4f5g6h'), git_revert(action='hard_reset', hash='e4f5g6h', force=true)
+
+34. generate_docs
     Description: Generate documentation for code files. Auto-detects language from file extension (Go, Python, JavaScript/TypeScript, Java, Rust, C/C++, Ruby, PHP, C#, Swift, Kotlin) and supports markdown or inline docstring output formats.
     Parameters:
       - path (string, required): Path to a file or directory to generate documentation for
@@ -2862,6 +2876,51 @@ func buildTools() []inference.ToolDefinition {
 						"merge_method": {
 							Type:        "string",
 							Description: "Merge method for PR: 'merge' (default), 'squash', or 'rebase' (for merge_pr action only)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_revert",
+				Description: "Revert git changes: list recent commits, revert a specific commit by hash, revert specific files to committed state, or reset the branch (soft/hard).",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Revert action: 'list' (list recent commits), 'commit' (revert a commit by hash), 'files' (revert specific files), 'soft_reset' (soft reset to commit), or 'hard_reset' (hard reset to commit)",
+						},
+						"hash": {
+							Type:        "string",
+							Description: "Commit hash (required for commit, soft_reset, hard_reset actions)",
+						},
+						"files": {
+							Type:        "array",
+							Description: "File paths to revert (required for files action). Can be a single string or array of strings.",
+						},
+						"max_count": {
+							Type:        "integer",
+							Description: "Maximum number of commits to list (for list action, default: 20)",
+						},
+						"dry_run": {
+							Type:        "boolean",
+							Description: "Preview the action without making changes (default: false)",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Force the operation, bypassing branch protection (required for hard_reset on main/master)",
+						},
+						"signoff": {
+							Type:        "boolean",
+							Description: "Add Signed-off-by line to revert commit message (for commit action)",
+						},
+						"allow_empty": {
+							Type:        "boolean",
+							Description: "Allow reverting to an empty commit (for commit action)",
 						},
 					},
 					Required: []string{"action"},

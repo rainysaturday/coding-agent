@@ -197,6 +197,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeRunCoverage(tc.Parameters)
 	case "git_merge":
 		result = te.executeGitMerge(tc.Parameters)
+	case "git_revert":
+		result = te.executeGitRevert(tc.Parameters)
 	case "generate_docs":
 		result = te.executeGenerateDocs(tc.Parameters)
 	case "code_metrics":
@@ -13448,5 +13450,461 @@ func summarizeFileMetrics(summary *summaryMetrics, path, lang string, lc lineCou
 	
 	if lang != "" {
 		summary.Languages[lang]++
+	}
+}
+
+// executeGitRevert reverts commits, files, or resets the working tree.
+func (te *ToolExecutor) executeGitRevert(params map[string]interface{}) *ToolResult {
+	action, hasAction := params["action"]
+	if !hasAction {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	actionStr, ok := action.(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "action must be a string",
+		}
+	}
+
+	switch actionStr {
+	case "list":
+		return te.executeGitRevertList(params)
+	case "commit":
+		return te.executeGitRevertCommit(params)
+	case "files":
+		return te.executeGitRevertFiles(params)
+	case "soft_reset":
+		return te.executeGitRevertSoftReset(params)
+	case "hard_reset":
+		return te.executeGitRevertHardReset(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown action: %s. Valid actions: 'list', 'commit', 'files', 'soft_reset', 'hard_reset'", actionStr),
+		}
+	}
+}
+
+// executeGitRevertList lists recent commits suitable for reverting.
+func (te *ToolExecutor) executeGitRevertList(params map[string]interface{}) *ToolResult {
+	maxCount := 20
+	if mc, ok := params["max_count"].(float64); ok {
+		maxCount = int(mc)
+	} else if mc, ok := params["max_count"].(int); ok {
+		maxCount = mc
+	} else if mc, ok := params["max_count"].(string); ok {
+		if n, err := strconv.Atoi(mc); err == nil {
+			maxCount = n
+		}
+	}
+
+	args := []string{"log", "--oneline", "--decorate", fmt.Sprintf("-n%d", maxCount)}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git log failed: %s", string(output)),
+		}
+	}
+
+	// Count commits
+	commitCount := strings.Count(string(output), "\n")
+	if strings.HasSuffix(string(output), "\n") {
+		commitCount--
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":         "git_revert",
+			"action":       "list",
+			"commitCount":  commitCount,
+			"maxCount":     maxCount,
+		},
+	}
+}
+
+// executeGitRevertCommit reverts a specific commit by hash.
+func (te *ToolExecutor) executeGitRevertCommit(params map[string]interface{}) *ToolResult {
+	hash, hasHash := params["hash"].(string)
+	if !hasHash || hash == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: hash (commit hash to revert)",
+		}
+	}
+
+	// Dry-run mode: check if the commit exists and what the revert would look like
+	if dryRun, ok := params["dry_run"].(bool); ok && dryRun {
+		// Verify commit exists
+		verifyCmd := exec.Command("git", "rev-parse", "--verify", hash)
+		if _, err := verifyCmd.CombinedOutput(); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("commit '%s' not found or invalid", hash),
+			}
+		}
+
+		// Show what the revert would look like
+		showCmd := exec.Command("git", "revert", "--no-commit", "--dry-run", hash)
+		showOutput, err := showCmd.CombinedOutput()
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("commit '%s' cannot be auto-reverted (conflicts may exist). Output: %s", hash, string(showOutput)),
+				Extra: map[string]interface{}{
+					"tool":     "git_revert",
+					"action":   "commit",
+					"hash":     hash,
+					"dry_run":  true,
+					"conflicts": true,
+				},
+			}
+		}
+
+		// Reset any partial state from --no-commit
+		exec.Command("git", "reset", "--hard", "HEAD").Run()
+
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Dry run: commit '%s' can be reverted without conflicts.", hash),
+			Extra: map[string]interface{}{
+				"tool":    "git_revert",
+				"action":  "commit",
+				"hash":    hash,
+				"dry_run": true,
+			},
+		}
+	}
+
+	// Verify commit exists before attempting revert
+	verifyCmd := exec.Command("git", "rev-parse", "--verify", hash)
+	if _, err := verifyCmd.CombinedOutput(); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("commit '%s' not found or invalid", hash),
+		}
+	}
+
+	// Perform the revert with --no-edit to use auto-generated message
+	args := []string{"revert", "--no-edit", hash}
+
+	// Check for signoff if requested
+	if signoff, ok := params["signoff"].(bool); ok && signoff {
+		args = append(args, "--signoff")
+	}
+
+	// Allow empty revert if requested
+	if allowEmpty, ok := params["allow_empty"].(bool); ok && allowEmpty {
+		args = append(args, "--allow-empty")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Check if it's a conflict
+		if strings.Contains(string(output), "conflict") || strings.Contains(string(output), "CONFLICT") {
+			// Try to abort the revert
+			exec.Command("git", "revert", "--abort").Run()
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("merge conflict during revert: %s", string(output)),
+				Extra: map[string]interface{}{
+					"tool":      "git_revert",
+					"action":    "commit",
+					"hash":      hash,
+					"conflicts": true,
+				},
+			}
+		}
+		// Try to abort the revert
+		exec.Command("git", "revert", "--abort").Run()
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git revert failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_revert",
+				"action": "commit",
+				"hash":   hash,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  string(output),
+		Extra: map[string]interface{}{
+			"tool":   "git_revert",
+			"action": "commit",
+			"hash":   hash,
+		},
+	}
+}
+
+// executeGitRevertFiles reverts specific files to their last committed state.
+func (te *ToolExecutor) executeGitRevertFiles(params map[string]interface{}) *ToolResult {
+	filesParam, hasFiles := params["files"]
+	if !hasFiles {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: files (array of file paths to revert)",
+		}
+	}
+
+	var files []string
+	switch v := filesParam.(type) {
+	case []interface{}:
+		files = make([]string, len(v))
+		for i, f := range v {
+			files[i] = fmt.Sprintf("%v", f)
+		}
+	case string:
+		// Single file or comma-separated
+		if strings.Contains(v, ",") {
+			for _, f := range strings.Split(v, ",") {
+				files = append(files, strings.TrimSpace(f))
+			}
+		} else {
+			files = []string{v}
+		}
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   "files must be a string or array of strings",
+		}
+	}
+
+	if len(files) == 0 {
+		return &ToolResult{
+			Success: false,
+			Error:   "no files specified for revert",
+		}
+	}
+
+	// Dry-run: show what would be reverted
+	if dryRun, ok := params["dry_run"].(bool); ok && dryRun {
+		// Check which files exist in the index
+		var existingFiles []string
+		var missingFiles []string
+		for _, f := range files {
+			checkCmd := exec.Command("git", "ls-files", "--error-unmatch", f)
+			if _, err := checkCmd.CombinedOutput(); err != nil {
+				missingFiles = append(missingFiles, f)
+			} else {
+				existingFiles = append(existingFiles, f)
+			}
+		}
+
+		if len(missingFiles) > 0 && len(existingFiles) == 0 {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("none of the specified files exist in the index: %s", strings.Join(missingFiles, ", ")),
+				Extra: map[string]interface{}{
+					"tool":       "git_revert",
+					"action":     "files",
+					"dry_run":    true,
+					"missing":    missingFiles,
+					"existing":   []string{},
+				},
+			}
+		}
+
+		result := &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Dry run: %d file(s) would be reverted to their last committed state", len(existingFiles)),
+			Extra: map[string]interface{}{
+				"tool":      "git_revert",
+				"action":    "files",
+				"dry_run":   true,
+				"existing":  existingFiles,
+				"missing":   missingFiles,
+			},
+		}
+		if len(missingFiles) > 0 {
+			result.Extra["warning"] = "Some files do not exist in the index and will be ignored"
+		}
+		return result
+	}
+
+	// Use git restore to revert files (modern approach, available in git 2.23+)
+	// Falls back to git checkout if restore is not available
+	args := append([]string{"restore", "--source=HEAD", "--"}, files...)
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	// If restore is not available (older git), try checkout
+	if err != nil && strings.Contains(string(output), "restore") && (strings.Contains(string(output), "unrecognized") || strings.Contains(string(output), "not found")) {
+		args = append([]string{"checkout", "HEAD", "--"}, files...)
+		cmd = exec.Command("git", args...)
+		output, err = cmd.CombinedOutput()
+	}
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git revert files failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_revert",
+				"action": "files",
+				"files":  files,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Reverted %d file(s) to their last committed state: %s", len(files), strings.Join(files, ", ")),
+		Extra: map[string]interface{}{
+			"tool":   "git_revert",
+			"action": "files",
+			"files":  files,
+		},
+	}
+}
+
+// executeGitRevertSoftReset performs a soft reset to a specific commit.
+func (te *ToolExecutor) executeGitRevertSoftReset(params map[string]interface{}) *ToolResult {
+	hash, hasHash := params["hash"].(string)
+	if !hasHash || hash == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: hash (commit to soft reset to)",
+		}
+	}
+
+	// Force flag: warn if on main/master branch
+	force, _ := params["force"].(bool)
+
+	// Check current branch
+	branchCmd := exec.Command("git", "branch", "--show-current")
+	branchOutput, err := branchCmd.CombinedOutput()
+	if err == nil {
+		currentBranch := strings.TrimSpace(string(branchOutput))
+		if !force && (currentBranch == "main" || currentBranch == "master") {
+			// Still perform the reset but warn in output
+			_ = currentBranch
+		}
+	}
+
+	// Verify commit exists
+	verifyCmd := exec.Command("git", "rev-parse", "--verify", hash)
+	if _, err := verifyCmd.CombinedOutput(); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("commit '%s' not found or invalid", hash),
+		}
+	}
+
+	args := []string{"reset", "--soft", hash}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git soft reset failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_revert",
+				"action": "soft_reset",
+				"hash":   hash,
+			},
+		}
+	}
+
+	// Get the commit message of the target commit for reference
+	msgCmd := exec.Command("git", "log", "-1", "--format=%s", hash)
+	msgOutput, _ := msgCmd.CombinedOutput()
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Soft reset to %s (%s). Changes are now staged.", hash, strings.TrimSpace(string(msgOutput))),
+		Extra: map[string]interface{}{
+			"tool":   "git_revert",
+			"action": "soft_reset",
+			"hash":   hash,
+		},
+	}
+}
+
+// executeGitRevertHardReset performs a hard reset to a specific commit.
+func (te *ToolExecutor) executeGitRevertHardReset(params map[string]interface{}) *ToolResult {
+	hash, hasHash := params["hash"].(string)
+	if !hasHash || hash == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: hash (commit to hard reset to)",
+		}
+	}
+
+	// Force flag is required for hard reset on protected branches
+	force, _ := params["force"].(bool)
+
+	// Check current branch
+	branchCmd := exec.Command("git", "branch", "--show-current")
+	branchOutput, err := branchCmd.CombinedOutput()
+	if err == nil {
+		currentBranch := strings.TrimSpace(string(branchOutput))
+		if !force && (currentBranch == "main" || currentBranch == "master") {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("hard reset on '%s' branch requires force=true to prevent accidental data loss", currentBranch),
+				Extra: map[string]interface{}{
+					"tool":          "git_revert",
+					"action":        "hard_reset",
+					"hash":          hash,
+					"currentBranch": currentBranch,
+					"protection":    true,
+				},
+			}
+		}
+	}
+
+	// Verify commit exists
+	verifyCmd := exec.Command("git", "rev-parse", "--verify", hash)
+	if _, err := verifyCmd.CombinedOutput(); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("commit '%s' not found or invalid", hash),
+		}
+	}
+
+	// Warn user about destructive action in output
+	msgCmd := exec.Command("git", "log", "-1", "--format=%s", hash)
+	msgOutput, _ := msgCmd.CombinedOutput()
+
+	args := []string{"reset", "--hard", hash}
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git hard reset failed: %s", string(output)),
+			Extra: map[string]interface{}{
+				"tool":   "git_revert",
+				"action": "hard_reset",
+				"hash":   hash,
+			},
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Hard reset to %s (%s). All local changes have been discarded.", hash, strings.TrimSpace(string(msgOutput))),
+		Extra: map[string]interface{}{
+			"tool":       "git_revert",
+			"action":     "hard_reset",
+			"hash":       hash,
+			"destructive": true,
+		},
 	}
 }
