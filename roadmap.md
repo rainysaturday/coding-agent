@@ -126,8 +126,11 @@
 ### File Comparison
 - **#057: File Compare Tool** - Compare two text files and return a structured unified diff showing added, removed, and unchanged lines with line numbers and context. Supports configurable context lines, binary file detection, and directory traversal protection. Uses only Go stdlib (LCS algorithm) - zero external dependencies.
 
+### Changelog Generation
+- **#058: Changelog Generator Tool** - Generate changelog entries from git commit history. Groups conventional commits by category (Features, Bug Fixes, Breaking Changes, etc.) following Keep a Changelog format. Supports 'generate' (output to stdout) and 'add' (append to CHANGELOG.md) actions. Handles tag ranges, unreleased commits, and custom headers. Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**57 / 57 features implemented**
+**58 / 58 features implemented**
 
 ## Upcoming Features

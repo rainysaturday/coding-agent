@@ -186,6 +186,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeEnvVar(tc.Parameters)
 	case "file_compare":
 		result = te.executeFileCompare(tc.Parameters)
+	case "changelog":
+		result = te.executeChangelog(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -9220,5 +9222,406 @@ func splitLines(data []byte) []string {
 		return []string{}
 	}
 	return strings.Split(text, "\n")
+}
+
+// conventionalCommitRegex matches conventional commit messages: type(scope): description or type: description
+var conventionalCommitRegex = regexp.MustCompile(`^(\w+)(?:\([^)]*\))?!?:\s*(.*)$`)
+
+// categoryMapping maps conventional commit types to changelog categories.
+var categoryMapping = map[string]string{
+	"feat":      "Features",
+	"feature":   "Features",
+	"feat!":     "Breaking Changes",
+	"!":         "Breaking Changes",
+	"fix":       "Bug Fixes",
+	"bugfix":    "Bug Fixes",
+	"perf":      "Performance Improvements",
+	"performance": "Performance Improvements",
+	"refactor":  "Code Refactoring",
+	"style":     "Styles",
+	"docs":      "Documentation",
+	"doc":       "Documentation",
+	"chore":     "Chores",
+	"test":      "Tests",
+	"build":     "Build System",
+	"ci":        "Continuous Integration",
+	"revert":    "Reverts",
+}
+
+// commitEntry represents a single parsed commit entry for changelog generation.
+type commitEntry struct {
+	Type    string // conventional commit type
+	Category string // mapped changelog category
+	Scope   string // optional scope from commit
+	Message string // commit description
+	Hash    string // short commit hash
+}
+
+// executeChangelog generates changelog entries from git commit history.
+func (te *ToolExecutor) executeChangelog(params map[string]interface{}) *ToolResult {
+	action := "generate"
+	if a, ok := params["action"].(string); ok {
+		action = a
+	}
+
+	switch action {
+	case "generate":
+		return te.changelogGenerate(params)
+	case "add":
+		return te.changelogAdd(params)
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("unknown changelog action: %s (use 'generate' or 'add')", action),
+		}
+	}
+}
+
+// changelogGenerate generates changelog from git commits.
+func (te *ToolExecutor) changelogGenerate(params map[string]interface{}) *ToolResult {
+	// Get commit range
+	fromTag, hasFrom := params["from_tag"].(string)
+	toTag, hasTo := params["to_tag"].(string)
+	if !hasTo {
+		toTag = "HEAD"
+	}
+
+	// Get unreleased flag
+	unreleased := false
+	if u, ok := params["unreleased"].(bool); ok {
+		unreleased = u
+	}
+
+	// Custom header
+	customHeader, hasHeader := params["header"].(string)
+
+	// Build git log arguments
+	args := []string{"log", "--pretty=format:%H %s", "--date-order"}
+	if hasFrom && fromTag != "" {
+		if unreleased {
+			// For unreleased: find commits from the tag that exist in HEAD
+			// but have no further tags between them and HEAD
+			args = append(args, fmt.Sprintf("%s..HEAD", fromTag))
+		} else {
+			args = append(args, fmt.Sprintf("%s..%s", fromTag, toTag))
+		}
+	} else if unreleased {
+		// Find the most recent tag before HEAD
+		tagCmd := exec.Command("git", "describe", "--tags", "--abbrev=0", "HEAD~100")
+		tagOutput, err := tagCmd.CombinedOutput()
+		if err == nil {
+			tag := strings.TrimSpace(string(tagOutput))
+			if tag != "" {
+				args = append(args, fmt.Sprintf("%s..HEAD", tag))
+			} else {
+				// No tag found, include all commits
+				args = append(args, "--all")
+			}
+		}
+	} else {
+		args = append(args, fmt.Sprintf("%s..%s", fromTag, toTag))
+	}
+
+	cmd := exec.Command("git", args...)
+	cmdOutput, err := cmd.CombinedOutput()
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git log failed: %s", string(cmdOutput)),
+		}
+	}
+
+	// Parse commits
+	commitLines := strings.TrimSpace(string(cmdOutput))
+	if commitLines == "" {
+		return &ToolResult{
+			Success: true,
+			Output:  "No commits found in the specified range.",
+		}
+	}
+
+	var commits []commitEntry
+	for _, line := range strings.Split(commitLines, "\n") {
+		if line == "" {
+			continue
+		}
+
+		// Parse: full_hash subject
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		commitHash := parts[0]
+		subject := parts[1]
+
+		// Skip merge commits
+		if strings.HasPrefix(subject, "Merge ") {
+			continue
+		}
+
+		// Match conventional commit pattern
+		matches := conventionalCommitRegex.FindStringSubmatch(subject)
+		if matches == nil {
+			continue
+		}
+
+		commitType := matches[1]
+		description := matches[2]
+
+		// Handle scope
+		scope := ""
+		spaceIdx := strings.Index(description, " ")
+		if spaceIdx > 0 {
+			// Check for scope in description (e.g., "feat(core): add feature")
+			if strings.HasPrefix(description, "(") {
+				closeIdx := strings.Index(description, ")")
+				if closeIdx > 0 {
+					scope = description[1:closeIdx]
+					description = description[closeIdx+2:]
+				}
+			}
+		}
+
+		// Determine category
+		category := "Other Changes"
+		if !strings.HasSuffix(commitType, "!") {
+			if mapping, ok := categoryMapping[commitType]; ok {
+				category = mapping
+			}
+		} else {
+			category = "Breaking Changes"
+		}
+		// Double-check for breaking change indicator
+		if strings.HasSuffix(commitType, "!") || strings.Contains(subject, " BREAKING CHANGE:") {
+			category = "Breaking Changes"
+		}
+
+		// Short hash
+		shortHash := commitHash[:7]
+
+		// Clean up description (capitalize first letter, remove trailing period)
+		if len(description) > 0 {
+			description = strings.ToLower(description[:1]) + description[1:]
+			description = strings.TrimRight(description, ".")
+		}
+
+		commits = append(commits, commitEntry{
+			Type:     commitType,
+			Category: category,
+			Scope:    scope,
+			Message:  description,
+			Hash:     shortHash,
+		})
+	}
+
+	if len(commits) == 0 {
+		return &ToolResult{
+			Success: true,
+			Output:  "No conventional commits found in the specified range.",
+		}
+	}
+
+	// Group commits by category
+	categories := make(map[string][]string)
+	categoryOrder := []string{"Breaking Changes", "Features", "Bug Fixes", "Performance Improvements", "Code Refactoring", "Styles", "Documentation", "Tests", "Build System", "Continuous Integration", "Chores", "Reverts", "Other Changes"}
+
+	for _, c := range commits {
+		msg := "- " + c.Message
+		if c.Scope != "" {
+			msg = fmt.Sprintf("- **%s**: %s", c.Scope, c.Message)
+		}
+		categories[c.Category] = append(categories[c.Category], msg)
+	}
+
+	// Build output
+	var output strings.Builder
+	if hasHeader && customHeader != "" {
+		output.WriteString(customHeader + "\n\n")
+	}
+
+	if unreleased {
+		output.WriteString("## [Unreleased]\n\n")
+	}
+
+	for _, cat := range categoryOrder {
+		entries, exists := categories[cat]
+		if !exists {
+			continue
+		}
+		output.WriteString(fmt.Sprintf("### %s\n\n", cat))
+		for _, entry := range entries {
+			output.WriteString(entry + "\n")
+		}
+		output.WriteString("\n")
+	}
+
+	// Add footer with commit hashes
+	output.WriteString("### Commits\n\n")
+	for _, c := range commits {
+		if c.Scope != "" {
+			output.WriteString(fmt.Sprintf("- [`%s`](https://github.com/placeholder/placeholder/commit/%s) [%s] %s\n", c.Hash, c.Hash, c.Scope, c.Message))
+		} else {
+			output.WriteString(fmt.Sprintf("- [`%s`](https://github.com/placeholder/placeholder/commit/%s) %s\n", c.Hash, c.Hash, c.Message))
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"tool":         "changelog",
+			"action":       "generate",
+			"totalCommits": len(commits),
+			"categories":   len(categories),
+			"unreleased":   unreleased,
+		},
+	}
+}
+
+// changelogAdd appends generated entries to an existing CHANGELOG file.
+func (te *ToolExecutor) changelogAdd(params map[string]interface{}) *ToolResult {
+	tag, hasTag := params["tag"].(string)
+	if !hasTag {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: tag",
+		}
+	}
+
+	date, hasDate := params["date"].(string)
+	if !hasDate {
+		date = time.Now().Format("2006-01-02")
+	}
+
+	path, hasPath := params["path"].(string)
+	if !hasPath {
+		path = "CHANGELOG.md"
+	}
+
+	unreleased := false
+	if u, ok := params["unreleased"].(bool); ok {
+		unreleased = u
+	}
+
+	// Check if CHANGELOG exists
+	existingContent := ""
+	exists := true
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		exists = false
+	} else {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to read changelog: %v", err),
+			}
+		}
+		existingContent = string(content)
+	}
+
+	// Generate changelog content
+	genResult := te.changelogGenerate(params)
+	if !genResult.Success {
+		return genResult
+	}
+
+	generatedContent := genResult.Output
+
+	// Handle unreleased mode: move unreleased section to the new tag
+	if unreleased && exists {
+		// Find unreleased section in existing content
+		re := regexp.MustCompile(`(?s)## \[Unreleased\]\n\n(.*?)(?=## |\z)`)
+		match := re.FindStringSubmatch(existingContent)
+
+		if match != nil {
+			unreleasedEntries := match[1]
+			// Remove unreleased section from existing content
+			existingContent = re.ReplaceAllString(existingContent, "")
+
+			// Build new entry with tag
+			newSection := fmt.Sprintf("## [%s] - %s\n\n%s\n", tag, date, strings.TrimSpace(unreleasedEntries))
+
+			// Prepend the new section to existing content (or the generated content)
+			if existingContent == "" {
+				existingContent = newSection
+			} else {
+				// Insert after the title/header
+				existingContent = insertAfterHeader(existingContent, newSection)
+			}
+		}
+
+		// Write updated changelog
+		if err := os.WriteFile(path, []byte(existingContent), 0644); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to write changelog: %v", err),
+			}
+		}
+
+		return &ToolResult{
+			Success: true,
+			Output:  fmt.Sprintf("Added unreleased changes under tag [%s] - %s in %s", tag, date, path),
+			Extra: map[string]interface{}{
+				"tool":       "changelog",
+				"action":     "add",
+				"tag":        tag,
+				"date":       date,
+				"file":       path,
+				"unreleased": true,
+			},
+		}
+	}
+
+	// Standard add: append new entry
+	newEntry := fmt.Sprintf("## [%s] - %s\n\n%s", tag, date, strings.TrimSpace(generatedContent))
+
+	var newContent string
+	if !exists {
+		// Create new file with title
+		newContent = "# Changelog\n\n" + newEntry + "\n"
+	} else {
+		// Insert after the title
+		newContent = insertAfterHeader(existingContent, newEntry)
+	}
+
+	// Write changelog
+	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write changelog: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Added changelog entry for [%s] - %s in %s", tag, date, path),
+		Extra: map[string]interface{}{
+			"tool":   "changelog",
+			"action": "add",
+			"tag":    tag,
+			"date":   date,
+			"file":   path,
+		},
+	}
+}
+
+// insertAfterHeader inserts content after the first # title line in markdown content.
+func insertAfterHeader(content, toInsert string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+			// Insert after the title line
+			result := make([]string, 0, len(lines)+2)
+			result = append(result, lines[:i+1]...)
+			result = append(result, "")
+			result = append(result, toInsert)
+			result = append(result, "\n")
+			result = append(result, lines[i+1:]...)
+			return strings.Join(result, "\n")
+		}
+	}
+	// No title found, prepend
+	return "# Changelog\n\n" + toInsert + "\n"
 }
 

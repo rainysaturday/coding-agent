@@ -2646,6 +2646,50 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "changelog",
+				Description: "Generate changelog entries from git commit history. Groups conventional commits by category (Features, Bug Fixes, Breaking Changes, etc.) following Keep a Changelog format. Actions: 'generate' outputs changelog to stdout, 'add' appends to an existing CHANGELOG.md file.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'generate' (output changelog) or 'add' (append to CHANGELOG.md)",
+						},
+						"from_tag": {
+							Type:        "string",
+							Description: "Start commit/tag for changelog range (default: first commit)",
+						},
+						"to_tag": {
+							Type:        "string",
+							Description: "End commit/tag for changelog range (default: HEAD)",
+						},
+						"unreleased": {
+							Type:        "boolean",
+							Description: "Include only commits without an associated tag (for generate), or move unreleased section to new tag (for add)",
+						},
+						"tag": {
+							Type:        "string",
+							Description: "Git tag/version for this changelog entry (required for 'add' action)",
+						},
+						"date": {
+							Type:        "string",
+							Description: "Date for this entry in YYYY-MM-DD format (default: today)",
+						},
+						"path": {
+							Type:        "string",
+							Description: "Path to CHANGELOG.md file (default: ./CHANGELOG.md)",
+						},
+						"header": {
+							Type:        "string",
+							Description: "Custom header text to prepend to the changelog output",
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
