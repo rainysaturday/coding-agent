@@ -1021,6 +1021,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"list_dir":      {},
 		"delete_file":   {"path"},
 		"scaffold":      {"template"},
+		"run_tests":     {},
 	}
 
 	for _, tool := range toolDefs {

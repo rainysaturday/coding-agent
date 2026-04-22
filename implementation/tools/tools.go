@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -156,6 +157,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeDeleteFile(tc.Parameters)
 	case "scaffold":
 		result = te.executeScaffold(tc.Parameters)
+	case "run_tests":
+		result = te.executeRunTests(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -3130,4 +3133,242 @@ func extractPaths(files []map[string]interface{}) []string {
 		}
 	}
 	return paths
+}
+
+// executeRunTests executes tests for the current project and reports structured results.
+func (te *ToolExecutor) executeRunTests(params map[string]interface{}) *ToolResult {
+	// Determine test command
+	command, hasCommand := params["command"].(string)
+
+	if !hasCommand || command == "" {
+		// Auto-detect project type
+		command = te.detectTestCommand()
+	}
+
+	if command == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "no project type detected. Supported project types: Go (go.mod), Node.js (package.json), Python (requirements.txt, pyproject.toml), Makefile with test target. Provide a custom 'command' parameter to override.",
+		}
+	}
+
+	// Build arguments
+	var args []string
+	if argsParam, hasArgs := params["args"]; hasArgs {
+		switch v := argsParam.(type) {
+		case []interface{}:
+			for _, a := range v {
+				args = append(args, fmt.Sprintf("%v", a))
+			}
+		case string:
+			args = append(args, v)
+		}
+	}
+
+	// Determine timeout (default: 60 seconds)
+	timeoutSeconds := 60
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutSeconds = int(v)
+		case int:
+			timeoutSeconds = v
+		case string:
+			if n, err := strconv.Atoi(v); err == nil {
+				timeoutSeconds = n
+			}
+		}
+	}
+
+	// Build full command
+	fullCmd := command
+	if len(args) > 0 {
+		fullCmd = command + " " + strings.Join(args, " ")
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", fullCmd)
+
+	// Set working directory to current directory
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+
+	// Execute command
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Extract exit code
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		}
+	} else {
+		// Check if the output indicates test failure even with exit code 0
+		// (some test runners return 0 but output "FAIL")
+		if strings.Contains(outputStr, "FAIL") && !strings.Contains(outputStr, "ok  ") {
+			exitCode = 1
+		}
+	}
+
+	// Truncate output if too long
+	maxOutputLen := 10000
+	if len(outputStr) > maxOutputLen {
+		outputStr = outputStr[:maxOutputLen] + "\n... [output truncated, exceeded 10000 character limit]"
+	}
+
+	// Determine if tests passed
+	passed := exitCode == 0
+
+	// Generate summary
+	summary := te.generateTestSummary(outputStr, passed, command)
+
+	result := &ToolResult{
+		Success:  passed,
+		ExitCode: exitCode,
+		Output:   outputStr,
+		Extra: map[string]interface{}{
+			"tool":    "run_tests",
+			"passed":  passed,
+			"command": command,
+			"summary": summary,
+		},
+	}
+
+	return result
+}
+
+// detectTestCommand auto-detects the test command based on project files.
+func (te *ToolExecutor) detectTestCommand() string {
+	cwd, _ := os.Getwd()
+
+	// Check for Go project
+	if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
+		return "go test ./..."
+	}
+
+	// Check for Node.js project
+	if _, err := os.Stat(filepath.Join(cwd, "package.json")); err == nil {
+		return "npm test"
+	}
+
+	// Check for Python project
+	if _, err := os.Stat(filepath.Join(cwd, "requirements.txt")); err == nil {
+		return "python -m pytest"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "pyproject.toml")); err == nil {
+		return "python -m pytest"
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "setup.py")); err == nil {
+		return "python -m pytest"
+	}
+
+	// Check for Makefile with test target
+	if _, err := os.Stat(filepath.Join(cwd, "Makefile")); err == nil {
+		// Verify Makefile has a test target
+		content, _ := os.ReadFile(filepath.Join(cwd, "Makefile"))
+		if bytes.Contains(content, []byte("test:")) || bytes.Contains(content, []byte("test :")) {
+			return "make test"
+		}
+	}
+
+	return ""
+}
+
+// generateTestSummary creates a human-readable summary of test results.
+func (te *ToolExecutor) generateTestSummary(output string, passed bool, command string) string {
+	var summary strings.Builder
+
+	if passed {
+		summary.WriteString("Tests passed successfully.")
+	} else {
+		summary.WriteString("Tests failed.")
+	}
+
+	// Count test packages
+	packageCount := strings.Count(output, "ok  ")
+	if packageCount == 0 {
+		packageCount = strings.Count(output, "ok ")
+	}
+
+	// Count failures
+	failureCount := strings.Count(output, "--- FAIL:")
+	failureCount += strings.Count(output, "FAIL:")
+
+	// Count errors
+	errorCount := strings.Count(output, "FAIL")
+
+	summary.WriteString(fmt.Sprintf("\nCommand: %s", command))
+	if packageCount > 0 {
+		summary.WriteString(fmt.Sprintf("\nPackages: %d", packageCount))
+	}
+	if failureCount > 0 {
+		summary.WriteString(fmt.Sprintf("\nFailures: %d", failureCount))
+	}
+	if errorCount > 0 {
+		summary.WriteString(fmt.Sprintf("\nErrors: %d", errorCount))
+	}
+
+	// Extract individual failure names
+	failingTests := extractFailingTests(output)
+	if len(failingTests) > 0 {
+		summary.WriteString("\nFailing tests:\n")
+		for _, test := range failingTests[:min(len(failingTests), 10)] {
+			summary.WriteString(fmt.Sprintf("  - %s\n", test))
+		}
+		if len(failingTests) > 10 {
+			summary.WriteString(fmt.Sprintf("  ... and %d more\n", len(failingTests)-10))
+		}
+	}
+
+	return summary.String()
+}
+
+// extractFailingTests extracts names of failing tests from output.
+func extractFailingTests(output string) []string {
+	var failures []string
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		// Match patterns like "--- FAIL: TestFoo (0.00s)" or "FAIL: TestBar:"
+		if strings.HasPrefix(strings.TrimSpace(line), "--- FAIL:") {
+			// Extract test name: "--- FAIL: TestFoo (0.00s)"
+			rest := strings.TrimPrefix(strings.TrimSpace(line), "--- FAIL:")
+			name := strings.TrimSpace(rest)
+			if idx := strings.Index(name, "("); idx != -1 {
+				name = name[:idx]
+			}
+			name = strings.TrimSpace(name)
+			if name != "" {
+				failures = append(failures, name)
+			}
+		} else if strings.Contains(line, "FAIL:") && strings.Contains(line, "Test") {
+			// Match patterns like "FAIL: TestBar:"
+			parts := strings.Split(line, "FAIL:")
+			if len(parts) > 1 {
+				name := strings.TrimSpace(parts[1])
+				if idx := strings.Index(name, "("); idx != -1 {
+					name = name[:idx]
+				}
+				if idx := strings.Index(name, ":"); idx != -1 {
+					name = name[:idx]
+				}
+				name = strings.TrimSpace(name)
+				if name != "" {
+					failures = append(failures, name)
+				}
+			}
+		}
+	}
+	return failures
+}
+
+// min returns the minimum of two integers.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

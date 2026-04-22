@@ -1280,6 +1280,16 @@ AVAILABLE TOOLS:
     How to call: Use list_dir to explore directory structure and find files.
     Example use case: list_dir(path='src/') or list_dir(path='src/', recursive=true, show_hidden=true)
 
+22. run_tests
+    Description: Execute tests for the current project and report structured results. Auto-detects project type (Go, Node.js, Python) and runs the appropriate test command.
+    Parameters:
+      - command (string, optional): Custom test command to run (e.g., 'go test ./pkg/...', 'npm test -- --coverage'). If omitted, auto-detects from project files.
+      - args (array, optional): Additional arguments for the test command (e.g., ['-v', '-run', 'TestFoo'] or '-v').
+      - timeout (integer, optional): Maximum execution time in seconds (default: 60).
+    How to call: Use run_tests to verify code changes by running the project's test suite. Returns structured results including exit code, pass/fail status, and a summary of failures.
+    Example use case: run_tests() to run all tests, or run_tests(command='go test ./pkg/...', args=['-v']) to run specific packages with verbose output.
+    Note: Auto-detection runs 'go test ./...' for Go projects, 'npm test' for Node.js projects, and 'python -m pytest' for Python projects.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -1886,6 +1896,31 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"template"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "run_tests",
+				Description: "Execute tests for the current project and report structured results. Auto-detects project type (Go, Node.js, Python) and runs appropriate test commands.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"command": {
+							Type:        "string",
+							Description: "Custom test command to run (e.g., 'go test ./pkg/...', 'npm test -- --coverage'). If omitted, auto-detects from project files.",
+						},
+						"args": {
+							Type:        "array",
+							Description: "Additional arguments for the test command. Can be an array of strings or a single space-separated string.",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Maximum execution time in seconds (default: 60)",
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},
