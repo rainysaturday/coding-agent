@@ -2025,3 +2025,331 @@ func TestExecuteListDir_TypeField(t *testing.T) {
 	}
 }
 
+func TestExecuteCopyFile_MissingSource(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"destination": "dest.txt",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure due to missing source parameter")
+	}
+	if !strings.Contains(result.Error, "source") {
+		t.Errorf("Expected error about missing source, got: %s", result.Error)
+	}
+}
+
+func TestExecuteCopyFile_MissingDestination(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source": "source.txt",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure due to missing destination parameter")
+	}
+	if !strings.Contains(result.Error, "destination") {
+		t.Errorf("Expected error about missing destination, got: %s", result.Error)
+	}
+}
+
+func TestExecuteCopyFile_SourceNotFound(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      "/nonexistent/path/file.txt",
+			"destination": "dest.txt",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure due to non-existent source")
+	}
+	if !strings.Contains(result.Error, "not found") {
+		t.Errorf("Expected 'not found' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteCopyFile_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "source.txt")
+	destPath := filepath.Join(tmpDir, "dest.txt")
+
+	// Create source file
+	err := os.WriteFile(srcPath, []byte("hello world"), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify destination file exists and has correct content
+	content, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal("Destination file not found:", err)
+	}
+	if string(content) != "hello world" {
+		t.Errorf("Expected 'hello world', got '%s'", string(content))
+	}
+
+	// Verify source file still exists (copy, not move)
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		t.Error("Source file should still exist after copy")
+	}
+
+	// Verify extra fields
+	if extra, ok := result.Extra["source"].(string); !ok || extra != srcPath {
+		t.Error("Expected source in extra fields")
+	}
+	if extra, ok := result.Extra["destination"].(string); !ok || extra != destPath {
+		t.Error("Expected destination in extra fields")
+	}
+	var bytesCopied int
+	if bc, ok := result.Extra["bytesCopied"].(float64); ok {
+		bytesCopied = int(bc)
+	} else if bc, ok := result.Extra["bytesCopied"].(int); ok {
+		bytesCopied = bc
+	}
+	if bytesCopied != len("hello world") {
+		t.Errorf("Expected bytesCopied=%d, got %d", len("hello world"), bytesCopied)
+	}
+}
+
+func TestExecuteCopyFile_OverwriteDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "source.txt")
+	destPath := filepath.Join(tmpDir, "dest.txt")
+
+	// Create both files
+	os.WriteFile(srcPath, []byte("source content"), 0644)
+	os.WriteFile(destPath, []byte("existing content"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure when destination exists and overwrite is false")
+	}
+	if !strings.Contains(result.Error, "already exists") {
+		t.Errorf("Expected 'already exists' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteCopyFile_OverwriteEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "source.txt")
+	destPath := filepath.Join(tmpDir, "dest.txt")
+
+	// Create both files
+	os.WriteFile(srcPath, []byte("source content"), 0644)
+	os.WriteFile(destPath, []byte("existing content"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+			"overwrite":   true,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success with overwrite=true, got error: %s", result.Error)
+	}
+
+	// Verify destination has source content
+	content, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "source content" {
+		t.Errorf("Expected 'source content', got '%s'", string(content))
+	}
+
+	// Verify overwritten flag
+	if overwritten, ok := result.Extra["overwritten"].(bool); !ok || !overwritten {
+		t.Error("Expected overwritten=true in extra fields")
+	}
+}
+
+func TestExecuteCopyFile_CreatesParentDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "source.txt")
+	destPath := filepath.Join(tmpDir, "nested", "deep", "dest.txt")
+
+	// Create source file
+	os.WriteFile(srcPath, []byte("test data"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify destination file exists
+	content, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatal("Destination file not found:", err)
+	}
+	if string(content) != "test data" {
+		t.Errorf("Expected 'test data', got '%s'", string(content))
+	}
+}
+
+func TestExecuteCopyFile_SourceIsDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "sourcedir")
+	destPath := filepath.Join(tmpDir, "dest.txt")
+
+	// Create source as directory
+	os.Mkdir(srcPath, 0755)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure when source is a directory")
+	}
+	if !strings.Contains(result.Error, "directory") {
+		t.Errorf("Expected 'directory' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteCopyFile_EmptySource(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      "",
+			"destination": "dest.txt",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure for empty source")
+	}
+}
+
+func TestExecuteCopyFile_EmptyDestination(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      "source.txt",
+			"destination": "",
+		},
+	})
+
+	if result.Success {
+		t.Error("Expected failure for empty destination")
+	}
+}
+
+func TestExecuteCopyFile_PreservesPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "executable.sh")
+	destPath := filepath.Join(tmpDir, "copy.sh")
+
+	// Create source with execute permission
+	err := os.WriteFile(srcPath, []byte("#!/bin/sh\necho hello"), 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	if !result.Success {
+		t.Fatalf("Expected success, got error: %s", result.Error)
+	}
+
+	// Verify permissions are preserved
+	destInfo, err := os.Stat(destPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destInfo.Mode().Perm() != 0755 {
+		t.Errorf("Expected 0755 permissions, got %v", destInfo.Mode().Perm())
+	}
+}
+
+func TestExecuteCopyFile_Stats(t *testing.T) {
+	tmpDir := t.TempDir()
+	srcPath := filepath.Join(tmpDir, "source.txt")
+	destPath := filepath.Join(tmpDir, "dest.txt")
+
+	os.WriteFile(srcPath, []byte("test"), 0644)
+
+	te := NewToolExecutor()
+
+	// Execute successful copy
+	te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      srcPath,
+			"destination": destPath,
+		},
+	})
+
+	// Execute failed copy
+	te.Execute(&ToolCall{
+		Name: "copy_file",
+		Parameters: map[string]interface{}{
+			"source":      "/nonexistent/file.txt",
+			"destination": destPath,
+		},
+	})
+
+	stats := te.Stats()
+	if stats.TotalCalls != 2 {
+		t.Errorf("Expected 2 total calls, got %d", stats.TotalCalls)
+	}
+	if stats.FailedCalls != 1 {
+		t.Errorf("Expected 1 failed call, got %d", stats.FailedCalls)
+	}
+}
+

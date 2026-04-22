@@ -1017,6 +1017,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"find":          {"pattern"},
 		"web_fetch":     {"url"},
 		"move_file":     {"source", "destination"},
+		"copy_file":     {"source", "destination"},
 		"list_dir":      {},
 	}
 

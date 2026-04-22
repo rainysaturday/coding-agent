@@ -753,6 +753,16 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			dst = d
 		}
 		msg = fmt.Sprintf("\n%s[Moving] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
+	case "copy_file":
+		src := ""
+		dst := ""
+		if s, ok := params["source"].(string); ok {
+			src = s
+		}
+		if d, ok := params["destination"].(string); ok {
+			dst = d
+		}
+		msg = fmt.Sprintf("\n%s[Copying] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -1003,6 +1013,19 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				destination = d
 			}
 			return fmt.Sprintf("%s[Success] moved '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
+		case "copy_file":
+			source := ""
+			destination := ""
+			if s, ok := result.Extra["source"].(string); ok {
+				source = s
+			}
+			if d, ok := result.Extra["destination"].(string); ok {
+				destination = d
+			}
+			if overwritten, ok := result.Extra["overwritten"].(bool); ok && overwritten {
+				return fmt.Sprintf("%s[Success] overwrote '%s' with copy of '%s'%s\n", ColorGreen, destination, source, ColorReset)
+			}
+			return fmt.Sprintf("%s[Success] copied '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1237,6 +1260,25 @@ AVAILABLE TOOLS:
       - destination (string, required): Destination file path (new location and/or name)
     How to call: Use move_file when you need to relocate a file within the filesystem or rename it.
     Example use case: move_file(source='old_name.go', destination='new_name.go') or move_file(source='temp/foo.txt', destination='docs/foo.txt')
+
+20. copy_file
+    Description: Copy a file from source to destination path. Creates parent directories for the destination if they don't already exist. Does not remove the source file.
+    Parameters:
+      - source (string, required): Source file path to copy from
+      - destination (string, required): Destination file path (new location and/or name)
+      - overwrite (boolean, optional): Allow overwriting existing destination file (default: false)
+    How to call: Use copy_file when you need to duplicate a file within the filesystem. The source file is preserved.
+    Example use case: copy_file(source='config.go', destination='config_backup.go') or copy_file(source='app.go', destination='dist/app.go') overwrite=true
+
+21. list_dir
+    Description: List directory contents with metadata (file type, size, modification time). Supports recursive listing and hidden file filtering.
+    Parameters:
+      - path (string, optional): Directory path to list (default: current directory)
+      - recursive (boolean, optional): List contents recursively (default: false)
+      - max_results (integer, optional): Maximum entries to return (default: 100)
+      - show_hidden (boolean, optional): Include hidden files (dotfiles) (default: false)
+    How to call: Use list_dir to explore directory structure and find files.
+    Example use case: list_dir(path='src/') or list_dir(path='src/', recursive=true, show_hidden=true)
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1709,6 +1751,31 @@ func buildTools() []inference.ToolDefinition {
 						"destination": {
 							Type:        "string",
 							Description: "Destination file path (new location and/or name)",
+						},
+					},
+					Required: []string{"source", "destination"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "copy_file",
+				Description: "Copy a file from source to destination path. Creates parent directories for destination if they don't exist. Does not remove the source file.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"source": {
+							Type:        "string",
+							Description: "Source file path to copy from",
+						},
+						"destination": {
+							Type:        "string",
+							Description: "Destination file path (new location and/or name)",
+						},
+						"overwrite": {
+							Type:        "boolean",
+							Description: "Allow overwriting existing destination file (default: false)",
 						},
 					},
 					Required: []string{"source", "destination"},

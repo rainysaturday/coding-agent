@@ -149,6 +149,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeMoveFile(tc.Parameters)
 	case "list_dir":
 		result = te.executeListDir(tc.Parameters)
+	case "copy_file":
+		result = te.executeCopyFile(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -2147,6 +2149,134 @@ func (te *ToolExecutor) executeMoveFile(params map[string]interface{}) *ToolResu
 			"operation":  "move",
 		},
 	}
+}
+
+// executeCopyFile copies a file from source to destination.
+func (te *ToolExecutor) executeCopyFile(params map[string]interface{}) *ToolResult {
+	src, ok := params["source"].(string)
+	if !ok || src == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: source",
+		}
+	}
+
+	dest, ok := params["destination"].(string)
+	if !ok || dest == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: destination",
+		}
+	}
+
+	// Optional overwrite parameter (default: false)
+	overwrite := false
+	if ow, ok := params["overwrite"].(bool); ok {
+		overwrite = ow
+	}
+
+	// Clean paths to prevent directory traversal
+	cleanSrc := filepath.Clean(src)
+	cleanDest := filepath.Clean(dest)
+
+	// Validate source exists
+	srcInfo, err := os.Stat(cleanSrc)
+	if os.IsNotExist(err) {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source file not found: %s", cleanSrc),
+		}
+	}
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot access source file: %v", err),
+		}
+	}
+
+	// Cannot copy directories
+	if srcInfo.IsDir() {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("source is a directory, not a file: %s", cleanSrc),
+		}
+	}
+
+	// Prevent directory traversal on source
+	if strings.HasPrefix(cleanSrc, "..") {
+		return &ToolResult{
+			Success: false,
+			Error:   "invalid source path: directory traversal not allowed",
+		}
+	}
+
+	// Check if destination already exists
+	destExists := false
+	if _, err := os.Stat(cleanDest); err == nil {
+		destExists = true
+	}
+
+	if destExists && !overwrite {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("destination already exists: %s (use overwrite=true to overwrite)", cleanDest),
+		}
+	}
+
+	// Create parent directories for destination if needed
+	destDir := filepath.Dir(cleanDest)
+	if destDir != "" && destDir != "." {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("cannot create destination directory: %v", err),
+			}
+		}
+	}
+
+	// Read source file
+	srcContent, err := os.ReadFile(cleanSrc)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read source file: %v", err),
+		}
+	}
+
+	// Get source file permissions
+	srcInfo2, err := os.Stat(cleanSrc)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to get source file info: %v", err),
+		}
+	}
+	srcPerm := srcInfo2.Mode()
+
+	// Write to destination
+	if err := os.WriteFile(cleanDest, srcContent, srcPerm); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to write destination file: %v", err),
+		}
+	}
+
+	result := &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Copied '%s' -> '%s' (%d bytes)", cleanSrc, cleanDest, len(srcContent)),
+		Extra: map[string]interface{}{
+			"source":      cleanSrc,
+			"destination": cleanDest,
+			"operation":   "copy",
+			"bytesCopied": len(srcContent),
+		},
+	}
+
+	if destExists {
+		result.Extra["overwritten"] = true
+	}
+
+	return result
 }
 
 // executeListDir lists directory contents with metadata.

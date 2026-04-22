@@ -80,6 +80,7 @@
 
 ### File Management
 - **#040: Move File Tool** - Move or rename files within the filesystem, with directory creation support and path validation
+- **#042: Copy File Tool** - Copy files from source to destination with path validation, directory creation, permission preservation, and overwrite protection
 
 ### Directory Management
 - **#041: List Directory Tool** - List directory contents with metadata (file type, size, modification time), recursive mode, hidden files support
@@ -90,4 +91,4 @@ _None - all planned features have been implemented._
 
 ## Completed Feature Count
 
-**41 / 41 features implemented**
+**42 / 42 features implemented**
