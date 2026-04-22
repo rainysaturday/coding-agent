@@ -64,6 +64,9 @@
 ### Test Generation
 - **#068: Test Generator Tool** - Generate unit tests for source files with language auto-detection (Go, Python, JavaScript/TypeScript). Supports table-driven tests for Go, pytest-parametrized tests for Python, and Jest test suites for JS/TS. Uses only Go stdlib - zero external dependencies.
 
+### Code Review
+- **#069: Code Review Tool** - Review code files for issues, quality problems, potential bugs, security concerns, and best practices. Supports Go, Python, JavaScript/TypeScript, Rust, Java, C/C++, and more. Returns structured findings with severity levels (info, warning, error, critical) and improvement suggestions. Uses only Go stdlib - zero external dependencies.
+
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
 - **#015: Tool Prefix Prompt** - Tool definitions in system prompt
@@ -155,6 +158,6 @@
 
 ## Completed Feature Count
 
-**68 / 68 features implemented**
+**69 / 69 features implemented**
 
 ## Upcoming Features

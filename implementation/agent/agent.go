@@ -819,6 +819,12 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			query = query[:40] + "..."
 		}
 		msg = fmt.Sprintf("\n%s[Code Navigation] %s: '%s'%s\n", ColorCyan, mode, query, ColorReset)
+	case "code_review":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Code Review] reviewing: %s%s\n", ColorCyan, path, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -1193,6 +1199,16 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				matches = mc
 			}
 			return fmt.Sprintf("%s[Success] %s: found %d result(s) for '%s'%s\n", ColorGreen, mode, matches, query, ColorReset)
+		case "code_review":
+			filesSearched := 0
+			if fs, ok := result.Extra["filesSearched"].(int); ok {
+				filesSearched = fs
+			}
+			findingsFound := 0
+			if ff, ok := result.Extra["findingsFound"].(int); ok {
+				findingsFound = ff
+			}
+			return fmt.Sprintf("%s[Success] reviewed %d file(s), found %d finding(s)%s\n", ColorGreen, filesSearched, findingsFound, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1655,6 +1671,17 @@ AVAILABLE TOOLS:
       - include_comments (boolean, optional): Include source comments in documentation (default: true)
     How to call: Use generate_docs to create documentation for source files or entire directories. For markdown format, returns structured docs with type and function sections. For inline format, returns code with generated comments.
     Example use case: generate_docs(path='src/main.go'), generate_docs(path='src/', format='markdown', detail='detailed'), generate_docs(path='app.py', format='inline')
+
+36. code_review
+    Description: Review code files for issues, quality problems, potential bugs, security concerns, and best practices. Supports Go, Python, JavaScript/TypeScript, Rust, Java, C/C++, and more. Analyzes for trailing whitespace, magic numbers, hardcoded credentials, TODO comments, language-specific best practices, and more. Returns structured findings with severity levels (info, warning, error, critical) and suggestions.
+    Parameters:
+      - path (string, required): File or directory path to review. If a directory, all source files will be scanned.
+      - files (array, optional): List of specific file paths to review (overrides path for file selection)
+      - languages (array, optional): Languages to check - 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'c', 'cpp', 'csharp', 'ruby', 'php', 'swift', 'kotlin'. Auto-detected from extensions if not specified.
+      - max_findings (integer, optional): Maximum number of findings to return (default: 100)
+      - rules (array, optional): Filter rules by name or category (e.g., ['security', 'magic-number'] or ['hardcoded-credentials'])
+    How to call: Use code_review to analyze code quality and identify issues before committing. Review entire directories or specific files. Results include severity levels, categories, and improvement suggestions.
+    Example use case: code_review(path='src/'), code_review(path='src/main.go', rules=['security']), code_review(path='.', languages=['go', 'python'])
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -3086,6 +3113,39 @@ func buildTools() []inference.ToolDefinition {
 						"test_framework": {
 							Type:        "string",
 							Description: "Test framework: 'testing' for Go, 'pytest' for Python, 'jest' for JS/TS",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "code_review",
+				Description: "Review code files for issues, quality problems, potential bugs, security concerns, and best practices. Supports Go, Python, JavaScript/TypeScript, Rust, Java, C/C++, and more. Analyzes for trailing whitespace, magic numbers, hardcoded credentials, TODO comments, language-specific best practices, and more. Returns structured findings with severity levels and suggestions for improvement.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File or directory path to review. If a directory, all source files will be scanned.",
+						},
+						"files": {
+							Type:        "array",
+							Description: "List of specific file paths to review (overrides path for file selection)",
+						},
+						"languages": {
+							Type:        "array",
+							Description: "Languages to check: 'go', 'python', 'javascript', 'typescript', 'rust', 'java', 'c', 'cpp', 'csharp', 'ruby', 'php', 'swift', 'kotlin'. Auto-detected from extensions if not specified.",
+						},
+						"max_findings": {
+							Type:        "integer",
+							Description: "Maximum number of findings to return (default: 100)",
+						},
+						"rules": {
+							Type:        "array",
+							Description: "Filter rules by name or category (e.g., ['security', 'magic-number'] or ['hardcoded-credentials', 'trailing-whitespace'])",
 						},
 					},
 					Required: []string{"path"},
