@@ -205,6 +205,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeCodeMetrics(tc.Parameters)
 	case "dependency_audit":
 		result = te.executeDependencyAudit(tc.Parameters)
+	case "testgen":
+		result = te.executeTestGen(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{

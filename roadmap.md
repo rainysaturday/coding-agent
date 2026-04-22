@@ -61,6 +61,9 @@
 - **#065: Git Revert Tool** - Revert git changes with five actions: list (recent commits), commit (revert a specific commit by hash creating undo commit), files (revert specific files to last committed state), soft_reset (soft reset to a commit keeping changes staged), and hard_reset (hard reset to a commit discarding all changes); branch protection for main/master; dry-run mode; safety checks for destructive operations
 - **#066: Git Rebase Tool** - Manage git rebases with six actions: list (show commits that would be rebased), start (begin rebase onto target branch/commit), continue (resume after conflicts), abort (cancel rebase and restore original branch), skip (skip current commit), and update (update rebase todo list for interactive rebase); supports keep-empty and allow-empty flags
 
+### Test Generation
+- **#068: Test Generator Tool** - Generate unit tests for source files with language auto-detection (Go, Python, JavaScript/TypeScript). Supports table-driven tests for Go, pytest-parametrized tests for Python, and Jest test suites for JS/TS. Uses only Go stdlib - zero external dependencies.
+
 ### Tool System
 - **#014: Tool Calling Format** - OpenAI API specification format
 - **#015: Tool Prefix Prompt** - Tool definitions in system prompt
@@ -152,6 +155,6 @@
 
 ## Completed Feature Count
 
-**67 / 67 features implemented**
+**68 / 68 features implemented**
 
 ## Upcoming Features

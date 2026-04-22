@@ -3063,6 +3063,35 @@ func buildTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "testgen",
+				Description: "Generate unit tests for source code files. Analyzes the source file to extract functions/methods and generates comprehensive test cases. Supports Go (testing package with table-driven tests), Python (pytest with parametrized tests), and JavaScript/TypeScript (Jest test suites). Uses only Go stdlib - zero external dependencies.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Source file path to generate tests for",
+						},
+						"language": {
+							Type:        "string",
+							Description: "Language hint: 'go', 'python', 'javascript', 'typescript'. Auto-detected from file extension if not provided.",
+						},
+						"output": {
+							Type:        "string",
+							Description: "Output path for generated test file (defaults to conventional test file location next to source)",
+						},
+						"test_framework": {
+							Type:        "string",
+							Description: "Test framework: 'testing' for Go, 'pytest' for Python, 'jest' for JS/TS",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
 	}
 }
 
