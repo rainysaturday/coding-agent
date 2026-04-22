@@ -589,6 +589,12 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			path = p
 		}
 		msg = fmt.Sprintf("\n%s[Patching] file: %s%s\n", ColorCyan, path, ColorReset)
+	case "list_files":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Listing] files in: %s%s\n", ColorCyan, path, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -690,6 +696,12 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				hunks = h
 			}
 			return fmt.Sprintf("%s[Success] applied %d hunk(s)%s\n", ColorGreen, hunks, ColorReset)
+		case "list_files":
+			entries := 0
+			if e, ok := result.Extra["entriesListed"].(int); ok {
+				entries = e
+			}
+			return fmt.Sprintf("%s[Success] listed %d entries%s\n", ColorGreen, entries, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -808,6 +820,14 @@ AVAILABLE TOOLS:
      - diff (string, required): Unified diff content to apply
    How to call: Use the patch tool when you need to apply a unified diff to a file.
    Example use case: Applying code changes, fixing bugs, updating file content
+
+8. list_files
+   Description: List files and directories in a path, similar to the ls command
+   Parameters:
+     - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
+     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)
+   How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
+   Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
 
 
 TOOL CALLING BEST PRACTICES:
@@ -992,6 +1012,29 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "diff"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "list_files",
+				Description: "List files and directories in a path, similar to the ls command",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file or directory to list (defaults to current directory if not specified)",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
 				},
 			},
 		},

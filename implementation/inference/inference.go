@@ -83,8 +83,9 @@ type ParameterSchema struct {
 
 // Property defines a single property in the schema.
 type Property struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
+	Type        string     `json:"type"`
+	Description string     `json:"description"`
+	Items       *Property  `json:"items,omitempty"`
 }
 
 // ToolCall represents a tool call from the OpenAI API response.

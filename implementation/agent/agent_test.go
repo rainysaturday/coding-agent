@@ -196,6 +196,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 		"insert_lines",
 		"replace_text",
 		"patch",
+		"list_files",
 	}
 
 	for _, expected := range expectedNames {
@@ -249,6 +250,7 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 		{"insert_lines", "Insert lines at a specific line"},
 		{"replace_text", "Find and replace text"},
 		{"patch", "Apply a unified diff patch"},
+		{"list_files", "List files and directories"},
 	}
 
 	for _, td := range toolDescriptions {
@@ -672,7 +674,7 @@ func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
 	prompt := buildSystemPrompt()
 
 	// Count occurrences of key phrases
-	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch"}
+	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch", "list_files"}
 	for _, name := range toolNames {
 		count := strings.Count(prompt, name)
 		// Tool should appear in tool definition and description, so at least 2 times
@@ -760,6 +762,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
 		"patch":        {"path", "diff"},
+		"list_files":   {},
 	}
 
 	for _, tool := range toolDefs {

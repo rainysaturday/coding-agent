@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"time"
 	"strconv"
 	"strings"
 )
@@ -117,6 +119,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeInsertLines(tc.Parameters)
 	case "replace_text":
 		result = te.executeReplaceText(tc.Parameters)
+	case "list_files":
+		result = te.executeListFiles(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -781,6 +785,273 @@ func (te *ToolExecutor) replaceLinesBySearch(path string, params map[string]inte
 			"replacementsMade": replacementsMade,
 			"totalOccurrences": totalOccurrences,
 		},
+	}
+}
+
+// executeListFiles lists files and directories, formatted like ls.
+func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolResult {
+	path := "."
+	if p, ok := params["path"].(string); ok && p != "" {
+		path = p
+	}
+
+	// Parse flags
+	flags := map[string]bool{
+		"l": false,
+		"a": false,
+		"h": false,
+		"t": false,
+		"S": false,
+		"r": false,
+	}
+
+	if flagsParam, ok := params["flags"]; ok {
+		switch v := flagsParam.(type) {
+		case []interface{}:
+			for _, f := range v {
+				if flagStr, ok := f.(string); ok {
+					if len(flagStr) == 1 {
+						flags[flagStr] = true
+					}
+				}
+			}
+		case []string:
+			for _, flagStr := range v {
+				if len(flagStr) == 1 {
+					flags[flagStr] = true
+				}
+			}
+		}
+	}
+
+	// Check if path is a file or directory
+	info, err := os.Stat(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	// If it's a file, return information about that single file
+	if !info.IsDir() {
+		if flags["l"] {
+			line := formatFileLong(info, flags)
+			return &ToolResult{
+				Success: true,
+				Output:  line,
+				Extra: map[string]interface{}{
+					"entriesListed": 1,
+					"path":          path,
+				},
+			}
+		}
+		return &ToolResult{
+			Success: true,
+			Output:  info.Name(),
+			Extra: map[string]interface{}{
+				"entriesListed": 1,
+				"path":          path,
+			},
+		}
+	}
+
+	// Read directory
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	// Filter entries
+	var filtered []os.DirEntry
+	for _, entry := range entries {
+		name := entry.Name()
+		if !flags["a"] && strings.HasPrefix(name, ".") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	// Sort entries
+	sort.Slice(filtered, func(i, j int) bool {
+		// Directories first
+		iIsDir := filtered[i].IsDir()
+		jIsDir := filtered[j].IsDir()
+		if iIsDir != jIsDir {
+			return iIsDir
+		}
+
+		// Then by the specified sort criteria
+		switch {
+		case flags["t"]:
+			iInfo, _ := filtered[i].Info()
+			jInfo, _ := filtered[j].Info()
+			if flags["r"] {
+				return iInfo.ModTime().Before(jInfo.ModTime())
+			}
+			return iInfo.ModTime().After(jInfo.ModTime())
+		case flags["S"]:
+			iInfo, _ := filtered[i].Info()
+			jInfo, _ := filtered[j].Info()
+			if flags["r"] {
+				return iInfo.Size() < jInfo.Size()
+			}
+			return iInfo.Size() > jInfo.Size()
+		default:
+			if flags["r"] {
+				return filtered[i].Name() > filtered[j].Name()
+			}
+			return filtered[i].Name() < filtered[j].Name()
+		}
+	})
+
+	// Format output
+	var output string
+	if flags["l"] {
+		output = formatLongList(filtered, flags)
+	} else {
+		output = formatSimpleList(filtered)
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"entriesListed": len(filtered),
+			"path":          path,
+		},
+	}
+}
+
+// formatSimpleList returns a simple one-per-line listing (like `ls`).
+func formatSimpleList(entries []os.DirEntry) string {
+	var lines []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			lines = append(lines, entry.Name()+"/")
+		} else {
+			lines = append(lines, entry.Name())
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatLongList returns a long-format listing (like `ls -l`).
+func formatLongList(entries []os.DirEntry, flags map[string]bool) string {
+	var lines []string
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		lines = append(lines, formatFileLong(info, flags))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatFileLong returns a long-format line for a single file info.
+func formatFileLong(info os.FileInfo, flags map[string]bool) string {
+	// Permissions
+	permStr := formatPermissions(info)
+
+	// Size
+	size := info.Size()
+	var sizeStr string
+	if flags["h"] {
+		sizeStr = humanReadableSize(size)
+	} else {
+		sizeStr = fmt.Sprintf("%d", size)
+	}
+
+	// Modification time (format: "Jan 02 15:04" or "Jan 02 2006" if old)
+	modTime := info.ModTime()
+	now := time.Now()
+	age := now.Sub(modTime)
+	var timeStr string
+	if age > 365*24*time.Hour {
+		timeStr = modTime.Format("Jan 02  2006")
+	} else {
+		timeStr = modTime.Format("Jan 02 15:04")
+	}
+
+	// Name (with / suffix for directories)
+	name := info.Name()
+	if info.IsDir() {
+		name += "/"
+	}
+
+	// Format: permissions links owner group size timestamp name
+	return fmt.Sprintf("%s  1 user  group  %s  %s  %s", permStr, sizeStr, timeStr, name)
+}
+
+// formatPermissions returns a Unix-style permission string.
+func formatPermissions(info os.FileInfo) string {
+	mode := info.Mode()
+
+	// File type
+	var fileType byte
+	switch {
+	case mode.IsDir():
+		fileType = 'd'
+	case mode&os.ModeSymlink != 0:
+		fileType = 'l'
+	case mode.IsRegular():
+		fileType = '-'
+	default:
+		fileType = '-'
+	}
+
+	result := string(fileType)
+	// Owner permissions
+	result += formatTriple(uint8((mode >> 6) & 07))
+	// Group permissions
+	result += formatTriple(uint8((mode >> 3) & 07))
+	// Other permissions
+	result += formatTriple(uint8(mode & 07))
+	return result
+}
+
+// formatTriple formats three permission bits as rwx.
+func formatTriple(perm uint8) string {
+	var s string
+	if perm&4 != 0 {
+		s += "r"
+	} else {
+		s += "-"
+	}
+	if perm&2 != 0 {
+		s += "w"
+	} else {
+		s += "-"
+	}
+	if perm&1 != 0 {
+		s += "x"
+	} else {
+		s += "-"
+	}
+	return s
+}
+
+// humanReadableSize converts a byte count to human-readable format.
+func humanReadableSize(size int64) string {
+	const (
+		KB = 1 << 10
+		MB = 1 << 20
+		GB = 1 << 30
+	)
+
+	switch {
+	case size >= GB:
+		return fmt.Sprintf("%.1fG", float64(size)/GB)
+	case size >= MB:
+		return fmt.Sprintf("%.1fM", float64(size)/MB)
+	case size >= KB:
+		return fmt.Sprintf("%.1fK", float64(size)/KB)
+	default:
+		return fmt.Sprintf("%d", size)
 	}
 }
 
