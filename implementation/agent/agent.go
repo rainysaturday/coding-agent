@@ -1763,6 +1763,25 @@ AVAILABLE TOOLS:
     Example use case: git_commit_msg() to generate a message for all staged changes, git_commit_msg(max_diff_lines=500) to analyze more changes.
     Note: Returns the generated commit message with type, scope, subject, body, and a confidence score. Use git_commit after reviewing and accepting the generated message.
 
+39. git_push
+    Description: Push commits and tags to remote git repositories. Five actions: 'push' (push current branch to upstream remote), 'push_remote' (push specific branch to specific remote with optional target branch renaming), 'force_push' (force push with safe --force-with-lease or --force modes), 'set_upstream' (set upstream tracking for current branch), and 'push_tags' (push tags to remote).
+    Parameters:
+      - action (string, required): Action: 'push', 'push_remote', 'force_push', 'set_upstream', 'push_tags'
+      - remote (string, optional): Remote name (default: 'origin')
+      - branch (string, optional): Branch name (defaults to current for push/force_push/set_upstream; required for push_remote)
+      - source_branch (string, optional): Source branch for push_remote action
+      - target_branch (string, optional): Target branch on remote for push_remote (defaults to source_branch name)
+      - set_upstream (boolean, optional): Set upstream tracking when pushing
+      - all (boolean, optional): Push all branches (for push action)
+      - tags (boolean, optional): Push tags with branch (for push action)
+      - delete (boolean, optional): Delete remote branch or tags
+      - force (boolean, optional): Soft force (--force) for push_remote
+      - force_hard (boolean, optional): Safe force (--force-with-lease) for force_push (default mode for force_push)
+      - tag (string, optional): Specific tag to push (for push_tags)
+      - dry_run (boolean, optional): Show what would be pushed without pushing
+    How to call: Use git_push(action='push') to push current branch, git_push(action='push_remote', remote='origin', source_branch='feature', target_branch='main') to push to a different branch, git_push(action='force_push', force_hard=true) for safe force push.
+    Example use case: git_push(action='push', set_upstream=true) for first push to set tracking, git_push(action='set_upstream') to set upstream for current branch, git_push(action='push_tags') to push all tags, git_push(action='push_remote', source_branch='my-fix', target_branch='hotfix-1.0', remote='upstream') to push to a different branch on another remote.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -3527,6 +3546,71 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_push",
+				Description: "Push commits and tags to remote git repositories. Five actions: 'push' pushes current branch to upstream, 'push_remote' pushes a specific branch to a specific remote (with optional target branch renaming), 'force_push' force pushes with safe --force-with-lease or --force modes, 'set_upstream' sets upstream tracking for the current branch, and 'push_tags' pushes tags to remote.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "Action to perform: 'push' (push current branch), 'push_remote' (push specific branch to remote), 'force_push' (force push), 'set_upstream' (set upstream tracking), 'push_tags' (push tags)",
+						},
+						"remote": {
+							Type:        "string",
+							Description: "Remote name (default: 'origin'). Used by all actions.",
+						},
+						"branch": {
+							Type:        "string",
+							Description: "Branch name. Defaults to current branch for 'push', 'force_push', and 'set_upstream'. Required for 'push_remote'.",
+						},
+						"source_branch": {
+							Type:        "string",
+							Description: "Source branch name for 'push_remote' action. Required.",
+						},
+						"target_branch": {
+							Type:        "string",
+							Description: "Target branch name on remote for 'push_remote'. Defaults to source_branch (same name on remote).",
+						},
+						"set_upstream": {
+							Type:        "boolean",
+							Description: "Set upstream tracking when pushing (for 'push' and 'push_remote' actions).",
+						},
+						"all": {
+							Type:        "boolean",
+							Description: "Push all branches to remote (for 'push' action).",
+						},
+						"tags": {
+							Type:        "boolean",
+							Description: "Push tags along with branch (for 'push' action).",
+						},
+						"delete": {
+							Type:        "boolean",
+							Description: "Delete the remote branch (for 'push' action) or push specific tag/delete all remote tags (for 'push_tags' action).",
+						},
+						"force": {
+							Type:        "boolean",
+							Description: "Use soft force (--force) for 'push_remote'. Default is false for 'force_push' (uses safer --force-with-lease).",
+						},
+						"force_hard": {
+							Type:        "boolean",
+							Description: "Use hard force (--force-with-lease) instead of --force for 'force_push' action. Safer as it only fails if remote has changed.",
+						},
+						"tag": {
+							Type:        "string",
+							Description: "Specific tag to push (for 'push_tags' action). If omitted, pushes all tags.",
+						},
+						"dry_run": {
+							Type:        "boolean",
+							Description: "Show what would be pushed without actually pushing (for all actions).",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

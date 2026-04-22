@@ -1051,7 +1051,8 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"csv_transformer": {"command"},
 		"git_blame":      {"action"},
 		"git_cherry_pick": {"action"},
-		"git_commit_msg": {},
+		"git_commit_msg":  {},
+		"git_push":        {"action"},
 	}
 
 	for _, tool := range toolDefs {
