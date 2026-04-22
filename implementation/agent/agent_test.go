@@ -1039,6 +1039,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"run_build":     {},
 		"run_coverage":  {},
 		"git_merge":     {"action"},
+		"generate_docs": {"path"},
 	}
 
 	for _, tool := range toolDefs {

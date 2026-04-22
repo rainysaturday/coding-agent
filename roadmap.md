@@ -139,8 +139,11 @@
 ### Test Coverage
 - **#061: Test Coverage Analysis Tool** - Run project tests with coverage analysis and return structured coverage results. Auto-detects project type (Go, Node.js, Python) and reports overall coverage percentage, per-file coverage, and highlights low-coverage files (<50%) and files with no coverage (0%). Uses only Go stdlib for parsing - zero external dependencies.
 
+### Documentation
+- **#063: Documentation Generator Tool** - Generate documentation for code files with language auto-detection (Go, Python, JavaScript/TypeScript, Java, Rust, C/C++, and more). Supports markdown and inline docstring output formats with configurable detail levels. Uses only Go stdlib - zero external dependencies.
+
 ## Completed Feature Count
 
-**62 / 62 features implemented**
+**63 / 63 features implemented**
 
 ## Upcoming Features

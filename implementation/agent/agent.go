@@ -1620,6 +1620,16 @@ AVAILABLE TOOLS:
     How to call: Use git_merge for branch merging operations. Merge a branch with action='merge', check merge conflicts with action='status', abort a bad merge with action='abort', squash all commits into one with action='squash', or merge a GitHub PR with action='merge_pr'.
     Example use case: git_merge(action='merge', source='feature/auth'), git_merge(action='status') to check for conflicts, git_merge(action='abort') to cancel a merge, git_merge(action='squash', source='feature/new-api'), git_merge(action='merge_pr', pr_number=42, repo='owner/myproject', merge_method='squash')
 
+32. generate_docs
+    Description: Generate documentation for code files. Auto-detects language from file extension (Go, Python, JavaScript/TypeScript, Java, Rust, C/C++, Ruby, PHP, C#, Swift, Kotlin) and supports markdown or inline docstring output formats.
+    Parameters:
+      - path (string, required): Path to a file or directory to generate documentation for
+      - format (string, optional): Output format - 'markdown' (default) or 'inline' (docstrings/comments)
+      - detail (string, optional): Detail level - 'basic' (signatures only) or 'detailed' (default, includes comments and fields)
+      - include_comments (boolean, optional): Include source comments in documentation (default: true)
+    How to call: Use generate_docs to create documentation for source files or entire directories. For markdown format, returns structured docs with type and function sections. For inline format, returns code with generated comments.
+    Example use case: generate_docs(path='src/main.go'), generate_docs(path='src/', format='markdown', detail='detailed'), generate_docs(path='app.py', format='inline')
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2855,6 +2865,35 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "generate_docs",
+				Description: "Generate documentation for code files. Auto-detects language from file extension and supports multiple output formats.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to a file or directory to generate documentation for",
+						},
+						"format": {
+							Type:        "string",
+							Description: "Output format: 'markdown' (default) or 'inline' (docstrings)",
+						},
+						"detail": {
+							Type:        "string",
+							Description: "Detail level: 'basic' (signatures only) or 'detailed' (default, includes comments and field info)",
+						},
+						"include_comments": {
+							Type:        "boolean",
+							Description: "Include source comments/docstrings in output (default: true)",
+						},
+					},
+					Required: []string{"path"},
 				},
 			},
 		},

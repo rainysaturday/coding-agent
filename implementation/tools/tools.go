@@ -196,6 +196,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeRunCoverage(tc.Parameters)
 	case "git_merge":
 		result = te.executeGitMerge(tc.Parameters)
+	case "generate_docs":
+		result = te.executeGenerateDocs(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -11691,5 +11693,1107 @@ func (te *ToolExecutor) getConflictingFiles() []string {
 	}
 
 	return files
+}
+
+// executeGenerateDocs generates documentation for code files.
+func (te *ToolExecutor) executeGenerateDocs(params map[string]interface{}) *ToolResult {
+	path, ok := params["path"].(string)
+	if !ok || path == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: path",
+		}
+	}
+
+	// Optional: output format (default: markdown)
+	format := "markdown"
+	if f, hasFormat := params["format"]; hasFormat {
+		if fStr, ok := f.(string); ok && fStr != "" {
+			format = fStr
+		}
+	}
+
+	// Optional: detail level (default: detailed)
+	detail := "detailed"
+	if d, hasDetail := params["detail"]; hasDetail {
+		if dStr, ok := d.(string); ok && dStr != "" {
+			detail = dStr
+		}
+	}
+
+	// Optional: include comments from source (default: true)
+	includeComments := true
+	if ic, hasInclude := params["include_comments"]; hasInclude {
+		if icBool, ok := ic.(bool); ok {
+			includeComments = icBool
+		}
+	}
+
+	// Check if path is a file or directory
+	info, err := os.Stat(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot access path: %v", err),
+		}
+	}
+
+	if info.IsDir() {
+		return te.generateDocsForDirectory(path, format, detail, includeComments)
+	}
+	return te.generateDocsForFile(path, format, detail, includeComments)
+}
+
+// generateDocsForFile generates documentation for a single file.
+func (te *ToolExecutor) generateDocsForFile(filePath, format, detail string, includeComments bool) *ToolResult {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to read file: %v", err),
+		}
+	}
+
+	lang := detectLanguage(filePath)
+	doc, err := generateDocumentation(string(content), lang, format, detail, includeComments, filePath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to generate documentation: %v", err),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  doc,
+		Path:    filePath,
+		Extra: map[string]interface{}{
+			"tool":            "generate_docs",
+			"language":        lang,
+			"format":          format,
+			"detail":          detail,
+			"contentLength":   len(content),
+			"docLength":       len(doc),
+			"includeComments": includeComments,
+		},
+	}
+}
+
+// generateDocsForDirectory generates documentation for all files in a directory.
+func (te *ToolExecutor) generateDocsForDirectory(dirPath, format, detail string, includeComments bool) *ToolResult {
+	var results []string
+	var filesProcessed int
+	var errors []string
+
+	// Collect all source files
+	sourceFiles, err := collectSourceFiles(dirPath)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to scan directory: %v", err),
+		}
+	}
+
+	for _, filePath := range sourceFiles {
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("  %s: %v", filePath, err))
+			continue
+		}
+
+		lang := detectLanguage(filePath)
+		doc, err := generateDocumentation(string(content), lang, format, detail, includeComments, filePath)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("  %s: %v", filePath, err))
+			continue
+		}
+
+		results = append(results, fmt.Sprintf("### %s\n\n%s", filePath, doc))
+		filesProcessed++
+	}
+
+	// Build output
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Generated documentation for %d file(s) in '%s':\n\n", filesProcessed, dirPath))
+
+	for _, r := range results {
+		output.WriteString(r)
+		output.WriteString("\n\n---\n\n")
+	}
+
+	if len(errors) > 0 {
+		output.WriteString(fmt.Sprintf("\n**Errors (%d):**\n", len(errors)))
+		for _, e := range errors {
+			output.WriteString(e + "\n")
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Path:    dirPath,
+		Extra: map[string]interface{}{
+			"tool":           "generate_docs",
+			"format":         format,
+			"detail":         detail,
+			"filesProcessed": filesProcessed,
+			"errors":         errors,
+		},
+	}
+}
+
+// collectSourceFiles recursively collects all source files in a directory.
+func collectSourceFiles(dirPath string) ([]string, error) {
+	var files []string
+
+	err := filepath.WalkDir(dirPath, func(walkPath string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip errors
+		}
+
+		// Skip directories
+		if d.IsDir() {
+			// Skip hidden directories and common non-source dirs
+			base := d.Name()
+			if base == ".git" || base == "vendor" || base == "node_modules" || base == ".DS_Store" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Only include source files
+		ext := strings.ToLower(filepath.Ext(walkPath))
+		supportedExts := map[string]bool{
+			".go": true, ".py": true, ".js": true, ".ts": true, ".jsx": true, ".tsx": true,
+			".java": true, ".rs": true, ".c": true, ".h": true, ".cpp": true, ".hpp": true,
+			".rb": true, ".php": true, ".cs": true, ".swift": true, ".kt": true,
+		}
+		if supportedExts[ext] {
+			files = append(files, walkPath)
+		}
+
+		return nil
+	})
+
+	return files, err
+}
+
+// detectLanguage detects the programming language from file extension.
+func detectLanguage(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".go":
+		return "go"
+	case ".py":
+		return "python"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".java":
+		return "java"
+	case ".rs":
+		return "rust"
+	case ".c", ".h":
+		return "c"
+	case ".cpp", ".hpp":
+		return "cpp"
+	case ".rb":
+		return "ruby"
+	case ".php":
+		return "php"
+	case ".cs":
+		return "csharp"
+	case ".swift":
+		return "swift"
+	case ".kt":
+		return "kotlin"
+	default:
+		return "generic"
+	}
+}
+
+// docFunction represents a function/method signature extracted from source.
+type docFunction struct {
+	Name        string
+	Params      string
+	ReturnType  string
+	Comment     string
+	Description string
+}
+
+// docType represents a type/struct/class definition.
+type docType struct {
+	Name        string
+	TypeKind    string // struct, class, interface, enum, type
+	Fields      string
+	Comment     string
+	Description string
+}
+
+// generateDocumentation generates documentation for a source file.
+func generateDocumentation(content, lang, format, detail string, includeComments bool, filePath string) (string, error) {
+	// Extract symbols and comments from source
+	funcs := extractFunctions(content, lang)
+	types := extractTypes(content, lang)
+
+	if format == "markdown" {
+		return formatMarkdown(content, lang, filePath, funcs, types, detail, includeComments)
+	} else if format == "inline" {
+		return formatInline(content, lang, funcs, types, detail, includeComments)
+	}
+
+	return "", fmt.Errorf("unsupported format: %s (supported: markdown, inline)", format)
+}
+
+// extractFunctions extracts function and method signatures from source code.
+func extractFunctions(content, lang string) []docFunction {
+	var funcs []docFunction
+
+	lines := strings.Split(content, "\n")
+
+	// Language-specific extraction
+	switch lang {
+	case "go":
+		funcs = extractGoFunctions(lines)
+	case "python":
+		funcs = extractPythonFunctions(lines)
+	case "javascript", "typescript":
+		funcs = extractJSFunctions(lines, lang)
+	case "java":
+		funcs = extractJavaFunctions(lines)
+	case "rust":
+		funcs = extractRustFunctions(lines)
+	default:
+		// Generic: look for common function patterns
+		funcs = extractGenericFunctions(lines, lang)
+	}
+
+	return funcs
+}
+
+// extractTypes extracts type/struct/class definitions from source code.
+func extractTypes(content, lang string) []docType {
+	var types []docType
+
+	lines := strings.Split(content, "\n")
+
+	switch lang {
+	case "go":
+		types = extractGoTypes(lines)
+	case "python":
+		types = extractPythonTypes(lines)
+	case "javascript", "typescript":
+		types = extractJSTypes(lines, lang)
+	case "java":
+		types = extractJavaTypes(lines)
+	case "rust":
+		types = extractRustTypes(lines)
+	default:
+		types = extractGenericTypes(lines, lang)
+	}
+
+	return types
+}
+
+// extractGoFunctions extracts Go function declarations.
+func extractGoFunctions(lines []string) []docFunction {
+	var funcs []docFunction
+
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+
+		// Track single-line comments
+		if strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// Check for function declaration
+		if strings.HasPrefix(line, "func ") {
+			comment := ""
+			// Collect preceding comments
+			for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
+				c := strings.TrimPrefix(strings.TrimSpace(lines[j]), "//")
+				if c != "" {
+					if comment != "" {
+						comment = c + "\n" + comment
+					} else {
+						comment = c
+					}
+				}
+			}
+
+			// Parse function signature
+			name, params, ret := parseGoSignature(line)
+			if name != "" {
+				funcs = append(funcs, docFunction{
+					Name:        name,
+					Params:      params,
+					ReturnType:  ret,
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+
+		// Check for method declaration (type. method)
+		if strings.Contains(line, ". ") && strings.Contains(line, "func") {
+			name, params, ret := parseGoSignature(line)
+			if name != "" {
+				comment := getPrecedingComment(lines, i)
+				if comment != "" {
+					funcs = append(funcs, docFunction{
+						Name:        name,
+						Params:      params,
+						ReturnType:  ret,
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+			}
+		}
+	}
+
+	return funcs
+}
+
+// getPrecedingComment returns the comment block preceding a line.
+func getPrecedingComment(lines []string, lineIdx int) string {
+	var comments []string
+	for j := lineIdx - 1; j >= 0; j-- {
+		line := strings.TrimSpace(lines[j])
+		if line == "" {
+			break
+		}
+		if strings.HasPrefix(line, "//") {
+			c := strings.TrimPrefix(line, "//")
+			c = strings.TrimSpace(c)
+			if c != "" {
+				comments = append([]string{c}, comments...)
+			}
+		} else if strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "*") {
+			// Block comment - collect backwards
+			for k := j; k >= 0; k-- {
+				bl := strings.TrimSpace(lines[k])
+				if strings.HasSuffix(bl, "*/") {
+					break
+				}
+				c := strings.TrimPrefix(bl, "*")
+				c = strings.TrimSpace(c)
+				if c != "" {
+					comments = append([]string{c}, comments...)
+				}
+				if k == j {
+					j = k // Don't re-process this line
+				}
+			}
+			break
+		} else {
+			break
+		}
+	}
+
+	return strings.Join(comments, "\n")
+}
+
+// parseGoSignature parses a Go function declaration line.
+func parseGoSignature(line string) (name, params, ret string) {
+	// Match: func Name(params) (ret)
+	re := regexp.MustCompile(`func\s+(\w+)\s*\(([^)]*)\)`)
+	matches := re.FindStringSubmatch(line)
+	if matches != nil {
+		name = matches[1]
+		params = strings.TrimSpace(matches[2])
+
+		// Check for return type
+		if retMatch := regexp.MustCompile(`\)\s*(\([^)]+\))`).FindStringSubmatch(line); retMatch != nil {
+			ret = strings.Trim(retMatch[1], "()")
+		}
+	}
+	return
+}
+
+// extractGoTypes extracts Go struct, interface, and type definitions.
+func extractGoTypes(lines []string) []docType {
+	var types []docType
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Check for type declaration
+		if strings.HasPrefix(line, "type ") {
+			comment := getPrecedingComment(lines, i)
+
+			// Parse type definition
+			name := ""
+			typeKind := ""
+			fields := ""
+
+			// type Name struct { ... }
+			if strings.Contains(line, "struct") {
+				typeKind = "struct"
+				name = extractTypeName(line)
+				// Collect struct fields
+				fields = extractStructFields(lines, i)
+			} else if strings.Contains(line, "interface") {
+				typeKind = "interface"
+				name = extractTypeName(line)
+			} else {
+				typeKind = "type"
+				name = extractTypeName(line)
+			}
+
+			if name != "" {
+				types = append(types, docType{
+					Name:        name,
+					TypeKind:    typeKind,
+					Fields:      fields,
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+		i++
+	}
+
+	return types
+}
+
+// extractTypeName extracts the type name from a type declaration line.
+func extractTypeName(line string) string {
+	// Skip "type" prefix
+	rest := strings.TrimPrefix(line, "type ")
+	// Get first word
+	parts := strings.Fields(rest)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return ""
+}
+
+// extractStructFields collects struct field lines.
+func extractStructFields(lines []string, startIdx int) string {
+	var fields []string
+	inBlock := false
+
+	for i := startIdx; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+
+		if !inBlock {
+			if strings.Contains(line, "{") {
+				inBlock = true
+				continue
+			}
+			continue
+		}
+
+		if strings.Contains(line, "}") {
+			break
+		}
+
+		// Skip empty lines and comments in struct
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") {
+			continue
+		}
+
+		fields = append(fields, line)
+	}
+
+	return strings.Join(fields, "\n")
+}
+
+// extractPythonFunctions extracts Python function and method definitions.
+func extractPythonFunctions(lines []string) []docFunction {
+	var funcs []docFunction
+	i := 0
+
+	for i < len(lines) {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+
+		// Check for def statement
+		if strings.HasPrefix(trimmed, "def ") && !strings.HasPrefix(trimmed, "def __") {
+			comment := getPythonDocstring(lines, i)
+			if comment == "" {
+				comment = getPrecedingComment(lines, i)
+			}
+
+			name := ""
+			params := ""
+			// Parse: def name(params):
+			re := regexp.MustCompile(`def\s+(\w+)\s*\(([^)]*)\)`)
+			matches := re.FindStringSubmatch(trimmed)
+			if matches != nil {
+				name = matches[1]
+				params = strings.TrimSpace(matches[2])
+			}
+
+			if name != "" && !strings.HasPrefix(name, "_") {
+				funcs = append(funcs, docFunction{
+					Name:        name,
+					Params:      params,
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+		i++
+	}
+
+	return funcs
+}
+
+// getPythonDocstring extracts the docstring following a function definition.
+func getPythonDocstring(lines []string, startIdx int) string {
+	i := startIdx + 1
+	for i < len(lines) {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			i++
+			continue
+		}
+		// Check for docstring
+		if strings.HasPrefix(trimmed, `"""`) || strings.HasPrefix(trimmed, `'''`) {
+			quote := trimmed[:3]
+			// Single line docstring
+			if strings.HasSuffix(trimmed, quote) && len(trimmed) > 6 {
+				return strings.TrimSpace(trimmed[3 : len(trimmed)-3])
+			}
+			// Multi-line docstring
+			var parts []string
+			i++
+			for i < len(lines) {
+				if strings.Contains(lines[i], quote) {
+					break
+				}
+				parts = append(parts, strings.TrimSpace(lines[i]))
+				i++
+			}
+			return strings.Join(parts, "\n")
+		}
+		break
+	}
+	return ""
+}
+
+// extractPythonTypes extracts Python class definitions.
+func extractPythonTypes(lines []string) []docType {
+	var types []docType
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		if strings.HasPrefix(line, "class ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`class\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			name := ""
+			if matches != nil {
+				name = matches[1]
+			}
+
+			if name != "" && !strings.HasPrefix(name, "_") {
+				types = append(types, docType{
+					Name:        name,
+					TypeKind:    "class",
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+		i++
+	}
+
+	return types
+}
+
+// extractJSFunctions extracts JavaScript/TypeScript function declarations.
+func extractJSFunctions(lines []string, lang string) []docFunction {
+	var funcs []docFunction
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Match: function name(params) {
+		// Match: const name = function(params) {
+		// Match: const name = (params) =>
+		// Match: name(params) { (method shorthand)
+		// Match: export function name(params)
+		// Match: export const name = (params) =>
+		patterns := []string{
+			`(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)`,
+			`(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\s*\(([^)]*)\)`,
+			`(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>`,
+			`(?:export\s+)?(?:async\s+)?(\w+)\s*\(([^)]*)\)\s*\{`,
+		}
+
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
+			matches := re.FindStringSubmatch(line)
+			if matches != nil {
+				name := matches[1]
+				params := strings.TrimSpace(matches[2])
+
+				// Skip common non-function patterns
+				skipNames := []string{"if", "for", "while", "switch", "catch", "return", "new", "class", "import", "export"}
+				skip := false
+				for _, skipName := range skipNames {
+					if name == skipName {
+						skip = true
+						break
+					}
+				}
+				if skip {
+					continue
+				}
+
+				comment := getPrecedingComment(lines, i)
+				if !strings.HasPrefix(name, "_") {
+					funcs = append(funcs, docFunction{
+						Name:        name,
+						Params:      params,
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+				break
+			}
+		}
+		i++
+	}
+
+	return funcs
+}
+
+// extractJSTypes extracts JavaScript/TypeScript class and interface definitions.
+func extractJSTypes(lines []string, lang string) []docType {
+	var types []docType
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		if lang == "typescript" {
+			// TypeScript interfaces
+			if strings.HasPrefix(line, "export interface ") || strings.HasPrefix(line, "interface ") {
+				comment := getPrecedingComment(lines, i)
+				re := regexp.MustCompile(`(?:export\s+)?interface\s+(\w+)`)
+				matches := re.FindStringSubmatch(line)
+				if len(matches) > 1 {
+					types = append(types, docType{
+						Name:        matches[1],
+						TypeKind:    "interface",
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+			}
+			// TypeScript types
+			if strings.HasPrefix(line, "export type ") || (strings.HasPrefix(line, "type ") && !strings.Contains(line, " = function")) {
+				comment := getPrecedingComment(lines, i)
+				re := regexp.MustCompile(`(?:export\s+)?type\s+(\w+)`)
+				matches := re.FindStringSubmatch(line)
+				if len(matches) > 1 {
+					types = append(types, docType{
+						Name:        matches[1],
+						TypeKind:    "type",
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+			}
+		}
+
+		// Class definitions (JS and TS)
+		if strings.HasPrefix(line, "export class ") || strings.HasPrefix(line, "class ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:export\s+)?class\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				types = append(types, docType{
+					Name:        matches[1],
+					TypeKind:    "class",
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+
+		i++
+	}
+
+	return types
+}
+
+// extractJavaFunctions extracts Java method declarations.
+func extractJavaFunctions(lines []string) []docFunction {
+	var funcs []docFunction
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Skip class/interface declarations
+		if strings.Contains(line, "class ") || strings.Contains(line, "interface ") {
+			i++
+			continue
+		}
+
+		// Match method declarations (simplified)
+		// Look for lines with return type, method name, and params
+		if strings.Contains(line, "(") && strings.Contains(line, ")") &&
+			!strings.HasPrefix(line, "if ") && !strings.HasPrefix(line, "for ") &&
+			!strings.HasPrefix(line, "while ") && !strings.HasPrefix(line, "switch ") {
+			// Check if it looks like a method signature
+			if regexp.MustCompile(`\w+\s+\w+\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{?$`).MatchString(line) {
+				re := regexp.MustCompile(`(\w+)\s+(\w+)\s*\(([^)]*)\)`)
+				matches := re.FindStringSubmatch(line)
+				if len(matches) > 2 {
+					ret := matches[1]
+					name := matches[2]
+					params := strings.TrimSpace(matches[3])
+
+					// Skip constructors (same name as class) and common keywords
+					if name != "class" && name != "interface" && name != "new" {
+						comment := getPrecedingComment(lines, i)
+						funcs = append(funcs, docFunction{
+							Name:        name,
+							Params:      params,
+							ReturnType:  ret,
+							Comment:     comment,
+							Description: comment,
+						})
+					}
+				}
+			}
+		}
+		i++
+	}
+
+	return funcs
+}
+
+// extractJavaTypes extracts Java class and interface definitions.
+func extractJavaTypes(lines []string) []docType {
+	var types []docType
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		if strings.HasPrefix(line, "public class ") || strings.HasPrefix(line, "class ") ||
+			strings.HasPrefix(line, "public interface ") || strings.HasPrefix(line, "interface ") ||
+			strings.HasPrefix(line, "public abstract class ") || strings.HasPrefix(line, "abstract class ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:public\s+)?(?:abstract\s+)?(?:class|interface)\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				typeKind := "class"
+				if strings.Contains(line, "interface") {
+					typeKind = "interface"
+				}
+				types = append(types, docType{
+					Name:        matches[1],
+					TypeKind:    typeKind,
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+		i++
+	}
+
+	return types
+}
+
+// extractRustFunctions extracts Rust function declarations.
+func extractRustFunctions(lines []string) []docFunction {
+	var funcs []docFunction
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Skip attributes (#[...])
+		if strings.HasPrefix(line, "#[") {
+			i++
+			continue
+		}
+
+		// Match: fn name(params) -> ret { or fn name(params) {
+		if strings.HasPrefix(line, "pub fn ") || strings.HasPrefix(line, "fn ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*(\w+[^{]*))?`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				name := matches[1]
+				params := strings.TrimSpace(matches[2])
+				ret := ""
+				if len(matches) > 3 && matches[3] != "" {
+					ret = strings.TrimSpace(matches[3])
+				}
+				if !strings.HasPrefix(name, "_") {
+					funcs = append(funcs, docFunction{
+						Name:        name,
+						Params:      params,
+						ReturnType:  ret,
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+			}
+		}
+		i++
+	}
+
+	return funcs
+}
+
+// extractRustTypes extracts Rust struct, enum, and trait definitions.
+func extractRustTypes(lines []string) []docType {
+	var types []docType
+	i := 0
+
+	for i < len(lines) {
+		line := strings.TrimSpace(lines[i])
+
+		// Skip attributes
+		if strings.HasPrefix(line, "#[") {
+			i++
+			continue
+		}
+
+		// Match: pub struct Name, struct Name
+		if strings.HasPrefix(line, "pub struct ") || strings.HasPrefix(line, "struct ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:pub\s+)?struct\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				types = append(types, docType{
+					Name:        matches[1],
+					TypeKind:    "struct",
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+
+		// Match: pub enum Name, enum Name
+		if strings.HasPrefix(line, "pub enum ") || strings.HasPrefix(line, "enum ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:pub\s+)?enum\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				types = append(types, docType{
+					Name:        matches[1],
+					TypeKind:    "enum",
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+
+		// Match: pub trait Name, trait Name
+		if strings.HasPrefix(line, "pub trait ") || strings.HasPrefix(line, "trait ") {
+			comment := getPrecedingComment(lines, i)
+			re := regexp.MustCompile(`(?:pub\s+)?trait\s+(\w+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				types = append(types, docType{
+					Name:        matches[1],
+					TypeKind:    "trait",
+					Comment:     comment,
+					Description: comment,
+				})
+			}
+		}
+
+		i++
+	}
+
+	return types
+}
+
+// extractGenericFunctions extracts generic function patterns.
+func extractGenericFunctions(lines []string, lang string) []docFunction {
+	var funcs []docFunction
+	declKeywords := map[string]bool{
+		"function": true, "def": true, "fn": true, "func": true,
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for keyword := range declKeywords {
+			if (strings.HasPrefix(trimmed, keyword+" ") || strings.Contains(trimmed, " "+keyword+" ")) &&
+				strings.Contains(trimmed, "(") {
+				comment := getPrecedingComment(lines, i)
+				re := regexp.MustCompile(`(?:function|def|fn|func)\s+(\w+)\s*\(([^)]*)\)`)
+				matches := re.FindStringSubmatch(trimmed)
+				if len(matches) > 1 {
+					funcs = append(funcs, docFunction{
+						Name:        matches[1],
+						Params:      strings.TrimSpace(matches[2]),
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+				break
+			}
+		}
+	}
+
+	return funcs
+}
+
+// extractGenericTypes extracts generic type patterns.
+func extractGenericTypes(lines []string, lang string) []docType {
+	var types []docType
+	typeKeywords := map[string]string{
+		"class":    "class", "struct": "struct", "interface": "interface",
+		"type":     "type", "enum": "enum", "trait": "trait",
+	}
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for keyword, kind := range typeKeywords {
+			if (strings.HasPrefix(trimmed, keyword+" ") || strings.Contains(trimmed, " "+keyword+" ")) &&
+				!strings.Contains(trimmed, "(") {
+				comment := getPrecedingComment(lines, i)
+				re := regexp.MustCompile(`(?:class|struct|interface|type|enum|trait)\s+(\w+)`)
+				matches := re.FindStringSubmatch(trimmed)
+				if len(matches) > 1 {
+					types = append(types, docType{
+						Name:        matches[1],
+						TypeKind:    kind,
+						Comment:     comment,
+						Description: comment,
+					})
+				}
+				break
+			}
+		}
+	}
+
+	return types
+}
+
+// formatMarkdown generates Markdown documentation.
+func formatMarkdown(content, lang, filePath string, funcs []docFunction, types []docType, detail string, includeComments bool) (string, error) {
+	var output strings.Builder
+
+	// File header
+	output.WriteString(fmt.Sprintf("# Documentation: %s\n\n", filePath))
+
+	// Language info
+	langs := map[string]string{
+		"go": "Go", "python": "Python", "javascript": "JavaScript", "typescript": "TypeScript",
+		"java": "Java", "rust": "Rust", "c": "C", "cpp": "C++", "ruby": "Ruby",
+		"php": "PHP", "csharp": "C#", "swift": "Swift", "kotlin": "Kotlin",
+	}
+	if langName, ok := langs[lang]; ok {
+		output.WriteString(fmt.Sprintf("**Language:** %s\n\n", langName))
+	}
+
+	// Source length
+	lineCount := strings.Count(content, "\n") + 1
+	output.WriteString(fmt.Sprintf("**Lines:** %d\n\n", lineCount))
+
+	// Types section
+	if len(types) > 0 {
+		output.WriteString("## Types\n\n")
+		for _, t := range types {
+			output.WriteString(fmt.Sprintf("### `%s` (%s)\n\n", t.Name, t.TypeKind))
+			if detail == "detailed" && t.Fields != "" {
+				output.WriteString("```" + lang + "\n")
+				output.WriteString(t.Fields + "\n```\n\n")
+			}
+			if detail == "detailed" && includeComments && t.Comment != "" {
+				output.WriteString("> " + strings.ReplaceAll(t.Comment, "\n", "\n> ") + "\n\n")
+			}
+		}
+	}
+
+	// Functions section
+	if len(funcs) > 0 {
+		output.WriteString("## Functions\n\n")
+		for _, f := range funcs {
+			output.WriteString(fmt.Sprintf("### `%s`", f.Name))
+			if f.Params != "" {
+				output.WriteString(fmt.Sprintf("(`%s`)", f.Params))
+			}
+			if f.ReturnType != "" {
+				output.WriteString(fmt.Sprintf(" → `%s`", f.ReturnType))
+			}
+			output.WriteString("\n\n")
+
+			if detail == "detailed" && includeComments && f.Comment != "" {
+				output.WriteString("> " + strings.ReplaceAll(f.Comment, "\n", "\n> ") + "\n\n")
+			}
+		}
+	}
+
+	// If no symbols found
+	if len(types) == 0 && len(funcs) == 0 {
+		output.WriteString("_No top-level symbols detected._\n\n")
+	}
+
+	return output.String(), nil
+}
+
+// formatInline generates inline documentation comments.
+func formatInline(content, lang string, funcs []docFunction, types []docType, detail string, includeComments bool) (string, error) {
+	langs := map[string]string{
+		"go": "//", "python": "#", "javascript": "//", "typescript": "//",
+		"java": "//", "rust": "//", "c": "//", "cpp": "//", "ruby": "#",
+		"php": "//", "csharp": "//", "swift": "//", "kotlin": "//",
+	}
+	prefix := "//"
+	if p, ok := langs[lang]; ok {
+		prefix = p
+	}
+
+	var output strings.Builder
+	output.WriteString("// Auto-generated documentation\n\n")
+
+	// Generate inline comments for types
+	for _, t := range types {
+		output.WriteString(fmt.Sprintf("%s // %s %s\n", prefix, t.TypeKind, t.Name))
+		if detail == "detailed" && t.Comment != "" && includeComments {
+			for _, line := range strings.Split(t.Comment, "\n") {
+				output.WriteString(fmt.Sprintf("%s // %s\n", prefix, strings.TrimSpace(line)))
+			}
+		}
+		output.WriteString("\n")
+	}
+
+	// Generate inline comments for functions
+	for _, f := range funcs {
+		output.WriteString(fmt.Sprintf("%s // %s(%s)", prefix, f.Name, f.Params))
+		if f.ReturnType != "" {
+			output.WriteString(fmt.Sprintf(" -> %s", f.ReturnType))
+		}
+		output.WriteString("\n")
+		if detail == "detailed" && f.Comment != "" && includeComments {
+			for _, line := range strings.Split(f.Comment, "\n") {
+				output.WriteString(fmt.Sprintf("%s // %s\n", prefix, strings.TrimSpace(line)))
+			}
+		}
+		output.WriteString("\n")
+	}
+
+	return output.String(), nil
+}
+
+// contains checks if a string slice contains a string.
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
