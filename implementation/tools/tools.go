@@ -172,6 +172,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitStash(tc.Parameters)
 	case "json_transformer":
 		result = te.executeJsonTransformer(tc.Parameters)
+	case "project_diagnostics":
+		result = te.executeProjectDiagnostics(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -6376,4 +6378,544 @@ func (te *ToolExecutor) jsonConvertToEnv(jsonData interface{}) *ToolResult {
 			"charCount": len(env),
 		},
 	}
+}
+
+// projectDiagnosticsResult represents the complete diagnostic report.
+type projectDiagnosticsResult struct {
+	Tool          string        `json:"tool"`
+	Summary       diagSummary   `json:"summary"`
+	Issues        []diagIssue   `json:"issues"`
+	FilesScanned  int           `json:"files_scanned"`
+	ScanDuration  string        `json:"scan_duration"`
+	PathsSearched []string      `json:"paths_searched"`
+	Target        string        `json:"target"`
+	Mode          string        `json:"mode"`
+}
+
+type diagSummary struct {
+	TotalIssues      int             `json:"total_issues"`
+	TotalFiles       int             `json:"total_files"`
+	IssuesBySeverity map[string]int  `json:"issues_by_severity"`
+	IssuesByCategory map[string]int  `json:"issues_by_category"`
+	FilesChecked     int             `json:"files_checked"`
+	ChecksRun        []string        `json:"checks_run"`
+}
+
+type diagIssue struct {
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	FilePath   string `json:"file_path"`
+	Line       int    `json:"line,omitempty"`
+	Message    string `json:"message"`
+	Content    string `json:"content,omitempty"`
+	Recommendation string `json:"recommendation,omitempty"`
+}
+
+// executeProjectDiagnostics scans the codebase for common issues and quality problems.
+func (te *ToolExecutor) executeProjectDiagnostics(params map[string]interface{}) *ToolResult {
+	startTime := time.Now()
+
+	// Determine scope: paths parameter or current directory
+	pathsParam, hasPaths := params["paths"]
+	var targetPaths []string
+	if hasPaths {
+		switch v := pathsParam.(type) {
+		case []interface{}:
+			for _, p := range v {
+				targetPaths = append(targetPaths, fmt.Sprintf("%v", p))
+			}
+		case string:
+			if strings.Contains(v, ",") {
+				for _, p := range strings.Split(v, ",") {
+					targetPaths = append(targetPaths, strings.TrimSpace(p))
+				}
+			} else {
+				targetPaths = []string{v}
+			}
+		}
+	}
+
+	if len(targetPaths) == 0 {
+		targetPaths = []string{"."}
+	}
+
+	// Determine scan depth
+	maxDepth := 10
+	if md, ok := params["max_depth"].(float64); ok {
+		maxDepth = int(md)
+	} else if md, ok := params["max_depth"].(int); ok {
+		maxDepth = md
+	} else if md, ok := params["max_depth"].(string); ok {
+		if n, err := strconv.Atoi(md); err == nil {
+			maxDepth = n
+		}
+	}
+
+	// Determine target description for reporting
+	targetDesc := "current directory"
+	if len(targetPaths) == 1 && targetPaths[0] != "." {
+		targetDesc = targetPaths[0]
+	} else if len(targetPaths) > 1 {
+		targetDesc = fmt.Sprintf("%d paths", len(targetPaths))
+	}
+
+	// Scan mode
+	scanMode := "full"
+	if sm, ok := params["mode"].(string); ok {
+		scanMode = sm
+	}
+
+	// Collect files to scan
+	var allFiles []string
+	for _, tp := range targetPaths {
+		matches, err := te.globRecursive(tp, 5000)
+		if err != nil {
+			continue
+		}
+		// Limit depth based on maxDepth
+		for _, f := range matches {
+			rel, err := filepath.Rel(targetPaths[0], f)
+			if err == nil {
+				depth := strings.Count(rel, string(filepath.Separator))
+				if depth <= maxDepth {
+					allFiles = append(allFiles, f)
+				}
+			} else {
+				allFiles = append(allFiles, f)
+			}
+		}
+	}
+
+	// Filter out binary files and vendor directories
+	var codeFiles []string
+	for _, f := range allFiles {
+		if shouldIncludeFile(f) {
+			codeFiles = append(codeFiles, f)
+		}
+	}
+
+	// Run diagnostic checks
+	var issues []diagIssue
+	filesScanned := 0
+
+	// Always run these checks
+	issues = append(issues, te.checkTODOs(codeFiles)...)
+	issues = append(issues, te.checkEmptyFiles(codeFiles)...)
+	issues = append(issues, te.checkLargeFiles(codeFiles)...)
+	issues = append(issues, te.checkHardcodedSecrets(codeFiles)...)
+
+	filesScanned = len(codeFiles)
+
+	// Run mode-specific checks
+	switch scanMode {
+	case "basic":
+		// Only TODOs and empty files
+	case "full":
+		issues = append(issues, te.checkLargeFiles(codeFiles)...)
+		issues = append(issues, te.checkHardcodedSecrets(codeFiles)...)
+	case "quick":
+		// Just TODOs
+	default:
+		// Unknown mode, run all
+	}
+
+	// Deduplicate issues (some checks might overlap)
+	issues = deduplicateIssues(issues)
+
+	// Build summary
+	issuesBySeverity := map[string]int{"low": 0, "medium": 0, "high": 0, "critical": 0}
+	issuesByCategory := map[string]int{}
+	for _, issue := range issues {
+		issuesBySeverity[issue.Severity]++
+		issuesByCategory[issue.Category]++
+	}
+
+	checksRun := []string{"TODOs and markers", "empty files", "large files", "hardcoded secrets"}
+
+	elapsed := time.Since(startTime)
+
+	result := projectDiagnosticsResult{
+		Tool:     "project_diagnostics",
+		Summary: diagSummary{
+			TotalIssues:      len(issues),
+			TotalFiles:       len(allFiles),
+			IssuesBySeverity: issuesBySeverity,
+			IssuesByCategory: issuesByCategory,
+			FilesChecked:     filesScanned,
+			ChecksRun:        checksRun,
+		},
+		Issues:        issues,
+		FilesScanned:  filesScanned,
+		ScanDuration:  elapsed.String(),
+		PathsSearched: targetPaths,
+		Target:        targetDesc,
+		Mode:          scanMode,
+	}
+
+	// Format output
+	output := formatDiagnosticsResult(result)
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"tool":           "project_diagnostics",
+			"issues_found":   len(issues),
+			"files_scanned":  filesScanned,
+			"mode":           scanMode,
+			"target":         targetDesc,
+			"duration":       elapsed.String(),
+			"issues_by_severity": issuesBySeverity,
+			"issues_by_category": issuesByCategory,
+		},
+	}
+}
+
+// shouldIncludeFile checks if a file should be included in diagnostics.
+func shouldIncludeFile(path string) bool {
+	// Skip binary files, version control, and build artifacts
+	skipDirs := map[string]bool{
+		".git": true, ".svn": true, ".hg": true,
+		"vendor": true, "node_modules": true, "dist": true, "build": true,
+		".venv": true, "__pycache__": true, "venv": true,
+	}
+
+	// Check if path contains any skipped directory
+	rel, err := filepath.Rel(".", path)
+	if err != nil {
+		rel = path
+	}
+
+	parts := strings.Split(filepath.Dir(rel), string(filepath.Separator))
+	for _, part := range parts {
+		if skipDirs[part] {
+			return false
+		}
+	}
+
+	// Skip binary file extensions
+	binaryExts := map[string]bool{
+		".bin": true, ".exe": true, ".dll": true, ".so": true, ".dylib": true,
+		".o": true, ".a": true, ".pyc": true, ".pyo": true,
+		".class": true, ".jar": true, ".war": true,
+		".zip": true, ".tar": true, ".gz": true, ".bz2": true,
+		".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+		".ico": true, ".svg": true, ".pdf": true, ".doc": true,
+		".docx": true, ".xls": true, ".xlsx": true,
+	}
+	_ = binaryExts
+	ext := filepath.Ext(path)
+	if binaryExts[strings.ToLower(ext)] {
+		return false
+	}
+
+	return true
+}
+
+// checkTODOs finds TODO, FIXME, HACK, WARN, and XXX markers in source files.
+func (te *ToolExecutor) checkTODOs(files []string) []diagIssue {
+	// Patterns for markers: TODO, FIXME, HACK, WARN, XXX, NOTE, DEPRECATED, TEMP
+	patterns := []struct {
+		regex     *regexp.Regexp
+		severity  string
+		category  string
+		message   string
+		recommend string
+	}{
+		{regexp.MustCompile(`(?i)\bTODO\b.*:?\s*(.*)`), "low", "todo", "TODO marker found", "Complete or remove this TODO"},
+		{regexp.MustCompile(`(?i)\bFIXME\b.*:?\s*(.*)`), "medium", "todo", "FIXME marker found", "Resolve this issue"},
+		{regexp.MustCompile(`(?i)\bHACK\b.*:?\s*(.*)`), "medium", "todo", "HACK marker found", "Replace with proper implementation"},
+		{regexp.MustCompile(`(?i)\bWARN\b.*:?\s*(.*)`), "low", "todo", "WARN marker found", "Review and address warning"},
+		{regexp.MustCompile(`(?i)\bXXX\b.*:?\s*(.*)`), "high", "todo", "XXX marker found", "Urgent: needs immediate attention"},
+		{regexp.MustCompile(`(?i)\bDEPRECATED\b.*:?\s*(.*)`), "medium", "deprecation", "Deprecated code/function found", "Plan migration away from deprecated API"},
+		{regexp.MustCompile(`(?i)\bTEMP\b.*:?\s*(.*)`), "low", "todo", "Temporary code found", "Review and make permanent or remove"},
+	}
+
+	var issues []diagIssue
+	textExts := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true,
+		".java": true, ".rs": true, ".c": true, ".cpp": true, ".h": true,
+		".hpp": true, ".cs": true, ".rb": true, ".php": true, ".swift": true,
+		".kt": true, ".scala": true, ".sh": true, ".bash": true,
+		".md": true, ".html": true, ".css": true, ".scss": true,
+	}
+
+	for _, file := range files {
+		ext := filepath.Ext(file)
+		if !textExts[ext] {
+			continue
+		}
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(string(content), "\n")
+		for lineNum, line := range lines {
+			for _, p := range patterns {
+				if p.regex.MatchString(line) {
+					match := p.regex.FindStringSubmatch(line)
+					contentStr := ""
+					recommendStr := p.recommend
+					if len(match) > 1 {
+						contentStr = strings.TrimSpace(match[1])
+						if contentStr == "" {
+							recommendStr = p.recommend
+						}
+					}
+					issues = append(issues, diagIssue{
+						Severity:       p.severity,
+						Category:       p.category,
+						FilePath:       file,
+						Line:           lineNum + 1,
+						Message:        p.message,
+						Content:        strings.TrimSpace(line[:min(200, len(line))]),
+						Recommendation: recommendStr,
+					})
+				}
+			}
+		}
+	}
+
+	return issues
+}
+
+// checkEmptyFiles finds empty or near-empty files.
+func (te *ToolExecutor) checkEmptyFiles(files []string) []diagIssue {
+	var issues []diagIssue
+
+	for _, file := range files {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+
+		// Skip if file is completely empty (0 bytes) or very small (< 20 bytes)
+		if info.Size() < 20 {
+			content, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			// Only flag if truly empty or whitespace-only
+			if len(content) == 0 || strings.TrimSpace(string(content)) == "" {
+				issues = append(issues, diagIssue{
+					Severity:       "low",
+					Category:       "empty_file",
+					FilePath:       file,
+					Message:        "Empty or near-empty file",
+					Recommendation: "Remove the file if unused, or add initial content",
+				})
+			}
+		}
+	}
+
+	return issues
+}
+
+// checkLargeFiles finds files that exceed the line threshold.
+func (te *ToolExecutor) checkLargeFiles(files []string) []diagIssue {
+	var issues []diagIssue
+	const maxLines = 500
+
+	for _, file := range files {
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(string(content), "\n")
+		// Handle trailing newline
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+
+		if len(lines) > maxLines {
+			issues = append(issues, diagIssue{
+				Severity:       "medium",
+				Category:       "large_file",
+				FilePath:       file,
+				Line:           len(lines),
+				Message:        fmt.Sprintf("Large file (%d lines, max recommended: %d)", len(lines), maxLines),
+				Recommendation: "Consider splitting into smaller, focused files",
+			})
+		}
+	}
+
+	return issues
+}
+
+// checkHardcodedSecrets finds potential hardcoded secrets in source files.
+func (te *ToolExecutor) checkHardcodedSecrets(files []string) []diagIssue {
+	// Patterns that might indicate hardcoded secrets/keys
+	patterns := []struct {
+		regex       *regexp.Regexp
+		severity    string
+		category    string
+		message     string
+		recommend   string
+	}{
+		{regexp.MustCompile(`(?i)(api[_-]?key|apikey)\s*[:=]\s*["'][a-zA-Z0-9_\-]{20,}["']`), "critical", "security", "Potential hardcoded API key", "Move to environment variable or config file"},
+		{regexp.MustCompile(`(?i)(secret|password|passwd|pwd)\s*[:=]\s*["'][^"']{8,}["']`), "critical", "security", "Potential hardcoded secret/password", "Use environment variable or secrets manager"},
+		{regexp.MustCompile(`(?i)(token|auth[_-]?token|access[_-]?token)\s*[:=]\s*["'][a-zA-Z0-9_\-]{20,}["']`), "critical", "security", "Potential hardcoded token", "Move to environment variable or config file"},
+		{regexp.MustCompile(`(?i)(aws[_-]?secret|aws[_-]?access)\s*[:=]\s*["'][a-zA-Z0-9/+=]{20,}["']`), "critical", "security", "Potential hardcoded AWS credentials", "Use IAM roles or environment variables"},
+		{regexp.MustCompile(`(?i)(private[_-]?key)\s*[:=]\s*["'][a-zA-Z0-9_\-]{32,}["']`), "critical", "security", "Potential hardcoded private key", "Never store private keys in source code"},
+		{regexp.MustCompile(`(?i)(db[_-]?password|database[_-]?password)\s*[:=]\s*["'][^"']+["']`), "critical", "security", "Potential hardcoded database password", "Use environment variable or secrets manager"},
+		{regexp.MustCompile(`(?i)(ghp_[a-zA-Z0-9]{36})`), "critical", "security", "Potential GitHub Personal Access Token", "Revoke and rotate this token immediately"},
+		{regexp.MustCompile(`(?i)(sk-[a-zA-Z0-9]{48})`), "critical", "security", "Potential API secret key", "Move to environment variable or secrets manager"},
+		{regexp.MustCompile(`(?i)(Bearer\s+[a-zA-Z0-9_\-\.]+)`), "high", "security", "Potential hardcoded bearer token", "Move authentication to environment variable"},
+		{regexp.MustCompile(`(?i)http[s]?://[^/\s]+:[^/\s]+@[^/\s]+`), "high", "security", "Potential hardcoded credentials in URL", "Use environment variables for credentials"},
+	}
+
+	var issues []diagIssue
+
+	for _, file := range files {
+		// Skip non-source files
+		ext := filepath.Ext(file)
+		textExts := map[string]bool{
+			".go": true, ".py": true, ".js": true, ".ts": true, ".java": true,
+			".rs": true, ".c": true, ".cpp": true, ".h": true, ".yaml": true,
+			".yml": true, ".json": true, ".toml": true, ".env": true,
+		}
+		if !textExts[strings.ToLower(ext)] {
+			continue
+		}
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+
+		lines := strings.Split(string(content), "\n")
+		for lineNum, line := range lines {
+			for _, p := range patterns {
+				if p.regex.MatchString(line) {
+					// Skip common false positives
+					if isFalsePositiveSecret(line) {
+						continue
+					}
+					issues = append(issues, diagIssue{
+						Severity:       p.severity,
+						Category:       p.category,
+						FilePath:       file,
+						Line:           lineNum + 1,
+						Message:        p.message,
+						Content:        strings.TrimSpace(line[:min(200, len(line))]),
+						Recommendation: p.recommend,
+					})
+				}
+			}
+		}
+	}
+
+	return issues
+}
+
+// isFalsePositiveSecret checks if a line is a common false positive.
+func isFalsePositiveSecret(line string) bool {
+	lower := strings.ToLower(line)
+
+	// Skip placeholder values
+	placeholders := []string{"your_", "changeme", "xxx", "TODO", "FIXME", "insert_", "replace_", "example", "placeholder", "<", ">"}
+	for _, ph := range placeholders {
+		if strings.Contains(lower, ph) {
+			return true
+		}
+	}
+
+	// Skip template/config files that define structure
+	if strings.Contains(lower, "environment variable") ||
+		strings.Contains(lower, "set this") ||
+		strings.Contains(lower, "set this to") ||
+		strings.Contains(lower, "environment") && strings.Contains(lower, "variable") {
+		return true
+	}
+
+	return false
+}
+
+// deduplicateIssues removes duplicate diagnostic issues.
+func deduplicateIssues(issues []diagIssue) []diagIssue {
+	seen := make(map[string]bool)
+	var unique []diagIssue
+
+	for _, issue := range issues {
+		key := fmt.Sprintf("%s:%s:%d:%s", issue.FilePath, issue.Category, issue.Line, issue.Message)
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, issue)
+		}
+	}
+
+	return unique
+}
+
+// formatDiagnosticsResult formats the diagnostic report for display.
+func formatDiagnosticsResult(result projectDiagnosticsResult) string {
+	var output strings.Builder
+
+	output.WriteString(fmt.Sprintf("=== Project Diagnostics Report ===\n\n"))
+	output.WriteString(fmt.Sprintf("Target: %s\n", result.Target))
+	output.WriteString(fmt.Sprintf("Mode: %s scan\n", result.Mode))
+	output.WriteString(fmt.Sprintf("Files scanned: %d\n", result.FilesScanned))
+	output.WriteString(fmt.Sprintf("Scan duration: %s\n\n", result.ScanDuration))
+
+	// Summary
+	output.WriteString("--- Summary ---\n")
+	output.WriteString(fmt.Sprintf("Total issues found: %d\n", result.Summary.TotalIssues))
+	output.WriteString(fmt.Sprintf("Severity breakdown:\n"))
+
+	severityOrder := []string{"critical", "high", "medium", "low"}
+	for _, sev := range severityOrder {
+		count := result.Summary.IssuesBySeverity[sev]
+		if count > 0 {
+			output.WriteString(fmt.Sprintf("  %-10s: %d\n", sev, count))
+		}
+	}
+
+	if len(result.Summary.IssuesByCategory) > 0 {
+		output.WriteString("\nCategory breakdown:\n")
+		for cat, count := range result.Summary.IssuesByCategory {
+			output.WriteString(fmt.Sprintf("  %-20s: %d\n", cat, count))
+		}
+	}
+
+	output.WriteString(fmt.Sprintf("\nChecks run: %s\n\n", strings.Join(result.Summary.ChecksRun, ", ")))
+
+	// Detailed issues by severity
+	if len(result.Issues) > 0 {
+		for _, sev := range severityOrder {
+			var sevIssues []diagIssue
+			for _, issue := range result.Issues {
+				if issue.Severity == sev {
+					sevIssues = append(sevIssues, issue)
+				}
+			}
+
+			if len(sevIssues) > 0 {
+				output.WriteString(fmt.Sprintf("--- %s ---\n", strings.ToUpper(sev)))
+
+				for _, issue := range sevIssues {
+					output.WriteString(fmt.Sprintf("\n  File: %s\n", issue.FilePath))
+					if issue.Line > 0 {
+						output.WriteString(fmt.Sprintf("  Line: %d\n", issue.Line))
+					}
+					output.WriteString(fmt.Sprintf("  Type: %s\n", issue.Category))
+					output.WriteString(fmt.Sprintf("  Issue: %s\n", issue.Message))
+					if issue.Content != "" {
+						output.WriteString(fmt.Sprintf("  Content: %s\n", issue.Content))
+					}
+					if issue.Recommendation != "" {
+						output.WriteString(fmt.Sprintf("  Suggestion: %s\n", issue.Recommendation))
+					}
+					output.WriteString("\n")
+				}
+			}
+		}
+	} else {
+		output.WriteString("--- No issues found! ---\n")
+		output.WriteString("The project looks clean. Keep it up!\n")
+	}
+
+	return output.String()
 }

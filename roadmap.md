@@ -108,12 +108,11 @@
 ### Data/Format Tools
 - **#051: JSON Transformer Tool** - Transform JSON data with multiple operations: extract value by path using dot notation, set/modify fields at arbitrary paths, merge multiple JSON files/sources, validate required fields, format/beautify with configurable indentation, convert to YAML, and convert to environment variable format. Uses only Go stdlib (encoding/json) - zero external dependencies.
 
+### Project Quality
+- **#052: Project Diagnostics Tool** - Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys patterns. Returns structured report with severity levels (low, medium, high, critical) and recommendations. Supports configurable scan depth and path scoping.
+
 ## Completed Feature Count
 
-**50 / 50 features implemented**
+**52 / 52 features implemented**
 
 ## Upcoming Features
-
-## Completed Feature Count
-
-**51 / 51 features implemented**

@@ -1509,6 +1509,16 @@ AVAILABLE TOOLS:
     How to call: Use json_transformer to work with JSON data. Extract a specific field, set a value at a path, merge multiple JSON sources, validate structure, format for readability, or convert between JSON and YAML/ENV formats.
     Example use case: json_transformer(command='extract', file_path='config.json', path='.database.host') to extract a field, json_transformer(command='set', file_path='config.json', path='.database.port', value='5432') to set a value, json_transformer(command='format', file_path='data.json', indent=4) to beautify JSON, json_transformer(command='convert_to_yaml', file_path='config.json') to convert to YAML.
 
+27. project_diagnostics
+    Description: Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys, and more. Returns a structured report with severity levels and recommendations.
+    Parameters:
+      - paths (array, optional): Paths to scan (glob patterns or directory paths). If omitted, scans the current directory.
+      - max_depth (integer, optional): Maximum directory depth to traverse (default: 10).
+      - mode (string, optional): Scan mode: 'full' (default, all checks) or 'basic' (TODOs and empty files only).
+    How to call: Use project_diagnostics to get a quick overview of code quality issues in a project. Useful before starting refactoring work, code reviews, or when onboarding to a new codebase.
+    Example use case: project_diagnostics() to scan the current directory, project_diagnostics(paths=['src/']) to scan only the source directory, project_diagnostics(mode='full') for a comprehensive scan.
+    Note: Checks include TODO/FIXME/HACK/WARN/XXX markers, empty files, large files, hardcoded secrets, and more. Severity levels: low, medium, high, critical.
+
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
 2. When modifying files, be precise about what you're changing
@@ -2362,6 +2372,31 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"command"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "project_diagnostics",
+				Description: "Scan a codebase for common issues and quality problems. Detects TODO/FIXME/HACK/WARN/XXX markers, empty files, large files (>500 lines), hardcoded secrets/keys, and more. Returns a structured report with severity levels and recommendations.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"paths": {
+							Type:        "array",
+							Description: "Paths to scan (glob patterns or directory paths). If omitted, scans the current directory.",
+						},
+						"max_depth": {
+							Type:        "integer",
+							Description: "Maximum directory depth to traverse (default: 10)",
+						},
+						"mode": {
+							Type:        "string",
+							Description: "Scan mode: 'full' (default, all checks), 'basic' (TODOs and empty files only). Currently supported: full, basic.",
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},
