@@ -763,6 +763,19 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			dst = d
 		}
 		msg = fmt.Sprintf("\n%s[Copying] '%s' -> '%s'%s\n", ColorCyan, src, dst, ColorReset)
+	case "code_navigation":
+		query := ""
+		mode := "definitions"
+		if q, ok := params["query"].(string); ok {
+			query = q
+		}
+		if m, ok := params["mode"].(string); ok {
+			mode = m
+		}
+		if len(query) > 40 {
+			query = query[:40] + "..."
+		}
+		msg = fmt.Sprintf("\n%s[Code Navigation] %s: '%s'%s\n", ColorCyan, mode, query, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -1026,6 +1039,20 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				return fmt.Sprintf("%s[Success] overwrote '%s' with copy of '%s'%s\n", ColorGreen, destination, source, ColorReset)
 			}
 			return fmt.Sprintf("%s[Success] copied '%s' -> '%s'%s\n", ColorGreen, source, destination, ColorReset)
+		case "code_navigation":
+			query := ""
+			mode := "definitions"
+			if q, ok := result.Extra["query"].(string); ok {
+				query = q
+			}
+			if m, ok := result.Extra["mode"].(string); ok {
+				mode = m
+			}
+			matches := 0
+			if mc, ok := result.Extra["matchesFound"].(int); ok {
+				matches = mc
+			}
+			return fmt.Sprintf("%s[Success] %s: found %d result(s) for '%s'%s\n", ColorGreen, mode, matches, query, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -1300,6 +1327,18 @@ AVAILABLE TOOLS:
     How to call: Use project_tree to get a quick overview of the project structure without navigating through list_dir repeatedly.
     Example use case: project_tree() to see current directory, project_tree(path='src/', max_depth=2) to see a specific subdirectory.
     Note: The tree uses Unicode box-drawing characters for clean visual presentation. File icons are based on file extensions.
+
+24. code_navigation
+    Description: Navigate code to find definitions, references, or implementations of a symbol across the codebase. Supports Go, Python, JavaScript/TypeScript, Rust, Java, and more.
+    Parameters:
+      - query (string, required): Symbol name to search for (function name, class name, type, variable, etc.)
+      - mode (string, optional): Search mode - 'definitions' (find where defined), 'references' (find all usages), 'implementations' (find interface implementations). Default: definitions
+      - file_type (string, optional): Limit search to a specific language (e.g., 'go', 'python', 'typescript', 'rust'). If omitted, searches all source files.
+      - paths (array, optional): Directories to search within. If omitted, searches from current directory.
+      - max_results (integer, optional): Maximum results to return (default: 30)
+    How to call: Use code_navigation to understand code structure, find where functions are defined, track usage of a symbol, or find which types implement an interface.
+    Example use case: code_navigation(query='HandleRequest', mode='definitions') to find function definitions, code_navigation(query='User', mode='references') to find all usages of 'User', code_navigation(query='ReadWriter', mode='implementations') to find types implementing ReadWriter.
+    Note: This tool uses grep-based pattern matching optimized for different programming languages. For the best results, specify the file_type when searching in a specific project.
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1961,6 +2000,39 @@ func buildTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "code_navigation",
+				Description: "Navigate code to find definitions, references, or implementations of a symbol. Supports multiple languages including Go, Python, JavaScript/TypeScript, Rust, Java, and more.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"query": {
+							Type:        "string",
+							Description: "Symbol name to search for (function, class, type, variable name, etc.)",
+						},
+						"mode": {
+							Type:        "string",
+							Description: "Search mode: 'definitions' (find where it's defined), 'references' (find all usages), or 'implementations' (find interface implementations). Default: definitions",
+						},
+						"file_type": {
+							Type:        "string",
+							Description: "Limit search to a specific language (e.g., 'go', 'python', 'typescript', 'rust', 'java'). If omitted, searches all known source files.",
+						},
+						"paths": {
+							Type:        "array",
+							Description: "Directories to search within. If omitted, searches the current directory recursively.",
+						},
+						"max_results": {
+							Type:        "integer",
+							Description: "Maximum results to return (default: 30)",
+						},
+					},
+					Required: []string{"query"},
 				},
 			},
 		},

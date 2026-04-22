@@ -1023,6 +1023,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"scaffold":      {"template"},
 		"run_tests":     {},
 		"project_tree":  {},
+		"code_navigation": {"query"},
 	}
 
 	for _, tool := range toolDefs {

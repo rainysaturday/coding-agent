@@ -162,6 +162,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeRunTests(tc.Parameters)
 	case "project_tree":
 		result = te.executeProjectTree(tc.Parameters)
+	case "code_navigation":
+		result = te.executeCodeNavigation(tc.Parameters)
 	default:
 		te.stats.FailedCalls++
 		result = &ToolResult{
@@ -3774,4 +3776,331 @@ func sortedChildren(children map[string]*pathNode) []*pathNode {
 		return result[i].name < result[j].name
 	})
 	return result
+}
+
+// executeCodeNavigation provides code navigation capabilities: find definitions, find references, and find implementations.
+func (te *ToolExecutor) executeCodeNavigation(params map[string]interface{}) *ToolResult {
+	query, ok := params["query"].(string)
+	if !ok || query == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: query (symbol name to search for)",
+		}
+	}
+
+	mode, ok := params["mode"].(string)
+	if !ok || mode == "" {
+		mode = "definitions" // default mode
+	}
+	switch mode {
+	case "definitions", "references", "implementations":
+		// valid modes
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid mode: %s. Valid modes: definitions, references, implementations", mode),
+		}
+	}
+
+	// Optional: file_type to limit search (e.g., "go", "python", "typescript")
+	fileType, hasFileType := params["file_type"].(string)
+	if !hasFileType {
+		fileType = ""
+	}
+
+	// Optional: paths to restrict search
+	pathsParam, hasPaths := params["paths"]
+	var searchPaths []string
+	if hasPaths {
+		switch v := pathsParam.(type) {
+		case []interface{}:
+			for _, p := range v {
+				searchPaths = append(searchPaths, fmt.Sprintf("%v", p))
+			}
+		case string:
+			searchPaths = []string{v}
+		}
+	}
+
+	// Optional: max_results (default: 30)
+	maxResults := 30
+	if mr, ok := params["max_results"].(float64); ok {
+		maxResults = int(mr)
+	} else if mr, ok := params["max_results"].(int); ok {
+		maxResults = mr
+	} else if mr, ok := params["max_results"].(string); ok {
+		if n, err := strconv.Atoi(mr); err == nil {
+			maxResults = n
+		}
+	}
+
+	// Determine file extension patterns based on file_type
+	var filePatterns []string
+	if fileType != "" {
+		filePatterns = getFileExtensionPatterns(fileType)
+	} else {
+		filePatterns = getAllFileExtensionPatterns()
+	}
+
+	// Build glob patterns for search
+	var globPatterns []string
+	for _, ext := range filePatterns {
+		if len(searchPaths) > 0 {
+			for _, sp := range searchPaths {
+				globPatterns = append(globPatterns, fmt.Sprintf("%s/**/*.%s", sp, ext))
+			}
+		} else {
+			globPatterns = append(globPatterns, fmt.Sprintf("**/*.%s", ext))
+		}
+	}
+
+	// Build regex patterns based on mode and file_type
+	var patterns []string
+	if mode == "definitions" {
+		patterns = getDefinitionPatterns(query, fileType)
+	} else if mode == "references" {
+		patterns = getReferencePatterns(query, fileType)
+	} else if mode == "implementations" {
+		patterns = getImplementationPatterns(query, fileType)
+	}
+
+	// Search using grep via bash
+	var allResults []string
+	var filesSearched int
+	var totalMatches int
+
+	for _, pattern := range patterns {
+		for _, ext := range filePatterns {
+			var grepArgs string
+			if len(searchPaths) > 0 {
+				grepArgs = fmt.Sprintf("grep -rn --include=*.%s -e '%s' %s 2>/dev/null | head -n %d", ext, pattern, strings.Join(searchPaths, " "), maxResults)
+			} else {
+				grepArgs = fmt.Sprintf("grep -rn --include=*.%s -e '%s' . 2>/dev/null | head -n %d", ext, pattern, maxResults)
+			}
+
+			cmd := exec.Command("bash", "-c", grepArgs)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				continue // grep returns non-zero if no matches, that's OK
+			}
+
+			outputStr := strings.TrimSpace(string(output))
+			if outputStr == "" {
+				continue
+			}
+
+			lines := strings.Split(outputStr, "\n")
+			filesSearched++
+			for _, line := range lines {
+				if len(allResults) >= maxResults {
+					goto done
+				}
+				allResults = append(allResults, line)
+				totalMatches++
+			}
+		}
+	}
+
+done:
+	// Format results
+	var output strings.Builder
+
+	switch mode {
+	case "definitions":
+		output.WriteString(fmt.Sprintf("Found %d definition(s) for '%s' in %d file(s):\n\n", totalMatches, query, filesSearched))
+	case "references":
+		output.WriteString(fmt.Sprintf("Found %d reference(s) to '%s' in %d file(s):\n\n", totalMatches, query, filesSearched))
+	case "implementations":
+		output.WriteString(fmt.Sprintf("Found %d implementation(s) for '%s' in %d file(s):\n\n", totalMatches, query, filesSearched))
+	}
+
+	for _, result := range allResults {
+		output.WriteString("  " + result + "\n")
+	}
+
+	if totalMatches == 0 {
+		output.WriteString("  (no results found)")
+	}
+
+	if len(allResults) >= maxResults {
+		output.WriteString(fmt.Sprintf("\n\n... (showing %d of %d+ results, limited by max_results)", maxResults, maxResults))
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output.String(),
+		Extra: map[string]interface{}{
+			"tool":         "code_navigation",
+			"mode":         mode,
+			"query":        query,
+			"fileType":     fileType,
+			"filesSearched": filesSearched,
+			"matchesFound": totalMatches,
+		},
+	}
+}
+
+// getFileExtensionPatterns returns file extension patterns for a given language.
+func getFileExtensionPatterns(fileType string) []string {
+	switch strings.ToLower(fileType) {
+	case "go":
+		return []string{"go"}
+	case "python", "py":
+		return []string{"py"}
+	case "javascript", "js":
+		return []string{"js", "jsx"}
+	case "typescript", "ts":
+		return []string{"ts", "tsx"}
+	case "rust", "rs":
+		return []string{"rs"}
+	case "java":
+		return []string{"java"}
+	case "c":
+		return []string{"c", "h"}
+	case "cpp", "cxx", "cc":
+		return []string{"cpp", "cxx", "cc", "hpp", "hxx", "hh"}
+	case "ruby", "rb":
+		return []string{"rb"}
+	case "php":
+		return []string{"php"}
+	case "csharp", "cs":
+		return []string{"cs"}
+	case "swift":
+		return []string{"swift"}
+	case "kotlin", "kt":
+		return []string{"kt", "kts"}
+	case "scala":
+		return []string{"scala", "sc"}
+	case "shell", "bash", "sh":
+		return []string{"sh", "bash"}
+	case "yaml", "yml":
+		return []string{"yaml", "yml"}
+	case "json":
+		return []string{"json"}
+	default:
+		return []string{fileType}
+	}
+}
+
+// getAllFileExtensionPatterns returns common source file extensions to search.
+func getAllFileExtensionPatterns() []string {
+	return []string{
+		"go", "py", "js", "jsx", "ts", "tsx", "rs", "java", "c", "h",
+		"cpp", "hpp", "rb", "php", "cs", "swift", "kt", "scala", "sh", "bash",
+		"yaml", "yml", "toml", "lua", "r", "m", "mm",
+	}
+}
+
+// getDefinitionPatterns returns regex patterns for finding definitions of a symbol.
+func getDefinitionPatterns(query string, fileType string) []string {
+	// Escape special regex characters in query
+	escapedQuery := regexp.QuoteMeta(query)
+
+	var patterns []string
+
+	if fileType == "" || fileType == "go" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^func\s+.*\b%s\b\s*\(`, escapedQuery),    // func definitions
+			fmt.Sprintf(`^func\s+\(\s*\S+\s+\*?\S+\s*\)\s+%s\b`, escapedQuery), // method definitions
+			fmt.Sprintf(`^type\s+%s\b\s+`, escapedQuery),           // type definitions
+			fmt.Sprintf(`^var\s+\b%s\b`, escapedQuery),             // var definitions
+			fmt.Sprintf(`^const\s+\b%s\b`, escapedQuery),           // const definitions
+			fmt.Sprintf(`^\w+\s+\b%s\b\s*[=:]\s*func`, escapedQuery), // func variable assignments
+		)
+	}
+
+	if fileType == "" || fileType == "python" || fileType == "py" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*def\s+%s\s*\(`, escapedQuery),     // function definitions
+			fmt.Sprintf(`^\s*class\s+%s\b`, escapedQuery),       // class definitions
+			fmt.Sprintf(`^\s*%s\s*=\s*lambda\s*`, escapedQuery),  // lambda assignments
+			fmt.Sprintf(`^\s*%s\s*=\s*(async\s+)?function`, escapedQuery), // function assignments
+		)
+	}
+
+	if fileType == "" || (fileType == "javascript" || fileType == "js" || fileType == "typescript" || fileType == "ts") {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*function\s+%s\b`, escapedQuery),           // function declarations
+			fmt.Sprintf(`^\s*(?:export\s+)?function\s+%s\b`, escapedQuery), // export function
+			fmt.Sprintf(`^\s*(?:const|let|var)\s+%s\s*=`, escapedQuery),  // variable/function assignments
+			fmt.Sprintf(`^\s*(?:export\s+)?(?:const|let|var)\s+%s\s*=`, escapedQuery), // export variable
+			fmt.Sprintf(`^\s*class\s+%s\b`, escapedQuery),              // class declarations
+			fmt.Sprintf(`^\s*\w+\.%s\s*=`, escapedQuery),               // method assignments
+			fmt.Sprintf(`^\s*%s\s*:\s*(?:async\s+)?function`, escapedQuery), // object method shorthand
+			fmt.Sprintf(`^\s*%s\s*:\s*\(`, escapedQuery),              // arrow function
+		)
+	}
+
+	if fileType == "" || fileType == "rust" || fileType == "rs" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^pub\s+fn\s+%s\b`, escapedQuery),       // pub fn
+			fmt.Sprintf(`^fn\s+%s\b`, escapedQuery),             // fn
+			fmt.Sprintf(`^pub\s+struct\s+%s\b`, escapedQuery),   // pub struct
+			fmt.Sprintf(`^struct\s+%s\b`, escapedQuery),         // struct
+			fmt.Sprintf(`^pub\s+enum\s+%s\b`, escapedQuery),     // pub enum
+			fmt.Sprintf(`^enum\s+%s\b`, escapedQuery),           // enum
+			fmt.Sprintf(`^impl\s+.*\b%s\b`, escapedQuery),       // impl blocks
+		)
+	}
+
+	// Fallback: just the symbol name for any file type
+	patterns = append(patterns, fmt.Sprintf(`\b%s\b`, escapedQuery))
+
+	return patterns
+}
+
+// getReferencePatterns returns regex patterns for finding references to a symbol.
+func getReferencePatterns(query string, fileType string) []string {
+	escapedQuery := regexp.QuoteMeta(query)
+	return []string{
+		// Word-bounded reference - matches any usage of the symbol
+		fmt.Sprintf(`\b%s\b`, escapedQuery),
+	}
+}
+
+// getImplementationPatterns returns regex patterns for finding interface implementations.
+func getImplementationPatterns(query string, fileType string) []string {
+	escapedQuery := regexp.QuoteMeta(query)
+	var patterns []string
+
+	if fileType == "" || fileType == "go" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*func\s+\(\s*\*?%s\b`, escapedQuery), // method on type implementing interface
+			fmt.Sprintf(`^\s*type\s+%s\b`, escapedQuery),           // the type itself
+		)
+	}
+
+	if fileType == "" || fileType == "python" || fileType == "py" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*class\s+%s\b`, escapedQuery),          // class definition
+			fmt.Sprintf(`^\s*class\s+\S+\s*\(\s*.*%s.*\)\s*:`, escapedQuery), // class inheriting from interface-like base
+		)
+	}
+
+	if fileType == "" || (fileType == "javascript" || fileType == "js" || fileType == "typescript" || fileType == "ts") {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*class\s+%s\b`, escapedQuery),              // class definition
+			fmt.Sprintf(`^\s*class\s+\S+\s+extends\s+.*%s`, escapedQuery), // class extending interface-like class
+			fmt.Sprintf(`^\s*\w+\.%s\s*[:=]`, escapedQuery),            // property assignment matching interface
+			fmt.Sprintf(`implements\s+.*%s\b`, escapedQuery),          // implements clause
+			fmt.Sprintf(`implements\s+%s\b`, escapedQuery),            // direct implements
+		)
+	}
+
+	if fileType == "" || fileType == "rust" || fileType == "rs" {
+		patterns = append(patterns,
+			fmt.Sprintf(`^\s*impl\s+.*%s.*\s+for\s+%s\b`, escapedQuery, escapedQuery), // impl Trait for Type
+			fmt.Sprintf(`^\s*impl\s+%s\b`, escapedQuery),                              // impl block for type
+		)
+	}
+
+	return patterns
+}
+
+// executeCodeNavigationResult represents a single navigation result entry.
+type codeNavigationResult struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Content  string `json:"content"`
+	MatchType string `json:"match_type,omitempty"`
 }

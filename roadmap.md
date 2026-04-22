@@ -95,8 +95,11 @@
 ### Test Execution
 - **#045: Run Tests Tool** - Execute tests for the current project with auto-detection of project type (Go, Node.js, Python). Supports custom commands, arguments, and timeouts. Returns structured results with pass/fail status, exit code, and failure summaries.
 
+### Code Navigation
+- **#047: Code Navigation Tool** - Navigate code to find definitions, references, or implementations of symbols across the codebase. Supports multiple languages (Go, Python, JavaScript/TypeScript, Rust, Java, etc.) with grep-based pattern matching. Features three modes: `definitions` (find where defined), `references` (find all usages), `implementations` (find interface implementations). Supports language-specific file filtering, path scoping, and configurable result limits.
+
 ## Completed Feature Count
 
-**46 / 46 features implemented**
+**47 / 47 features implemented**
 
 ## Upcoming Features
