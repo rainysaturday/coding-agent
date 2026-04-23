@@ -5,7 +5,8 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 ## Features
 
 - **Interactive TUI**: Terminal-based user interface with history navigation
-- **Tool Calling**: Support for bash, file read/write, and text manipulation tools
+- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, patching, and directory listing tools
+- **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file` and `list_files`)
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
 - **One-Shot Mode**: Non-interactive mode for CI/CD integration
@@ -86,6 +87,28 @@ echo "List files in /tmp" | ./coding-agent --stdin
 # Quiet mode (only final output)
 ./coding-agent -p "Your task" --quiet
 ```
+
+### Running Read-Only Mode
+
+```bash
+# Read-only mode: only read_file and list_files tools are available
+./coding-agent --read-only -p "What files are in this directory?"
+
+# Combine with other flags
+./coding-agent --read-only --verbose -p "Review the code in src/ for security issues"
+
+# Interactive read-only mode
+./coding-agent --read-only
+```
+
+In read-only mode, the agent cannot modify, write, delete, or execute any files or commands. The following tools are disabled:
+- `bash` - Execute shell commands
+- `write_file` - Write to files
+- `insert_lines` - Insert lines in files
+- `replace_text` - Replace text in files
+- `patch` - Apply patches to files
+
+Only `read_file` and `list_files` are available.
 
 ### Available Commands (Interactive Mode)
 
@@ -284,6 +307,8 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **029-system-prompt-environment-info.md**: System prompt environment info
 - **030-patch-tool.md**: Patch tool
 - **031-github-copilot-backend.md**: GitHub Copilot backend support
+- **032-list-files-tool.md**: List files tool
+- **033-read-only-mode.md**: Read-only mode
 
 ## Development
 
