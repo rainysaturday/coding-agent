@@ -152,6 +152,20 @@ The patch tool accepts standard unified diff format (as produced by `diff -u` or
 - `-start,count`: Original file position (start line, number of lines)
 - `+start,count`: New file position (start line, number of lines)
 
+## No Backup Files
+
+The patch tool must **never** create any backup or artifact files during patch application:
+
+- No `.orig` files (original file backups) must be left on disk
+- No `.rej` files (rejected hunk content) must be left on disk
+- No `.orig` or `.rej` files should be created in the same directory as the patched file
+- If any patch operation would result in such files, the tool must clean them up after execution
+
+## Implementation Notes
+
+The tool must use the `patch` CLI with the `--no-backup` flag to prevent `.orig` file creation,
+and must verify and clean up any `.rej` files that may have been created.
+
 ## Return Values
 
 On success:
@@ -240,6 +254,8 @@ The patch tool must:
 
 If a patch fails:
 
+- Clean up any `.orig` or `.rej` files that may have been created by the patch command
+- Clean up any temporary diff files used during patching
 - Do not modify the original file
 - Provide clear error messages
 - Suggest how to fix the patch
@@ -306,6 +322,10 @@ Agent:
 - [ ] Verify file content after patch
 - [ ] Preserve file permissions
 - [ ] Rollback on failure (no partial changes)
+- [ ] Verify no `.orig` files are created
+- [ ] Verify no `.rej` files are created
+- [ ] Verify no `.rej` files remain after failed patch application
+- [ ] Verify cleanup of patch artifacts
 
 ### Edge Cases
 
