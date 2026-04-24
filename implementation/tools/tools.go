@@ -951,26 +951,34 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		}
 	}
 
-	// Apply the patch using the system patch command
-	cmd := exec.Command("patch", "--dry-run", cleanPath, tmpFile.Name())
-	dryRunOutput, dryRunErr := cmd.CombinedOutput()
+	// Get the directory of the target file for cleanup of .orig/.rej files
+	fileDir := filepath.Dir(cleanPath)
 
-	if dryRunErr != nil {
-		// Restore is not needed since dry-run doesn't modify
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("patch validation failed: %s\nDetails: %s", dryRunErr, string(dryRunOutput)),
-			Extra: map[string]interface{}{
-				"patches_applied": 0,
-			},
+	// cleanupPatchArtifacts removes any .orig or .rej files that may have been created
+	cleanupPatchArtifacts := func() {
+		// Clean up .orig and .rej files in the target file's directory
+		files, err := os.ReadDir(fileDir)
+		if err != nil {
+			// If we can't read the directory, there's nothing to clean
+			return
+		}
+		for _, file := range files {
+			name := file.Name()
+			if strings.HasSuffix(name, ".orig") || strings.HasSuffix(name, ".rej") {
+				os.Remove(filepath.Join(fileDir, name))
+			}
 		}
 	}
 
-	// Apply the patch for real (in-place modification)
-	cmd = exec.Command("patch", cleanPath, tmpFile.Name())
+	// Apply the patch using the system patch command with --no-backup flag
+	// --no-backup: Never create .orig backup files
+	cmd := exec.Command("patch", "--no-backup", cleanPath, tmpFile.Name())
 	patchOutput, patchErr := cmd.CombinedOutput()
 
 	if patchErr != nil {
+		// Clean up any .orig/.rej files that may have been created
+		cleanupPatchArtifacts()
+
 		// Restore original file content
 		if err := os.WriteFile(cleanPath, backupContent, origPerm); err != nil {
 			return &ToolResult{
@@ -989,6 +997,9 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 			},
 		}
 	}
+
+	// Clean up any .orig/.rej files that may have been created
+	cleanupPatchArtifacts()
 
 	// Count number of hunks applied
 	hunkCount := strings.Count(diff, "@@")
