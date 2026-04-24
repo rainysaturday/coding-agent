@@ -836,8 +836,8 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true)
 
-	// In read-only mode, should only have read_file and list_files
-	expectedNames := []string{"read_file", "list_files"}
+	// In read-only mode, should only have read_file, read_lines, and list_files
+	expectedNames := []string{"read_file", "read_lines", "list_files"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))
@@ -875,11 +875,14 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 		t.Error("Read-only system prompt should mention READ-ONLY MODE")
 	}
 
-	// Should only mention read_file and list_files
+	// Should only mention read_file, read_lines, and list_files
 	if !strings.Contains(prompt, "1. read_file") {
 		t.Error("Read-only system prompt should list read_file")
 	}
-	if !strings.Contains(prompt, "2. list_files") {
+	if !strings.Contains(prompt, "2. read_lines") {
+		t.Error("Read-only system prompt should list read_lines")
+	}
+	if !strings.Contains(prompt, "3. list_files") {
 		t.Error("Read-only system prompt should list list_files")
 	}
 

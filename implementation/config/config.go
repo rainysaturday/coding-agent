@@ -213,7 +213,7 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.DebugLog = args[i]
-	case "--api-key":
+		case "--api-key":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--api-key requires an argument")
 			}

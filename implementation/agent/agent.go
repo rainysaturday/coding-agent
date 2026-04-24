@@ -120,7 +120,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
 		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  Only read_file and list_files tools are available.")
+		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, and list_files tools are available.")
 		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr)
@@ -900,7 +900,16 @@ AVAILABLE TOOLS:
    How to call: Use read_file to view the contents of any file.
    Example use case: Reading source files, configuration files, documentation
 
-2. list_files
+2. read_lines
+   Description: Read a specific line range from a file
+   Parameters:
+     - path (string, required): The path to the file
+     - start (integer, required): The starting line number (1-indexed)
+     - end (integer, required): The ending line number (1-indexed)
+   How to call: Use read_lines when you only need to view a portion of a large file.
+   Example use case: Viewing lines 1-50 of a large source file, checking specific sections
+
+3. list_files
    Description: List files and directories in a path, similar to the ls command
    Parameters:
      - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
@@ -911,14 +920,15 @@ AVAILABLE TOOLS:
 
 TOOL CALLING BEST PRACTICES:
 1. Use read_file to view file contents when needed
-2. Use list_files to explore directory structure
-3. Remember: you cannot modify any files or execute commands
+2. Use read_lines to view specific ranges of lines from a file
+3. Use list_files to explore directory structure
+4. Remember: you cannot modify any files or execute commands
 
 NOTE: If the user asks you to write, modify, delete, or execute anything, explain that you are in read-only mode and cannot perform write operations.`, envInfo)
 }
 
 // buildTools builds the tool definitions for the OpenAI API.
-// When readOnly is true, only read-only tools (read_file, list_files) are returned.
+// When readOnly is true, only read-only tools (read_file, read_lines, list_files) are returned.
 func buildTools(readOnly bool) []inference.ToolDefinition {
 	if readOnly {
 		return buildReadOnlyTools()
@@ -1123,6 +1133,31 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "read_lines",
+				Description: "Read a specific line range from a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the file to read",
+						},
+						"start": {
+							Type:        "integer",
+							Description: "Starting line number (1-indexed)",
+						},
+						"end": {
+							Type:        "integer",
+							Description: "Ending line number (1-indexed)",
+						},
+					},
+					Required: []string{"path", "start", "end"},
 				},
 			},
 		},

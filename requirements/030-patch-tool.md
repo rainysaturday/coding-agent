@@ -336,7 +336,7 @@ Agent:
 - **006-write-file-tool.md**: Alternative to patch for full file replacement
 - **011-read-lines-tool.md**: Reading specific lines for context
 - **012-insert-lines-tool.md**: Alternative for simple insertions
-- **013-replace-lines-tool.md**: Alternative for simple replacements
+- **013-replace-text-tool.md**: Alternative for simple text replacements
 
 ## Acceptance Checklist
 

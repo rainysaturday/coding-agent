@@ -108,7 +108,7 @@ In read-only mode, the agent cannot modify, write, delete, or execute any files 
 - `replace_text` - Replace text in files
 - `patch` - Apply patches to files
 
-Only `read_file` and `list_files` are available.
+Only `read_file`, `read_lines`, and `list_files` are available.
 
 ### Available Commands (Interactive Mode)
 

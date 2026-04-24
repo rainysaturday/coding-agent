@@ -436,150 +436,6 @@ func TestExecute_ReplaceText_SearchNotInFile(t *testing.T) {
 	}
 }
 
-func TestExecute_ReplaceLines_MissingStart(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":  testFile,
-			"end":   2.0,
-			"lines": "replacement",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing start parameter")
-	}
-}
-
-func TestExecute_ReplaceLines_MissingEnd(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":  testFile,
-			"start": 1.0,
-			"lines": "replacement",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing end parameter")
-	}
-}
-
-func TestExecute_ReplaceLines_MissingLines(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":  testFile,
-			"start": 1.0,
-			"end":   2.0,
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing lines parameter")
-	}
-}
-
-func TestExecute_ReplaceLines_Search(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("func oldName() {}\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":    testFile,
-			"search":  "oldName",
-			"replace": "newName",
-		},
-	})
-	if !result.Success {
-		t.Fatalf("Expected success, got: %s", result.Error)
-	}
-	content, _ := os.ReadFile(testFile)
-	if !strings.Contains(string(content), "newName") {
-		t.Errorf("Expected content to contain 'newName', got: %s", string(content))
-	}
-}
-
-func TestExecute_ReplaceLines_SearchCount(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("TODO: fix TODO: fix TODO: fix\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":    testFile,
-			"search":  "TODO",
-			"replace": "FIXED",
-			"count":   2.0,
-		},
-	})
-	if !result.Success {
-		t.Fatalf("Expected success, got: %s", result.Error)
-	}
-	content, _ := os.ReadFile(testFile)
-	if strings.Count(string(content), "FIXED") != 2 {
-		t.Errorf("Expected 2 FIXED, got %d", strings.Count(string(content), "FIXED"))
-	}
-}
-
-func TestExecute_ReplaceLines_SearchNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("hello world\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":    testFile,
-			"search":  "notfound",
-			"replace": "replacement",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure when search text not found")
-	}
-}
-
-
-func TestExecute_ReplaceLinesByNumber_StartGreaterThanEnd(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "replace_text",
-		Parameters: map[string]interface{}{
-			"path":  testFile,
-			"start": 5.0,
-			"end":   2.0,
-			"lines": "replacement",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure when start > end")
-	}
-}
-
 func TestExecute_Patch_MissingPath(t *testing.T) {
 	te := NewToolExecutor()
 	result := te.Execute(&ToolCall{
@@ -739,21 +595,26 @@ func TestExecute_Patch_ExtraOnFailure(t *testing.T) {
 func TestExecute_Patch_Rollback(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.go")
-	originalContent := "package main\n\nfunc main() {\n    oldCode()\n}\n"
+	originalContent := "func old() {}\nfunc main() {}\n"
 	os.WriteFile(testFile, []byte(originalContent), 0644)
 
 	te := NewToolExecutor()
-	// Patch that will fail dry-run because context doesn't match
+	// Patch that will fail dry-run because context doesn't match (first line is wrong)
 	_ = te.Execute(&ToolCall{
 		Name: "patch",
 		Parameters: map[string]interface{}{
 			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -0,0 +1 @@\n+totally_new_line\n",
+			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1,2 +1,2 @@\n-wrong context line here\n+new line content\n func main() {}\n",
 		},
 	})
 	// File should still contain original content since patch failed
-	content, _ := os.ReadFile(testFile)
-	_ = content // Just verify no panic
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read patched file: %v", err)
+	}
+	if string(content) != originalContent {
+		t.Errorf("Expected file to contain original content after failed patch.\nOriginal: %q\nGot:      %q", originalContent, string(content))
+	}
 }
 
 func TestExecute_Patch_Success(t *testing.T) {
@@ -766,17 +627,18 @@ func TestExecute_Patch_Success(t *testing.T) {
 		Name: "patch",
 		Parameters: map[string]interface{}{
 			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1 +1 @@\n-oldFunc\n+newFunc\n",
+			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1,3 +1,3 @@\n func main() {\n-    oldFunc()\n+    newFunc()\n }\n",
 		},
 	})
 	if !result.Success {
-		t.Logf("Patch test info: success=%v, error=%s", result.Success, result.Error)
-		// Patch may fail in test environment - just verify it returns valid result
-		return
+		t.Fatalf("Expected patch to succeed, got: %s", result.Error)
 	}
-	content, _ := os.ReadFile(testFile)
-	if !strings.Contains(string(content), "newFunc") {
-		t.Logf("Patch result content: %s", string(content))
+	content, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("Failed to read patched file: %v", err)
+	}
+	if !strings.Contains(string(content), "newFunc()") {
+		t.Errorf("Expected patched file to contain 'newFunc()', got: %s", string(content))
 	}
 }
 
@@ -989,7 +851,7 @@ func TestExecute_ReplaceText_EmptySearch(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	_ = te.Execute(&ToolCall{
+	result := te.Execute(&ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -997,7 +859,13 @@ func TestExecute_ReplaceText_EmptySearch(t *testing.T) {
 			"replace": "replacement",
 		},
 	})
-	// Empty search might match everywhere or fail - just verify no panic
+	// Empty search string should fail with a clear error
+	if result.Success {
+		t.Error("Expected failure for empty search string")
+	}
+	if !strings.Contains(result.Error, "cannot be empty") {
+		t.Errorf("Expected 'cannot be empty' error, got: %s", result.Error)
+	}
 }
 
 func TestExecute_ReplaceText_EmptyReplace(t *testing.T) {
@@ -1528,24 +1396,28 @@ func TestToolExecutor_ReadOnly_ReplaceTextBlocked(t *testing.T) {
 	}
 }
 
-func TestToolExecutor_ReadOnly_ReadLinesBlocked(t *testing.T) {
+func TestToolExecutor_ReadOnly_ReadLinesAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
+
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
 	result := te.Execute(&ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
-			"path":  "/tmp/test.txt",
+			"path":  testFile,
 			"start": 1.0,
-			"end":   10.0,
+			"end":   1.0,
 		},
 	})
 
-	if result.Success {
-		t.Error("Expected read_lines to fail in read-only mode")
+	if !result.Success {
+		t.Fatalf("Expected read_lines to succeed in read-only mode, got: %s", result.Error)
 	}
-	if !strings.Contains(result.Error, "not available in read-only mode") {
-		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
+	if !strings.Contains(result.Output, "1:") {
+		t.Errorf("Expected output to contain line number, got: %s", result.Output)
 	}
 }
 
@@ -1612,7 +1484,7 @@ func TestToolExecutor_ReadOnly_NotSet(t *testing.T) {
 
 func TestIsReadOnlyTool(t *testing.T) {
 	// Test allowed tools
-	allowedTools := []string{"read_file", "list_files"}
+	allowedTools := []string{"read_file", "list_files", "read_lines"}
 	for _, tool := range allowedTools {
 		if !isReadOnlyTool(tool) {
 			t.Errorf("Expected isReadOnlyTool('%s') to return true", tool)
@@ -1620,7 +1492,7 @@ func TestIsReadOnlyTool(t *testing.T) {
 	}
 
 	// Test blocked tools
-	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text", "read_lines"}
+	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text"}
 	for _, tool := range blockedTools {
 		if isReadOnlyTool(tool) {
 			t.Errorf("Expected isReadOnlyTool('%s') to return false", tool)

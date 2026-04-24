@@ -141,7 +141,6 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 	case "list_files":
 		result = te.executeListFiles(tc.Parameters)
 	default:
-		te.stats.FailedCalls++
 		result = &ToolResult{
 			Success: false,
 			Error:   fmt.Sprintf("unknown tool: %s", tc.Name),
@@ -156,8 +155,9 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 }
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
+// read_file, list_files, and read_lines are safe read-only operations.
 func isReadOnlyTool(name string) bool {
-	return name == "read_file" || name == "list_files"
+	return name == "read_file" || name == "list_files" || name == "read_lines"
 }
 
 // executeBash executes a bash command.
@@ -472,251 +472,10 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 		}
 	}
 
-	replaceText, ok := params["replace"].(string)
-	if !ok {
+	if strings.TrimSpace(searchText) == "" {
 		return &ToolResult{
 			Success: false,
-			Error:   "missing required parameter: replace",
-		}
-	}
-
-	countParam, hasCount := params["count"]
-	count := 1 // Default to 1 replacement
-	if hasCount {
-		switch v := countParam.(type) {
-		case float64:
-			count = int(v)
-		case int:
-			count = v
-		case string:
-			if v == "all" || v == "-1" {
-				count = -1 // Replace all
-			} else if c, err := strconv.Atoi(v); err == nil {
-				count = c
-			}
-		}
-	}
-
-	// Read existing content
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("file not found: %s", path),
-			}
-		}
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	originalContent := string(content)
-
-	// Count total occurrences
-	totalOccurrences := strings.Count(originalContent, searchText)
-
-	if totalOccurrences == 0 {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("search text not found: %s", searchText),
-		}
-	}
-
-	// Perform replacement
-	var newContent string
-	var replacementsMade int
-	if count < 0 || count > totalOccurrences {
-		// Replace all
-		newContent = strings.ReplaceAll(originalContent, searchText, replaceText)
-		replacementsMade = totalOccurrences
-	} else {
-		// Replace only count occurrences
-		newContent = originalContent
-		for i := 0; i < count; i++ {
-			idx := strings.Index(newContent, searchText)
-			if idx == -1 {
-				break
-			}
-			newContent = newContent[:idx] + replaceText + newContent[idx+len(searchText):]
-		}
-		replacementsMade = count
-	}
-
-	// Write back
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"search":           searchText,
-			"replacementsMade": replacementsMade,
-			"totalOccurrences": totalOccurrences,
-		},
-	}
-}
-
-// executeReplaceLines replaces lines in a file.
-func (te *ToolExecutor) executeReplaceLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
-	}
-
-	// Check if using line-number mode or search-and-replace mode
-	_, hasStart := params["start"]
-	_, hasEnd := params["end"]
-	_, hasSearch := params["search"]
-
-	if hasStart && hasEnd {
-		// Line-number mode
-		return te.replaceLinesByNumber(path, params)
-	} else if hasSearch {
-		// Search-and-replace mode
-		return te.replaceLinesBySearch(path, params)
-	} else {
-		return &ToolResult{
-			Success: false,
-			Error:   "must provide either start/end (line-number mode) or search (search-and-replace mode)",
-		}
-	}
-}
-
-// replaceLinesByNumber replaces lines by line numbers.
-func (te *ToolExecutor) replaceLinesByNumber(path string, params map[string]interface{}) *ToolResult {
-	start, ok := params["start"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: start",
-		}
-	}
-
-	end, ok := params["end"].(float64)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: end",
-		}
-	}
-
-	replacementLines, ok := params["lines"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: lines",
-		}
-	}
-
-	startLine := int(start)
-	endLine := int(end)
-	newLines := strings.Split(replacementLines, "\n")
-
-	if startLine > endLine {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("start line (%d) must be <= end line (%d)", startLine, endLine),
-		}
-	}
-
-	// Read existing content
-	var existingLines []string
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return &ToolResult{
-				Success: false,
-				Error:   formatFileError(err, path),
-			}
-		}
-		// File doesn't exist, start fresh
-		existingLines = []string{}
-	} else {
-		existingLines = strings.Split(string(content), "\n")
-		// Handle trailing newline
-		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
-			existingLines = existingLines[:len(existingLines)-1]
-		}
-	}
-
-	// Adjust to 0-indexed
-	startIdx := startLine - 1
-	endIdx := endLine
-
-	// Handle edge cases
-	if startIdx < 0 {
-		startIdx = 0
-	}
-	if startIdx > len(existingLines) {
-		// Append at end
-		existingLines = append(existingLines, newLines...)
-	} else {
-		if endIdx > len(existingLines) {
-			endIdx = len(existingLines)
-		}
-		// Replace the range
-		resultLines := make([]string, 0, len(existingLines)-endIdx+startIdx+len(newLines))
-		resultLines = append(resultLines, existingLines[:startIdx]...)
-		resultLines = append(resultLines, newLines...)
-		resultLines = append(resultLines, existingLines[endIdx:]...)
-		existingLines = resultLines
-	}
-
-	// Write back
-	output := strings.Join(existingLines, "\n")
-	if len(existingLines) > 0 {
-		output += "\n"
-	}
-
-	// Create parent directories if needed
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("cannot create directory: %v", err),
-			}
-		}
-	}
-
-	if err := os.WriteFile(path, []byte(output), 0644); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Replaced lines %d-%d with %d line(s) in: %s", startLine, endLine, len(newLines), path),
-		Path:    path,
-		Extra: map[string]interface{}{
-			"start":         startLine,
-			"end":           endLine,
-			"linesReplaced": endLine - startLine + 1,
-			"linesInserted": len(newLines),
-		},
-	}
-}
-
-// replaceLinesBySearch replaces content by searching for text.
-func (te *ToolExecutor) replaceLinesBySearch(path string, params map[string]interface{}) *ToolResult {
-	searchText, ok := params["search"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: search",
+			Error:   "search text cannot be empty",
 		}
 	}
 
@@ -1193,7 +952,7 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 	}
 
 	// Apply the patch using the system patch command
-	cmd := exec.Command("patch", "--dry-run", "-o", os.DevNull, cleanPath, tmpFile.Name())
+	cmd := exec.Command("patch", "--dry-run", cleanPath, tmpFile.Name())
 	dryRunOutput, dryRunErr := cmd.CombinedOutput()
 
 	if dryRunErr != nil {
