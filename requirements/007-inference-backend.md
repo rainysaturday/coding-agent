@@ -1,13 +1,13 @@
 # Requirement 007: Inference Backend
 
 ## Description
-The coding agent harness must connect to an inference backend running llama.cpp server, accessed via OpenAI API compatible REST endpoint.
+The coding agent harness must connect to an inference backend running llama.cpp server, accessed via the API defined in [Inference API Specification](../../specifications/inference-api.md).
 
 ## Acceptance Criteria
 - [ ] Connection configured via environment variable or config file
-- [ ] Supports OpenAI API compatible REST endpoint URL
+- [ ] Supports API endpoint URL per the [Inference API Specification](../../specifications/inference-api.md)
 - [ ] Supports API key authentication
-- [ ] Compatible with llama.cpp server API endpoints
+- [ ] Compatible with the [Inference API Specification](../../specifications/inference-api.md)
 - [ ] Handles connection errors gracefully
 - [ ] Implements retry logic for failed API calls
 - [ ] Streaming responses supported for better UX

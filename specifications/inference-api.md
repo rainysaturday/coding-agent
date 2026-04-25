@@ -2,7 +2,7 @@
 
 ## Overview
 
-The inference API provides a chat completion endpoint compatible with the OpenAI API format. It supports both streaming and non-streaming modes for generating responses from LLM models.
+The inference API provides a chat completion endpoint compatible with the OpenAI API format (and llama.cpp). It supports both streaming and non-streaming modes for generating responses from LLM models.
 
 ## Base URL
 
@@ -11,6 +11,7 @@ http://localhost:8080/v1/chat/completions
 ```
 
 For GitHub Models endpoints:
+
 ```
 https://models.github.ai/inference/chat/completions
 ```
@@ -39,20 +40,20 @@ Generate a chat completion response.
 
 ```typescript
 interface ChatCompletionRequest {
-  model: string;                    // Model name (e.g., "llama", "gemma")
-  messages: Message[];              // Conversation history
-  stream?: boolean;                 // Enable streaming mode (default: false)
-  temperature?: number;             // Sampling temperature (optional)
-  max_tokens?: number;              // Maximum tokens to generate
-  tools?: ToolDefinition[];         // Available tools for tool calling (optional)
-  tool_choice?: string;             // Tool choice strategy: "auto" | "none" | "required" (optional)
+  model: string; // Model name (e.g., "llama", "gemma")
+  messages: Message[]; // Conversation history
+  stream?: boolean; // Enable streaming mode (default: false)
+  temperature?: number; // Sampling temperature (optional)
+  max_tokens?: number; // Maximum tokens to generate
+  tools?: ToolDefinition[]; // Available tools for tool calling (optional)
+  tool_choice?: string; // Tool choice strategy: "auto" | "none" | "required" (optional)
 }
 
 interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
-  tool_call_id?: string;            // For tool result messages
-  tool_calls?: ToolCall[];          // For assistant messages with tool calls
+  tool_call_id?: string; // For tool result messages
+  tool_calls?: ToolCall[]; // For assistant messages with tool calls
 }
 
 interface ToolCall {
@@ -60,7 +61,7 @@ interface ToolCall {
   type: string;
   function: {
     name: string;
-    arguments: string;              // JSON string of parameters
+    arguments: string; // JSON string of parameters
   };
 }
 
@@ -80,7 +81,7 @@ interface ToolDefinition {
 interface Property {
   type: string;
   description: string;
-  items?: Property;                 // For array types
+  items?: Property; // For array types
 }
 ```
 
@@ -110,34 +111,34 @@ When `stream: false` (default), the API returns a single complete response.
 
 ```typescript
 interface ChatCompletionResponse {
-  id: string;                       // Unique request ID
-  object: string;                   // Always "chat.completion"
-  created: number;                  // Unix timestamp
-  model: string;                    // Model name
+  id: string; // Unique request ID
+  object: string; // Always "chat.completion"
+  created: number; // Unix timestamp
+  model: string; // Model name
   choices: Choice[];
   usage: Usage;
-  system_fingerprint?: string;      // Backend fingerprint (optional)
+  system_fingerprint?: string; // Backend fingerprint (optional)
 }
 
 interface Choice {
   index: number;
-  finish_reason: string;            // "stop" | "length" | "tool_calls"
+  finish_reason: string; // "stop" | "length" | "tool_calls"
   message: AssistantMessage;
 }
 
 interface AssistantMessage {
   role: "assistant";
-  content: string;                  // Response text
-  reasoning?: string;               // Reasoning content (for reasoning models)
-  tool_calls?: ToolCall[];          // Tool calls made
+  content: string; // Response text
+  reasoning?: string; // Reasoning content (for reasoning models)
+  tool_calls?: ToolCall[]; // Tool calls made
 }
 
 interface Usage {
-  prompt_tokens: number;            // Total tokens in prompt
-  completion_tokens: number;        // Tokens generated
-  total_tokens: number;             // prompt_tokens + completion_tokens
+  prompt_tokens: number; // Total tokens in prompt
+  completion_tokens: number; // Tokens generated
+  total_tokens: number; // prompt_tokens + completion_tokens
   prompt_tokens_details?: {
-    cached_tokens: number;          // Tokens served from cache (optional)
+    cached_tokens: number; // Tokens served from cache (optional)
   };
 }
 ```
@@ -198,57 +199,58 @@ When `stream: true`, the API returns a stream of Server-Sent Events (SSE) with i
 
 ```typescript
 interface StreamChunk {
-  id: string;                       // Unique request ID, consistent across all chunks
-  object: string;                   // Always "chat.completion.chunk"
-  created: number;                  // Unix timestamp (seconds) when the request was created
-  model: string;                    // Model name that processed the request
-  choices: StreamChoice[];          // Array of completion choices (usually 1 element)
-  timings?: Timings;                // Token counts and timing info (only on final chunk)
-  usage?: Usage;                    // Token counts (only on final chunk, OpenAI format)
+  id: string; // Unique request ID, consistent across all chunks
+  object: string; // Always "chat.completion.chunk"
+  created: number; // Unix timestamp (seconds) when the request was created
+  model: string; // Model name that processed the request
+  choices: StreamChoice[]; // Array of completion choices (usually 1 element)
+  timings?: Timings; // Token counts and timing info (only on final chunk)
+  usage?: Usage; // Token counts (only on final chunk, OpenAI format)
 }
 
 interface StreamChoice {
-  index: number;                    // Index of this choice (0-based, usually 0)
-  finish_reason: string | null;     // Reason for finishing, null while streaming
-  delta: Delta;                     // The delta/content for this chunk
+  index: number; // Index of this choice (0-based, usually 0)
+  finish_reason: string | null; // Reason for finishing, null while streaming
+  delta: Delta; // The delta/content for this chunk
 }
 
 interface Delta {
-  role?: string;                    // Message role ("assistant"), only in first chunk
-  content: string | null;           // Text content fragment, null if only tool call
-  reasoning?: string | null;        // Reasoning content fragment (reasoning models)
+  role?: string; // Message role ("assistant"), only in first chunk
+  content: string | null; // Text content fragment, null if only tool call
+  reasoning?: string | null; // Reasoning content fragment (reasoning models)
   reasoning_content?: string | null; // Alternative name for reasoning field
-  tool_calls?: ToolCallDelta[];     // Tool call deltas (if model uses tools)
+  tool_calls?: ToolCallDelta[]; // Tool call deltas (if model uses tools)
 }
 
 interface ToolCallDelta {
-  index: number;                    // Index of the tool call being built (0-based)
-  id?: string;                      // Tool call ID, only present in first chunk of that call
-  type?: string;                    // Tool call type ("function"), only in first chunk
-  function?: FunctionDelta;         // Function call delta containing name and arguments
+  index: number; // Index of the tool call being built (0-based)
+  id?: string; // Tool call ID, only present in first chunk of that call
+  type?: string; // Tool call type ("function"), only in first chunk
+  function?: FunctionDelta; // Function call delta containing name and arguments
 }
 
 interface FunctionDelta {
-  name?: string;                    // Function name, only in first chunk
-  arguments: string;                // Incremental JSON argument string (accumulated)
+  name?: string; // Function name, only in first chunk
+  arguments: string; // Incremental JSON argument string (accumulated)
 }
 
 interface Timings {
-  cache_n: number;                  // Number of prompt tokens served from cache (NOT included in prompt_n)
-  prompt_n: number;                 // Number of prompt tokens actually processed (computed)
-  prompt_ms: number;                // Time spent processing prompt (milliseconds)
-  prompt_per_token_ms: number;      // Average time per prompt token (milliseconds)
-  prompt_per_second: number;        // Prompt tokens processed per second
-  predicted_n: number;              // Number of tokens predicted/generated
-  predicted_ms: number;             // Time spent generating tokens (milliseconds)
-  predicted_per_token_ms: number;   // Average time per generated token (milliseconds)
-  predicted_per_second: number;     // Generated tokens per second
+  cache_n: number; // Number of prompt tokens served from cache (NOT included in prompt_n)
+  prompt_n: number; // Number of prompt tokens actually processed (computed)
+  prompt_ms: number; // Time spent processing prompt (milliseconds)
+  prompt_per_token_ms: number; // Average time per prompt token (milliseconds)
+  prompt_per_second: number; // Prompt tokens processed per second
+  predicted_n: number; // Number of tokens predicted/generated
+  predicted_ms: number; // Time spent generating tokens (milliseconds)
+  predicted_per_token_ms: number; // Average time per generated token (milliseconds)
+  predicted_per_second: number; // Generated tokens per second
 }
 ```
 
 **Important**: In llama.cpp streaming mode, `cache_n` and `prompt_n` are SEPARATE counts. To get the total prompt tokens in the context window, you need to add them together: `total_prompt_tokens = cache_n + prompt_n`.
 
 For example, if `cache_n` is 10 and `prompt_n` is 17, the total prompt tokens are 27 (not 17).
+
 ```
 
 ### Streaming Response Format
@@ -256,11 +258,13 @@ For example, if `cache_n` is 10 and `prompt_n` is 17, the total prompt tokens ar
 Each chunk is sent as a Server-Sent Event with the prefix `data: `:
 
 ```
+
 data: <JSON object>
 data: <JSON object>
 ...
 data: [DONE]
-```
+
+````
 
 The stream ends with `data: [DONE]`.
 
@@ -286,21 +290,21 @@ The first chunk typically announces the assistant role with no content:
   "system_fingerprint": "b8701-66c4f9ded",
   "object": "chat.completion.chunk"
 }
-```
+````
 
 **Property descriptions:**
 
-| Property | Value | Description |
-|----------|-------|-------------|
-| `choices[0].finish_reason` | `null` | Not yet finished, still streaming |
-| `choices[0].index` | `0` | First (and usually only) choice |
-| `choices[0].delta.role` | `"assistant"` | Indicates this is an assistant response |
-| `choices[0].delta.content` | `null` | No text content in this first chunk |
-| `created` | `1777047505` | Unix timestamp when the request was created |
-| `id` | `"chatcmpl-..."` | Unique identifier for this chat completion request |
-| `model` | `"unsloth/..."` | The model name that processed the request |
-| `system_fingerprint` | `"b8701-..."` | Backend system fingerprint (varies by deployment) |
-| `object` | `"chat.completion.chunk"` | Always this value for streaming chunks |
+| Property                   | Value                     | Description                                        |
+| -------------------------- | ------------------------- | -------------------------------------------------- |
+| `choices[0].finish_reason` | `null`                    | Not yet finished, still streaming                  |
+| `choices[0].index`         | `0`                       | First (and usually only) choice                    |
+| `choices[0].delta.role`    | `"assistant"`             | Indicates this is an assistant response            |
+| `choices[0].delta.content` | `null`                    | No text content in this first chunk                |
+| `created`                  | `1777047505`              | Unix timestamp when the request was created        |
+| `id`                       | `"chatcmpl-..."`          | Unique identifier for this chat completion request |
+| `model`                    | `"unsloth/..."`           | The model name that processed the request          |
+| `system_fingerprint`       | `"b8701-..."`             | Backend system fingerprint (varies by deployment)  |
+| `object`                   | `"chat.completion.chunk"` | Always this value for streaming chunks             |
 
 ### Complete Example: Content Chunk (Normal Text)
 
@@ -327,11 +331,11 @@ A chunk containing text content:
 
 **Property descriptions:**
 
-| Property | Value | Description |
-|----------|-------|-------------|
-| `choices[0].finish_reason` | `null` | Still streaming, not finished |
-| `choices[0].delta.content` | `"Here"` | Text fragment of the response |
-| All other properties | Same as first chunk | Unchanged from previous chunk |
+| Property                   | Value               | Description                   |
+| -------------------------- | ------------------- | ----------------------------- |
+| `choices[0].finish_reason` | `null`              | Still streaming, not finished |
+| `choices[0].delta.content` | `"Here"`            | Text fragment of the response |
+| All other properties       | Same as first chunk | Unchanged from previous chunk |
 
 ### Complete Example: Reasoning Content Chunk
 
@@ -358,10 +362,10 @@ A chunk containing reasoning/thinking content (for reasoning models):
 
 **Property descriptions:**
 
-| Property | Value | Description |
-|----------|-------|-------------|
-| `choices[0].delta.reasoning_content` | `"1"` | Fragment of reasoning/thinking content |
-| `choices[0].delta.content` | *(not present)* | No normal text content in this chunk |
+| Property                             | Value           | Description                            |
+| ------------------------------------ | --------------- | -------------------------------------- |
+| `choices[0].delta.reasoning_content` | `"1"`           | Fragment of reasoning/thinking content |
+| `choices[0].delta.content`           | _(not present)_ | No normal text content in this chunk   |
 
 ### Complete Example: Final Chunk (with Timings)
 
@@ -397,19 +401,19 @@ The last chunk before `[DONE]` contains the finish reason and performance timing
 
 **Property descriptions:**
 
-| Property | Value | Description |
-|----------|-------|-------------|
-| `choices[0].finish_reason` | `"length"` | Response ended due to reaching `max_tokens` |
-| `choices[0].delta` | `{}` | Empty delta on final chunk |
-| `timings.cache_n` | `0` | Number of prompt tokens served from cache |
-| `timings.prompt_n` | `17` | Total prompt tokens processed |
-| `timings.prompt_ms` | `246.713` | Total time spent processing the prompt (ms) |
-| `timings.prompt_per_token_ms` | `14.51` | Average time per prompt token (ms) |
-| `timings.prompt_per_second` | `68.91` | Prompt throughput (tokens/second) |
-| `timings.predicted_n` | `50` | Number of tokens generated/predicted |
-| `timings.predicted_ms` | `1795.018` | Total time spent generating tokens (ms) |
-| `timings.predicted_per_token_ms` | `35.90` | Average time per generated token (ms) |
-| `timings.predicted_per_second` | `27.85` | Generation throughput (tokens/second) |
+| Property                         | Value      | Description                                 |
+| -------------------------------- | ---------- | ------------------------------------------- |
+| `choices[0].finish_reason`       | `"length"` | Response ended due to reaching `max_tokens` |
+| `choices[0].delta`               | `{}`       | Empty delta on final chunk                  |
+| `timings.cache_n`                | `0`        | Number of prompt tokens served from cache   |
+| `timings.prompt_n`               | `17`       | Total prompt tokens processed               |
+| `timings.prompt_ms`              | `246.713`  | Total time spent processing the prompt (ms) |
+| `timings.prompt_per_token_ms`    | `14.51`    | Average time per prompt token (ms)          |
+| `timings.prompt_per_second`      | `68.91`    | Prompt throughput (tokens/second)           |
+| `timings.predicted_n`            | `50`       | Number of tokens generated/predicted        |
+| `timings.predicted_ms`           | `1795.018` | Total time spent generating tokens (ms)     |
+| `timings.predicted_per_token_ms` | `35.90`    | Average time per generated token (ms)       |
+| `timings.predicted_per_second`   | `27.85`    | Generation throughput (tokens/second)       |
 
 ### Complete Example: Final Chunk (with OpenAI-style Usage)
 
@@ -441,13 +445,13 @@ Some backends provide usage information in OpenAI format instead of timings:
 
 **Property descriptions:**
 
-| Property | Value | Description |
-|----------|-------|-------------|
-| `choices[0].finish_reason` | `"stop"` | Response ended naturally (not truncated) |
-| `usage.prompt_tokens` | `17` | Total tokens sent to the model |
-| `usage.completion_tokens` | `50` | Tokens generated by the model |
-| `usage.total_tokens` | `67` | Sum of prompt and completion tokens |
-| `usage.prompt_tokens_details.cached_tokens` | `0` | Tokens served from cache |
+| Property                                    | Value    | Description                              |
+| ------------------------------------------- | -------- | ---------------------------------------- |
+| `choices[0].finish_reason`                  | `"stop"` | Response ended naturally (not truncated) |
+| `usage.prompt_tokens`                       | `17`     | Total tokens sent to the model           |
+| `usage.completion_tokens`                   | `50`     | Tokens generated by the model            |
+| `usage.total_tokens`                        | `67`     | Sum of prompt and completion tokens      |
+| `usage.prompt_tokens_details.cached_tokens` | `0`      | Tokens served from cache                 |
 
 ### Streaming Response Format
 
@@ -532,6 +536,7 @@ for line in sys.stdin:
 - `cached_tokens`: Number of prompt tokens served from cache (metadata only, NOT deducted)
 
 Example:
+
 ```json
 {
   "prompt_tokens": 17,
@@ -544,6 +549,7 @@ Example:
 ```
 
 Here:
+
 - 17 tokens were sent as the prompt (fully accurate)
 - 50 tokens were generated
 - 67 total tokens processed
@@ -556,23 +562,31 @@ Even if `cached_tokens` is 10 (meaning 10 of the 17 prompt tokens were cached), 
 In streaming mode, token counts only appear in the **final chunk** (when `finish_reason` is set). They are provided in two formats:
 
 1. **OpenAI format** (if available):
+
    ```json
-   {"usage": {"prompt_tokens": 17, "completion_tokens": 50, "total_tokens": 67}}
+   {
+     "usage": {
+       "prompt_tokens": 17,
+       "completion_tokens": 50,
+       "total_tokens": 67
+     }
+   }
    ```
 
 2. **llama.cpp timings format** (common for local deployments):
    ```json
-   {"timings": {"prompt_n": 17, "predicted_n": 50}}
+   { "timings": { "prompt_n": 17, "predicted_n": 50 } }
    ```
 
 The code falls back to timings if usage is not available:
+
 ```typescript
 if (chunk.Usage.TotalTokens > 0) {
-    // Use OpenAI format
-    totalTokens = chunk.Usage.TotalTokens;
+  // Use OpenAI format
+  totalTokens = chunk.Usage.TotalTokens;
 } else if (chunk.Timings.PredictedN > 0) {
-    // Use llama.cpp timings format
-    totalTokens = chunk.Timings.PromptN + chunk.Timings.PredictedN;
+  // Use llama.cpp timings format
+  totalTokens = chunk.Timings.PromptN + chunk.Timings.PredictedN;
 }
 ```
 
@@ -586,11 +600,13 @@ Some backends provide usage information in the `usage` field of the final chunk:
 
 ```json
 {
-  "choices": [{
-    "finish_reason": "stop",
-    "index": 0,
-    "delta": {}
-  }],
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "delta": {}
+    }
+  ],
   "usage": {
     "prompt_tokens": 17,
     "completion_tokens": 50,
@@ -600,24 +616,26 @@ Some backends provide usage information in the `usage` field of the final chunk:
 ```
 
 **To get `total_tokens`:**
+
 ```typescript
 // In your streaming callback, check if usage is present
 if (chunk.usage && chunk.usage.total_tokens > 0) {
-    const totalTokens = chunk.usage.total_tokens;
-    console.log(`Total tokens: ${totalTokens}`);
-    // totalTokens = prompt_tokens (17) + completion_tokens (50) = 67
+  const totalTokens = chunk.usage.total_tokens;
+  console.log(`Total tokens: ${totalTokens}`);
+  // totalTokens = prompt_tokens (17) + completion_tokens (50) = 67
 }
 ```
 
 **To get individual components:**
+
 ```typescript
 if (chunk.usage) {
-    const promptTokens = chunk.usage.prompt_tokens;      // 17
-    const completionTokens = chunk.usage.completion_tokens;  // 50
-    const totalTokens = chunk.usage.total_tokens;         // 67
-    
-    // total_tokens should equal prompt_tokens + completion_tokens
-    // This is the authoritative count of everything the API processed
+  const promptTokens = chunk.usage.prompt_tokens; // 17
+  const completionTokens = chunk.usage.completion_tokens; // 50
+  const totalTokens = chunk.usage.total_tokens; // 67
+
+  // total_tokens should equal prompt_tokens + completion_tokens
+  // This is the authoritative count of everything the API processed
 }
 ```
 
@@ -627,11 +645,13 @@ Some backends (especially local deployments) provide timing information instead 
 
 ```json
 {
-  "choices": [{
-    "finish_reason": "length",
-    "index": 0,
-    "delta": {}
-  }],
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "delta": {}
+    }
+  ],
   "timings": {
     "cache_n": 10,
     "prompt_n": 17,
@@ -641,29 +661,32 @@ Some backends (especially local deployments) provide timing information instead 
 ```
 
 **To calculate `total_tokens` from timings:**
+
 ```typescript
 // In your streaming callback, check if timings is present
 if (chunk.timings) {
-    const cacheTokens = chunk.timings.cache_n || 0;       // 10 (cached tokens)
-    const promptTokens = chunk.timings.prompt_n;          // 17 (processed prompt tokens)
-    const completionTokens = chunk.timings.predicted_n;   // 50 (generated tokens)
-    
-    // total_tokens = cached_tokens + prompt_tokens + generated_tokens
-    // All three values are ADDITIVE - they represent different parts of the total
-    const totalTokens = cacheTokens + promptTokens + completionTokens;  // 77
-    
-    console.log(`Total tokens: ${totalTokens}`);
-    // Note: total_tokens = cache_n (10) + prompt_n (17) + predicted_n (50) = 77
+  const cacheTokens = chunk.timings.cache_n || 0; // 10 (cached tokens)
+  const promptTokens = chunk.timings.prompt_n; // 17 (processed prompt tokens)
+  const completionTokens = chunk.timings.predicted_n; // 50 (generated tokens)
+
+  // total_tokens = cached_tokens + prompt_tokens + generated_tokens
+  // All three values are ADDITIVE - they represent different parts of the total
+  const totalTokens = cacheTokens + promptTokens + completionTokens; // 77
+
+  console.log(`Total tokens: ${totalTokens}`);
+  // Note: total_tokens = cache_n (10) + prompt_n (17) + predicted_n (50) = 77
 }
 ```
 
 **Understanding the relationship:**
+
 - `cache_n` = Number of prompt tokens served from cache (NOT processed, just looked up)
 - `prompt_n` = Number of prompt tokens actually processed (computed)
 - `predicted_n` = Number of tokens generated/predicted
 - `total_tokens` = `cache_n + prompt_n + predicted_n`
 
 For example, if `cache_n` is 10, `prompt_n` is 17, and `predicted_n` is 50:
+
 - 10 tokens were served from cache (fast lookup)
 - 17 tokens were processed from the prompt (slower computation)
 - 50 tokens were generated
@@ -675,65 +698,69 @@ Here's a complete implementation that handles both formats:
 
 ```typescript
 function handleStreamingResponse(stream: Readable) {
-    let totalTokens = 0;
-    
-    stream.on('data', (chunk: string) => {
-        // Parse SSE data
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            
-            const data = line.slice(6);
-            if (data === '[DONE]') {
-                console.log(`Stream complete. Total tokens: ${totalTokens}`);
-                return;
-            }
-            
-            try {
-                const parsed = JSON.parse(data);
-                
-                // Check if this is the final chunk with token counts
-                if (parsed.usage && parsed.usage.total_tokens > 0) {
-                    // OpenAI format - direct access to total_tokens
-                    totalTokens = parsed.usage.total_tokens;
-                    console.log(`Total tokens (OpenAI format): ${totalTokens}`);
-                } else if (parsed.timings && parsed.timings.predicted_n > 0) {
-                    // llama.cpp format - calculate from timings
-                    // Important: cache_n is NOT included in prompt_n, so we add all three
-                    totalTokens = parsed.timings.cache_n + parsed.timings.prompt_n + parsed.timings.predicted_n;
-                    console.log(`Total tokens (timings format): ${totalTokens}`);
-                }
-            } catch (e) {
-                // Not valid JSON, skip
-            }
+  let totalTokens = 0;
+
+  stream.on("data", (chunk: string) => {
+    // Parse SSE data
+    const lines = chunk.split("\n");
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+
+      const data = line.slice(6);
+      if (data === "[DONE]") {
+        console.log(`Stream complete. Total tokens: ${totalTokens}`);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(data);
+
+        // Check if this is the final chunk with token counts
+        if (parsed.usage && parsed.usage.total_tokens > 0) {
+          // OpenAI format - direct access to total_tokens
+          totalTokens = parsed.usage.total_tokens;
+          console.log(`Total tokens (OpenAI format): ${totalTokens}`);
+        } else if (parsed.timings && parsed.timings.predicted_n > 0) {
+          // llama.cpp format - calculate from timings
+          // Important: cache_n is NOT included in prompt_n, so we add all three
+          totalTokens =
+            parsed.timings.cache_n +
+            parsed.timings.prompt_n +
+            parsed.timings.predicted_n;
+          console.log(`Total tokens (timings format): ${totalTokens}`);
         }
-    });
+      } catch (e) {
+        // Not valid JSON, skip
+      }
+    }
+  });
 }
 ```
 
 **Python equivalent:**
+
 ```python
 import json
 import requests
 
 def handle_streaming_response(response: requests.Response):
     total_tokens = 0
-    
+
     for line in response.iter_lines():
         if line.startswith(b'data: '):
             data = line[6:].decode('utf-8')
             if data == '[DONE]':
                 print(f"Stream complete. Total tokens: {total_tokens}")
                 break
-            
+
             try:
                 parsed = json.loads(data)
-                
+
                 # Check for OpenAI usage format
                 if 'usage' in parsed and parsed['usage'].get('total_tokens', 0) > 0:
                     total_tokens = parsed['usage']['total_tokens']
                     print(f"Total tokens: {total_tokens}")
-                
+
                 # Check for llama.cpp timings format
                 elif 'timings' in parsed and parsed['timings'].get('predicted_n', 0) > 0:
                     cache_n = parsed['timings'].get('cache_n', 0)
@@ -749,22 +776,28 @@ def handle_streaming_response(response: requests.Response):
 
 1. **Token counts only appear in the final chunk**: You won't receive token counts during the streaming process. They only appear in the last chunk before `[DONE]`.
 
-2. **Two formats exist**: 
+2. **Two formats exist**:
+
    - OpenAI format: `usage.total_tokens` (direct access)
    - llama.cpp format: `timings.prompt_n + timings.predicted_n` (calculate)
 
 3. **Check both formats**: Always check for `usage` first, then fall back to `timings`:
+
    ```typescript
    if (chunk.usage && chunk.usage.total_tokens > 0) {
-       totalTokens = chunk.usage.total_tokens;
+     totalTokens = chunk.usage.total_tokens;
    } else if (chunk.timings && chunk.timings.predicted_n > 0) {
-       totalTokens = chunk.timings.cache_n + chunk.timings.prompt_n + chunk.timings.predicted_n;
+     totalTokens =
+       chunk.timings.cache_n +
+       chunk.timings.prompt_n +
+       chunk.timings.predicted_n;
    }
    ```
 
 4. **`total_tokens` is authoritative**: This number represents the exact count of everything the API processed (system prompt + all messages + tools + completion). It includes cached tokens in the count.
 
 5. **Timing information**: The `timings` object also provides performance metrics:
+
    - `prompt_n`: Number of prompt tokens
    - `predicted_n`: Number of generated tokens
    - `prompt_ms`: Time spent processing prompt (ms)
@@ -780,8 +813,8 @@ def handle_streaming_response(response: requests.Response):
        "max_tokens": 50,
        "stream": true
      }' | sed 's/^data: //; s/\r$//' | python3 -c "
-import sys, json
-for line in sys.stdin:
+   import sys, json
+   for line in sys.stdin:
     if line.strip() == '[DONE]':
         break
     try:
@@ -795,7 +828,7 @@ for line in sys.stdin:
             break
     except:
         pass
-"
+   "
    ```
 
 ### Reasoning Models
@@ -923,23 +956,25 @@ The API supports tool calling. When the model wants to use a tool, it returns to
 
 ```json
 {
-  "choices": [{
-    "finish_reason": "tool_calls",
-    "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [
-        {
-          "id": "call_abc123",
-          "type": "function",
-          "function": {
-            "name": "bash",
-            "arguments": "{\"command\": \"ls -la\"}"
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "bash",
+              "arguments": "{\"command\": \"ls -la\"}"
+            }
           }
-        }
-      ]
+        ]
+      }
     }
-  }],
+  ],
   "usage": {
     "prompt_tokens": 100,
     "completion_tokens": 20,
@@ -959,6 +994,7 @@ The API supports tool calling. When the model wants to use a tool, it returns to
 3. **Reasoning Models**: If the model has thinking enabled, you cannot provide assistant response prefills (as shown in the 400 error example).
 
 4. **Content Types**: Streaming supports two content types:
+
    - Normal content (`delta.content`)
    - Reasoning content (`delta.reasoning` or `delta.reasoning_content`)
 
