@@ -126,7 +126,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
 		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, and list_files tools are available.")
+		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, and git_show tools are available.")
 		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr)
@@ -633,6 +633,31 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			path = p
 		}
 		msg = fmt.Sprintf("\n%s[Listing] files in: %s%s\n", ColorCyan, path, ColorReset)
+	case "grep":
+		path := ""
+		pattern := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		if p, ok := params["pattern"].(string); ok {
+			pattern = p
+			if len(pattern) > 30 {
+				pattern = pattern[:30] + "..."
+			}
+		}
+		msg = fmt.Sprintf("\n%s[Searching] pattern '%s' in: %s%s\n", ColorCyan, pattern, path, ColorReset)
+	case "git_log":
+		path := ""
+		if p, ok := params["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Viewing] git log in: %s%s\n", ColorCyan, path, ColorReset)
+	case "git_show":
+		commit := "HEAD"
+		if p, ok := params["commit"].(string); ok && p != "" {
+			commit = p
+		}
+		msg = fmt.Sprintf("\n%s[Viewing] commit: %s%s\n", ColorCyan, commit, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
