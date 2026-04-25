@@ -41,6 +41,12 @@ type Agent struct {
 	compressionCount    int
 	debugLogger         *debug.DebugLogger
 	mu                  sync.Mutex
+	// lastTotalTokens is the exact total_tokens from the last API response.
+	// This is the authoritative count of everything the API processed:
+	// system prompt + messages + tools + completion.
+	// We use this as the baseline and only estimate deltas for messages
+	// added after the response (e.g., tool results).
+	lastTotalTokens int
 }
 
 // Stats represents agent statistics.
@@ -234,6 +240,11 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			a.stats.InputTokens += response.TokenUsage / 2
 			a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
 		}
+		
+		// Store total_tokens as the authoritative baseline for context size.
+		// This is the exact count the API used: system prompt + messages + tools + completion.
+		// We only estimate deltas for new messages added after this response (e.g., tool results).
+		a.lastTotalTokens = response.TokenUsage
 		a.mu.Unlock()
 
 		// Report context size to TUI with real token count
@@ -415,15 +426,17 @@ func (a *Agent) AddAssistantMessage(message string) {
 	})
 }
 
-// GetContextSize returns the current actual context size using message-level token estimation.
-// This reflects the real context window usage, suitable for display to users and compression checks.
+// GetContextSize returns the current context size.
+// Uses total_tokens from the last API response as the authoritative count.
 func (a *Agent) GetContextSize() int {
 	return a.GetActualContextSize()
 }
 
-// GetActualContextSize calculates the current context size by summing token estimates
-// of all messages in the context. This reflects the actual context window usage,
-// not cumulative API token counts.
+// GetActualContextSize returns the exact total_tokens from the last API response,
+// which is the authoritative count of everything the API processed:
+// system prompt + messages + tools + completion.
+// Then adds estimated tokens for any new messages added after the response
+// (e.g., tool results that were appended during tool execution).
 func (a *Agent) GetActualContextSize() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -433,7 +446,18 @@ func (a *Agent) GetActualContextSize() int {
 // getActualContextSizeUnlocked is the internal, unlocked version.
 // Must be called while holding a.mu.
 func (a *Agent) getActualContextSizeUnlocked() int {
-	// Include tool definitions in the count since they are sent with every API request
+	if a.lastTotalTokens > 0 {
+		// Tool results are added to context after the API call, so they're
+		// not included in total_tokens. Estimate their size and add.
+		delta := 0
+		for _, msg := range a.context {
+			if msg.Role == "tool" {
+				delta += 3 + inference.EstimateTokens(msg.Content)
+			}
+		}
+		return a.lastTotalTokens + delta
+	}
+	// No API response yet, estimate from scratch
 	return inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
 }
 
