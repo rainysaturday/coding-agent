@@ -377,6 +377,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Timings struct {
+			CacheN       int `json:"cache_n"`
 			PromptN      int `json:"prompt_n"`
 			PredictedN   int `json:"predicted_n"`
 		} `json:"timings"`
@@ -430,8 +431,8 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	tokenUsage := respBody.Usage.TotalTokens
 
 	if inputTokens == 0 && outputTokens == 0 && tokenUsage == 0 {
-		// Fall back to llama.cpp timings format
-		inputTokens = respBody.Timings.PromptN
+		// Fall back to llama.cpp timings format - cache_n is NOT included in prompt_n
+		inputTokens = respBody.Timings.CacheN + respBody.Timings.PromptN
 		outputTokens = respBody.Timings.PredictedN
 		if outputTokens > 0 {
 			tokenUsage = inputTokens + outputTokens
@@ -490,9 +491,10 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			CompletionTokens int `json:"completion_tokens"`
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
-		Timings struct {
-			PromptN    int `json:"prompt_n"`
-			PredictedN int `json:"predicted_n"`
+	Timings struct {
+			CacheN       int `json:"cache_n"`
+			PromptN      int `json:"prompt_n"`
+			PredictedN   int `json:"predicted_n"`
 		} `json:"timings"`
 	}
 
@@ -519,6 +521,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 						TotalTokens      int `json:"total_tokens"`
 					} `json:"usage"`
 					Timings struct {
+CacheN       int `json:"cache_n"`
 						PromptN    int `json:"prompt_n"`
 						PredictedN int `json:"predicted_n"`
 					} `json:"timings"`
@@ -605,8 +608,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 							totalTokens = bufferChunk.Usage.TotalTokens
 							inputTokens = bufferChunk.Usage.PromptTokens
 							outputTokens = bufferChunk.Usage.CompletionTokens
-						} else if bufferChunk.Timings.PredictedN > 0 {
-							inputTokens = bufferChunk.Timings.PromptN
+						} else if bufferChunk.Timings.CacheN+bufferChunk.Timings.PromptN > 0 {
+							// llama.cpp timings format - cache_n is NOT included in prompt_n
+							inputTokens = bufferChunk.Timings.CacheN + bufferChunk.Timings.PromptN
 							outputTokens = bufferChunk.Timings.PredictedN
 							totalTokens = inputTokens + outputTokens
 						}
@@ -644,8 +648,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					TotalTokens      int `json:"total_tokens"`
 				} `json:"usage"`
 				Timings struct {
-					PromptN    int `json:"prompt_n"`
-					PredictedN int `json:"predicted_n"`
+					CacheN       int `json:"cache_n"`
+					PromptN      int `json:"prompt_n"`
+					PredictedN   int `json:"predicted_n"`
 				} `json:"timings"`
 			}{}
 
@@ -803,9 +808,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				totalTokens = chunk.Usage.TotalTokens
 				inputTokens = chunk.Usage.PromptTokens
 				outputTokens = chunk.Usage.CompletionTokens
-			} else if chunk.Timings.PredictedN > 0 {
-				// llama.cpp timings format
-				inputTokens = chunk.Timings.PromptN
+			} else if chunk.Timings.CacheN+chunk.Timings.PromptN > 0 {
+				// llama.cpp timings format - cache_n is NOT included in prompt_n
+				inputTokens = chunk.Timings.CacheN + chunk.Timings.PromptN
 				outputTokens = chunk.Timings.PredictedN
 				totalTokens = inputTokens + outputTokens
 			}
