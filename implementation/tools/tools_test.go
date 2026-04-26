@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1644,5 +1645,973 @@ func TestFormatPermissions(t *testing.T) {
 				t.Errorf("formatPermissions(%v) = %q, expected %q", tt.mode, result, tt.expected)
 			}
 		})
+	}
+}
+
+// ===== Tests for grep tool =====
+
+func TestExecute_Grep_MissingPattern(t *testing.T) {
+	tmpDir := t.TempDir()
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for missing pattern parameter")
+	}
+	if !strings.Contains(result.Error, "missing required parameter") {
+		t.Errorf("Expected 'missing required parameter' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_Grep_EmptyPattern(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for empty pattern")
+	}
+	if !strings.Contains(result.Error, "pattern cannot be empty") {
+		t.Errorf("Expected 'pattern cannot be empty' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_Grep_InvalidRegex(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "[invalid",
+			"path":    testFile,
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for invalid regex pattern")
+	}
+	if !strings.Contains(result.Error, "invalid regex pattern") {
+		t.Errorf("Expected 'invalid regex pattern' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_Grep_Found(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "hello world") {
+		t.Errorf("Expected output to contain 'hello world', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "hello again") {
+		t.Errorf("Expected output to contain 'hello again', got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_LineNumbers(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("line one\nline two\nline three\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "line",
+			"path":    testFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should include line numbers by default
+	if !strings.Contains(result.Output, "1:") && !strings.Contains(result.Output, ":1:") {
+		t.Errorf("Expected line numbers in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_NoLineNumbers(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\nfoo bar\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+			"flags":   []interface{}{"n"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// With n flag (default), should have line numbers
+	if !strings.Contains(result.Output, ":1:") {
+		t.Errorf("Expected line numbers in output with n flag, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_CaseInsensitive(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("Hello WORLD\nfoo bar\nHello again\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+			"flags":   []interface{}{"i"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Hello WORLD") {
+		t.Errorf("Expected case-insensitive match for 'Hello WORLD', got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Hello again") {
+		t.Errorf("Expected case-insensitive match for 'Hello again', got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_CountOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+			"flags":   []interface{}{"c"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should show count: 2
+	if !strings.Contains(result.Output, ":2") {
+		t.Errorf("Expected count of 2 in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_InvertMatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+			"flags":   []interface{}{"v"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should NOT contain lines with "hello"
+	if strings.Contains(result.Output, "hello") {
+		t.Errorf("Expected output without 'hello' (invert match), got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "foo bar") {
+		t.Errorf("Expected 'foo bar' in output (inverted match), got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_FilenamesOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+			"flags":   []interface{}{"l"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should only show filename
+	if !strings.Contains(result.Output, "test.txt") {
+		t.Errorf("Expected filename in output, got: %s", result.Output)
+	}
+	if strings.Contains(result.Output, "hello") {
+		t.Errorf("Expected only filename, not content, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_Recursive(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "file1.txt"), []byte("hello world\n"), 0644)
+	os.Mkdir(filepath.Join(tmpDir, "subdir"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "subdir", "file2.txt"), []byte("foo bar\nhello again\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    tmpDir,
+			"flags":   []interface{}{"r"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should find matches in both files
+	if !strings.Contains(result.Output, "file1.txt") {
+		t.Errorf("Expected file1.txt in output, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "file2.txt") {
+		t.Errorf("Expected file2.txt in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "notfound",
+			"path":    testFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success (tool succeeds even with no matches), got: %s", result.Error)
+	}
+	// Output should be empty or minimal
+	if len(result.Output) > 0 && result.Output != "" {
+		t.Logf("Output for no matches: %s", result.Output)
+	}
+}
+
+func TestExecute_Grep_PathNotFound(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "test",
+			"path":    "/nonexistent/path/that/does/not/exist",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for nonexistent path")
+	}
+	if !strings.Contains(result.Error, "path not found") {
+		t.Errorf("Expected 'path not found' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_Grep_BinaryFileSkipped(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Create a file with null bytes (binary)
+	binaryContent := []byte("hello\x00world\n")
+	os.WriteFile(filepath.Join(tmpDir, "binary.bin"), binaryContent, 0644)
+	os.WriteFile(filepath.Join(tmpDir, "text.txt"), []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    tmpDir,
+			"flags":   []interface{}{"r"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Binary file should be skipped
+	if !strings.Contains(result.Output, "text.txt") {
+		t.Errorf("Expected text.txt in output, got: %s", result.Output)
+	}
+	// Should mention skipped binary files
+	if result.Extra == nil {
+		t.Error("Expected Extra map")
+		return
+	}
+	if skipped, ok := result.Extra["skippedBinaryFiles"].(int); !ok || skipped != 1 {
+		t.Errorf("Expected 1 skipped binary file, got %v", result.Extra["skippedBinaryFiles"])
+	}
+}
+
+func TestExecute_Grep_DefaultPath(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "test",
+		},
+	})
+	// Should succeed or fail gracefully (not panic)
+	if result == nil {
+		t.Error("Expected non-nil result")
+	}
+}
+
+func TestExecute_Grep_InReadOnlyMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected grep to succeed in read-only mode, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "hello world") {
+		t.Errorf("Expected 'hello world' in output, got: %s", result.Output)
+	}
+}
+
+// ===== Tests for git_log tool =====
+// setupGitRepo initializes a git repo with user config.
+func setupGitRepo(t *testing.T, tmpDir string) {
+	t.Helper()
+	exec.Command("git", "init", tmpDir).Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.name", "Test User").Run()
+	exec.Command("git", "-C", tmpDir, "config", "user.email", "test@example.com").Run()
+}
+
+func TestExecute_GitLog_NotGitRepo(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for non-git repository")
+	}
+	if !strings.Contains(result.Error, "not a git repository") {
+		t.Errorf("Expected 'not a git repository' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitLog_NoCommits(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Initialize empty git repo
+	setupGitRepo(t, tmpDir)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success for empty git repo, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "No commits found") {
+		t.Errorf("Expected 'No commits found', got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_WithCommits(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Initialize git repo and create a commit
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_CountParameter(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Initialize git repo and create multiple commits
+	setupGitRepo(t, tmpDir)
+	for i := 1; i <= 5; i++ {
+		testFile := filepath.Join(tmpDir, fmt.Sprintf("file%d.txt", i))
+		os.WriteFile(testFile, []byte(fmt.Sprintf("content %d", i)), 0644)
+		exec.Command("git", "-C", tmpDir, "add", ".").Run()
+		exec.Command("git", "-C", tmpDir, "commit", "-m", fmt.Sprintf("Commit %d", i)).Run()
+	}
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":  tmpDir,
+			"count": 2.0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Should only show 2 commits
+	if strings.Count(result.Output, "Commit ") < 2 {
+		t.Errorf("Expected at least 2 commits in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_OnelineFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":  tmpDir,
+			"flags": []interface{}{"oneline"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Oneline format should contain commit hash
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_InReadOnlyMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected git_log to succeed in read-only mode, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_ReferenceParameter(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":      tmpDir,
+			"reference": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitLog_PathLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	
+	// Create files in different subdirectories
+	os.Mkdir(filepath.Join(tmpDir, "subdir1"), 0755)
+	os.Mkdir(filepath.Join(tmpDir, "subdir2"), 0755)
+	testFile1 := filepath.Join(tmpDir, "subdir1", "test.txt")
+	testFile2 := filepath.Join(tmpDir, "subdir2", "test.txt")
+	os.WriteFile(testFile1, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Add subdir1").Run()
+	
+	os.WriteFile(testFile2, []byte("foo bar\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Add subdir2").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":  filepath.Join(tmpDir, "subdir1"),
+			"count": 10.0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitLog_MergesFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	
+	// Create a simple commit (no merge in this simple test)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":  tmpDir,
+			"flags": []interface{}{"m"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// No merges in this repo, so output should indicate no commits
+}
+
+func TestExecute_GitLog_ExtraInfo(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path":      tmpDir,
+			"count":     5.0,
+			"reference": "HEAD",
+			"flags":     []interface{}{"oneline"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if result.Extra == nil {
+		t.Fatal("Expected Extra map")
+	}
+	if count, ok := result.Extra["count"].(int); !ok || count != 5 {
+		t.Errorf("Expected count 5 in Extra, got %v", result.Extra)
+	}
+	if ref, ok := result.Extra["reference"].(string); !ok || ref != "HEAD" {
+		t.Errorf("Expected reference 'HEAD' in Extra, got %v", result.Extra)
+	}
+}
+
+// ===== Tests for git_show tool =====
+
+func TestExecute_GitShow_NotGitRepo(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":     tmpDir,
+			"commit":   "HEAD",
+		},
+	})
+	if result.Success {
+		t.Error("Expected failure for non-git repository")
+	}
+	if !strings.Contains(result.Error, "not a git repository") {
+		t.Errorf("Expected 'not a git repository' error, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitShow_NoCommits(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	// Should fail because HEAD doesn't exist in empty repo
+	if result.Success {
+		t.Error("Expected failure for HEAD in empty repo")
+	}
+}
+
+func TestExecute_GitShow_WithCommit(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_DefaultCommit(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	// Don't specify commit parameter - should default to HEAD
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success with default commit, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_StatFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":    tmpDir,
+			"commit":  "HEAD",
+			"flags":   []interface{}{"stat"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Stat format shows file changes summary
+	if !strings.Contains(result.Output, "1 file changed") && !strings.Contains(result.Output, "test.txt") {
+		t.Errorf("Expected file change info in stat output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_NameStatusFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":    tmpDir,
+			"commit":  "HEAD",
+			"flags":   []interface{}{"name-status"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	// Name status shows A/M/D with filenames
+	if !strings.Contains(result.Output, "A\t") && !strings.Contains(result.Output, "test.txt") {
+		t.Errorf("Expected name-status output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_PathLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":    tmpDir,
+			"commit":  "HEAD",
+			"flags":   []interface{}{"stat"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected commit info in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_InReadOnlyMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected git_show to succeed in read-only mode, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "Initial commit") {
+		t.Errorf("Expected 'Initial commit' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_GitShow_CommitNotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "nonexistent-commit-sha",
+		},
+	})
+	// Should fail because commit doesn't exist
+	if result.Success {
+		t.Error("Expected failure for nonexistent commit")
+	}
+}
+
+func TestExecute_GitShow_ExtraInfo(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if result.Extra == nil {
+		t.Fatal("Expected Extra map")
+	}
+	if ref, ok := result.Extra["commitReference"].(string); !ok || ref != "HEAD" {
+		t.Errorf("Expected commitReference 'HEAD' in Extra, got %v", result.Extra)
+	}
+}
+
+func TestExecute_GitShow_EmptyOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "--allow-empty", "-m", "Empty commit").Run()
+
+	te := NewToolExecutor()
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+}
+
+// ===== Tests for isReadOnlyTool with new tools =====
+
+func TestIsReadOnlyTool_NewTools(t *testing.T) {
+	// Test that new tools are allowed in read-only mode
+	newReadOnlyTools := []string{"grep", "git_log", "git_show"}
+	for _, tool := range newReadOnlyTools {
+		if !isReadOnlyTool(tool) {
+			t.Errorf("Expected isReadOnlyTool('%s') to return true", tool)
+		}
+	}
+
+	// Test that they're not in the blocked list
+	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text"}
+	for _, tool := range blockedTools {
+		if isReadOnlyTool(tool) {
+			t.Errorf("Expected isReadOnlyTool('%s') to return false", tool)
+		}
+	}
+}
+
+func TestExecute_Grep_InReadOnlyMode_Allowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	// grep should work in read-only mode
+	result := te.Execute(&ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "hello",
+			"path":    testFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected grep to succeed in read-only mode, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitLog_InReadOnlyMode_Allowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	// git_log should work in read-only mode
+	result := te.Execute(&ToolCall{
+		Name: "git_log",
+		Parameters: map[string]interface{}{
+			"path": tmpDir,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected git_log to succeed in read-only mode, got: %s", result.Error)
+	}
+}
+
+func TestExecute_GitShow_InReadOnlyMode_Allowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupGitRepo(t, tmpDir)
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte("hello world\n"), 0644)
+	exec.Command("git", "-C", tmpDir, "add", ".").Run()
+	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
+
+	te := NewToolExecutor()
+	te.SetReadOnly(true)
+
+	// git_show should work in read-only mode
+	result := te.Execute(&ToolCall{
+		Name: "git_show",
+		Parameters: map[string]interface{}{
+			"path":   tmpDir,
+			"commit": "HEAD",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected git_show to succeed in read-only mode, got: %s", result.Error)
 	}
 }

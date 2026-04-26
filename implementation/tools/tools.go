@@ -1373,15 +1373,30 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 
 	// Execute git log
 	cmd := exec.Command("git", args...)
+	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
 		// Check if it's a git repository
 		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		gitCmd.Dir = path
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
 				Error:   "not a git repository",
+			}
+		}
+		// Check if the error is "no commits yet"
+		if strings.Contains(string(output), "does not have any commits yet") {
+			return &ToolResult{
+				Success: true,
+				Output:  "No commits found.",
+				Extra: map[string]interface{}{
+					"path":        path,
+					"count":       count,
+					"reference":   reference,
+					"flags":       flags,
+				},
 			}
 		}
 		return &ToolResult{
@@ -1436,12 +1451,7 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 	}
 
 	// Build git show command
-	args := []string{"show"}
-
-	// Add path limit if specified
-	if path != "." {
-		args = append(args, "--", path)
-	}
+	args := []string{"show", commit}
 
 	// Add format flags based on options
 	for _, flag := range flags {
@@ -1463,20 +1473,36 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 		}
 	}
 
-	// Add commit reference
-	args = append(args, commit)
+	// Add path limit after commit ref (git show <commit> -- <path>)
+	if path != "." {
+		args = append(args, "--", path)
+	}
 
 	// Execute git show
 	cmd := exec.Command("git", args...)
+	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
 		// Check if it's a git repository
 		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		gitCmd.Dir = path
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
 				Error:   "not a git repository",
+			}
+		}
+		// Check if the error is "no commits yet"
+		if strings.Contains(string(output), "does not have any commits yet") {
+			return &ToolResult{
+				Success: true,
+				Output:  "No commits found.",
+				Extra: map[string]interface{}{
+					"path":     path,
+					"commit":   commit,
+					"flags":    flags,
+				},
 			}
 		}
 		return &ToolResult{
