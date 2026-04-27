@@ -147,6 +147,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 		result = te.executeGitLog(tc.Parameters)
 	case "git_show":
 		result = te.executeGitShow(tc.Parameters)
+	case "git_diff":
+		result = te.executeGitDiff(tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,
@@ -163,8 +165,8 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, and git_show are safe read-only operations.
-func isReadOnlyTool(name string) bool {
-	return name == "read_file" || name == "list_files" || name == "read_lines" || name == "grep" || name == "git_log" || name == "git_show"
+func isReadOnlyTool(name string) bool { //nolint:funlen
+	return name == "read_file" || name == "list_files" || name == "read_lines" || name == "grep" || name == "git_log" || name == "git_show" || name == "git_diff"
 }
 
 // executeBash executes a bash command.
@@ -1526,6 +1528,143 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 		Output:  resultStr,
 		Extra: map[string]interface{}{
 			"commitReference": commit,
+		},
+	}
+}
+
+// executeGitDiff shows the diff between two commits, branches, or the working tree.
+func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResult {
+	// Parse parameters
+	path := "."
+	if p, ok := params["path"].(string); ok && p != "" {
+		path = p
+	}
+
+	commit1 := ""
+	if c, ok := params["commit1"].(string); ok && c != "" {
+		commit1 = c
+	}
+
+	commit2 := ""
+	if c, ok := params["commit2"].(string); ok && c != "" {
+		commit2 = c
+	}
+
+	// Parse flags
+	flags := []string{}
+	if flagsParam, ok := params["flags"]; ok {
+		switch v := flagsParam.(type) {
+		case []interface{}:
+			for _, f := range v {
+				if flagStr, ok := f.(string); ok {
+					flags = append(flags, flagStr)
+				}
+			}
+		case []string:
+			flags = append(flags, v...)
+		}
+	}
+
+	// Build git diff command
+	args := []string{"diff"}
+
+	// Add format flags based on options
+	for _, flag := range flags {
+		switch flag {
+		case "stat":
+			args = append(args, "--stat")
+		case "patch", "p":
+			args = append(args, "-p")
+		case "name-status":
+			args = append(args, "--name-status")
+		case "name-only":
+			args = append(args, "--name-only")
+		case "shortstat":
+			args = append(args, "--shortstat")
+		case "stat-numstat", "numstat":
+			args = append(args, "--numstat")
+		case "color":
+			args = append(args, "--color=always")
+		case "stat-width", "stat-width=0":
+			args = append(args, "--stat-width=0")
+		case "summary":
+			args = append(args, "--summary")
+		case "compact-summary":
+			args = append(args, "--compact-summary")
+		case "ignore-space-at-eol", "ignore-space-at-eol=":
+			args = append(args, "-w")
+		case "ignore-space-change":
+			args = append(args, "-b")
+		case "ignore-all-space":
+			args = append(args, "-w")
+		case "unified", "unified=":
+			args = append(args, "--unified=3")
+		case "patience":
+			args = append(args, "--patience")
+		case "minimal":
+			args = append(args, "--minimal")
+		}
+	}
+
+	// Handle commit1 and commit2
+	if commit1 != "" && commit2 != "" {
+		// Diff between two commits/refs
+		args = append(args, commit1, commit2)
+	} else if commit1 != "" {
+		// Diff between commit and working tree (or index)
+		args = append(args, commit1)
+	} else {
+		// Default: diff working tree against index
+		if commit2 != "" {
+			// Diff index against a commit
+			args = append(args, commit2)
+		}
+	}
+
+	// Add path limit after the commits (git diff <commit1> <commit2> -- <path>)
+	if path != "." {
+		args = append(args, "--", path)
+	}
+
+	// Execute git diff
+	cmd := exec.Command("git", args...)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		// Check if it's a git repository
+		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+		gitCmd.Dir = path
+		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   "not a git repository",
+			}
+		}
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("git diff failed: %s", string(output)),
+		}
+	}
+
+	resultStr := strings.TrimSpace(string(output))
+	if resultStr == "" {
+		resultStr = "No differences found."
+	}
+
+	// Truncate if excessively large (> 50KB)
+	if len(resultStr) > 50000 {
+		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  resultStr,
+		Extra: map[string]interface{}{
+			"path":      path,
+			"commit1":   commit1,
+			"commit2":   commit2,
+			"flags":     flags,
 		},
 	}
 }
