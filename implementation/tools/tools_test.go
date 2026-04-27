@@ -2532,7 +2532,7 @@ func TestExecute_GitShow_EmptyOutput(t *testing.T) {
 
 func TestIsReadOnlyTool_NewTools(t *testing.T) {
 	// Test that new tools are allowed in read-only mode
-	newReadOnlyTools := []string{"grep", "git_log", "git_show"}
+	newReadOnlyTools := []string{"grep", "git_log", "git_show", "git_diff"}
 	for _, tool := range newReadOnlyTools {
 		if !isReadOnlyTool(tool) {
 			t.Errorf("Expected isReadOnlyTool('%s') to return true", tool)
