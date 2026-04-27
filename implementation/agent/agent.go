@@ -126,7 +126,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
 		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, and git_show tools are available.")
+		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, git_show, and git_diff tools are available.")
 		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr)
@@ -965,19 +965,56 @@ AVAILABLE TOOLS:
      - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)
    How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
    Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
+4. grep
+    Description: Search through file contents using grep-like pattern matching
+    Parameters:
+      - path (string, optional): Path to search (defaults to current directory if not specified)
+      - pattern (string, required): Pattern to search for (supports regex)
+      - flags (array, optional): List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive)
+    How to call: Use grep to find specific patterns or text within files.
+    Example use case: Finding where a function is defined, searching for error messages, locating configuration values
+
+5. git_log
+    Description: Show commit logs from a git repository
+    Parameters:
+      - path (string, optional): Path to the git repository (defaults to current directory)
+      - commit (string, optional): Commit reference (defaults to HEAD)
+      - flags (array, optional): List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')
+    How to call: Use git_log to view commit history and understand changes in the repository.
+    Example use case: Reviewing recent changes, finding when a bug was introduced, understanding project history
+
+6. git_show
+    Description: Show information about a git commit
+    Parameters:
+      - path (string, optional): Path to the git repository (defaults to current directory)
+      - commit (string, optional): Commit to show (defaults to HEAD)
+      - flags (array, optional): List of git show flags to control output (e.g., '--stat', '--patch', '--name-status')
+    How to call: Use git_show to examine the details of a specific commit, including its changes and metadata.
+    Example use case: Examining a specific commit's changes, reviewing what was modified in a particular update
+
+7. git_diff
+    Description: Show changes between commits, commit and working tree, etc.
+    Parameters:
+      - path (string, optional): Path to the git repository (defaults to current directory)
+      - commit1 (string, optional): First commit/branch/revision for the diff
+      - commit2 (string, optional): Second commit/branch/revision for the diff
+      - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
+    How to call: Use git_diff to compare different versions of files, branches, or commits.
+    Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree
+
 
 
 TOOL CALLING BEST PRACTICES:
-1. Use read_file to view file contents when needed
-2. Use read_lines to view specific ranges of lines from a file
-3. Use list_files to explore directory structure
+1. Use read_file, read_lines, and list_files to explore and read files
+2. Use grep to search for patterns and text within files
+3. Use git_log, git_show, and git_diff to explore git history and changes
 4. Remember: you cannot modify any files or execute commands
 
 NOTE: If the user asks you to write, modify, delete, or execute anything, explain that you are in read-only mode and cannot perform write operations.`, envInfo)
 }
 
 // buildTools builds the tool definitions for the OpenAI API.
-// When readOnly is true, only read-only tools (read_file, read_lines, list_files) are returned.
+// When readOnly is true, only read-only tools (read_file, read_lines, list_files, grep, git_log, git_show, git_diff) are returned.
 func buildTools(readOnly bool) []inference.ToolDefinition {
 	if readOnly {
 		return buildReadOnlyTools()
@@ -1230,6 +1267,122 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 							},
 						},
 					},
+				},
+			},
+		},
+	{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "grep",
+				Description: "Search through file contents using grep-like pattern matching",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to search (defaults to current directory if not specified)",
+						},
+						"pattern": {
+							Type:        "string",
+							Description: "Pattern to search for (supports regex)",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive)",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
+					Required: []string{"pattern"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_log",
+				Description: "Show commit logs from a git repository",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the git repository (defaults to current directory)",
+						},
+						"commit": {
+							Type:        "string",
+							Description: "Commit reference (defaults to HEAD)",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_show",
+				Description: "Show information about a git commit",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the git repository (defaults to current directory)",
+						},
+						"commit": {
+							Type:        "string",
+							Description: "Commit to show (defaults to HEAD)",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of git show flags to control output (e.g., '--stat', '--patch', '--name-status')",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
+					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "git_diff",
+				Description: "Show changes between commits, commit and working tree, etc.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the git repository (defaults to current directory)",
+						},
+						"commit1": {
+							Type:        "string",
+							Description: "First commit/branch/revision for the diff",
+						},
+						"commit2": {
+							Type:        "string",
+							Description: "Second commit/branch/revision for the diff",
+						},
+						"flags": {
+							Type:        "array",
+							Description: "List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')",
+							Items: &inference.Property{
+								Type: "string",
+							},
+						},
+					},
+					Required: []string{},
 				},
 			},
 		},

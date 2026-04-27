@@ -836,8 +836,8 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true)
 
-	// In read-only mode, should only have read_file, read_lines, and list_files
-	expectedNames := []string{"read_file", "read_lines", "list_files"}
+	// In read-only mode, should only have read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
+	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))
@@ -875,7 +875,7 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 		t.Error("Read-only system prompt should mention READ-ONLY MODE")
 	}
 
-	// Should only mention read_file, read_lines, and list_files
+	// Should mention read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
 	if !strings.Contains(prompt, "1. read_file") {
 		t.Error("Read-only system prompt should list read_file")
 	}
@@ -884,6 +884,18 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "3. list_files") {
 		t.Error("Read-only system prompt should list list_files")
+	}
+	if !strings.Contains(prompt, "4. grep") {
+		t.Error("Read-only system prompt should list grep")
+	}
+	if !strings.Contains(prompt, "5. git_log") {
+		t.Error("Read-only system prompt should list git_log")
+	}
+	if !strings.Contains(prompt, "6. git_show") {
+		t.Error("Read-only system prompt should list git_show")
+	}
+	if !strings.Contains(prompt, "7. git_diff") {
+		t.Error("Read-only system prompt should list git_diff")
 	}
 
 	// Should NOT mention write tools
