@@ -102,11 +102,11 @@ const (
 Add methods to handle colored streaming:
 - `StreamReasoningChunk(text string)` - Stream reasoning content with dim color
 - `StreamNormalChunk(text string)` - Stream regular content with normal color
-- Or modify existing `StreamChunk` to accept a content type parameter
+- Alternatively, `StreamChunk` can accept a content type parameter
 
-### Backward Compatibility
-- Existing `StreamChunk` method should continue to work
-- New methods should be optional enhancements
+### Compatibility
+- The `StreamChunk` method must continue to work with normal color output
+- New reasoning methods are additions, not replacements
 - Default behavior: if reasoning type not specified, use normal color
 
 ## User Experience Guidelines

@@ -10,16 +10,11 @@ The TUI must NOT echo back the user's input after submission. Since the user can
 - [ ] History navigation works without echoing
 - [ ] Internal processing (context integration) is not affected
 
-## Rationale
+## Design Rationale
 
-**Why not echo user input:**
+User input is not echoed after submission to keep the display clean and avoid redundancy. The user can already see what they typed on the input line, so repeating it in the output adds no value.
 
-1. **Redundancy**: The user just typed the input and can see it on the current line
-2. **Clutter**: Echoing creates unnecessary vertical space consumption
-3. **UX Best Practice**: Modern terminals and chat interfaces don't repeat user input
-4. **Cleaner Display**: More space for meaningful assistant responses and tool output
-
-**What should be displayed instead:**
+**What is displayed after user input:**
 
 - Assistant responses (streamed in real-time)
 - Tool call feedback ("Calling tool: name (params)")
@@ -29,20 +24,6 @@ The TUI must NOT echo back the user's input after submission. Since the user can
 
 ## Example Flow
 
-### Current Behavior (BAD)
-```
-[Tokens: 45 / 128000 (0.0%)]
-> List files in /tmp
-
-[User] List files in /tmp
-
-[Assistant] I'll list the files...
-
-Calling tool: bash (command: "ls /tmp")
-...
-```
-
-### Desired Behavior (GOOD)
 ```
 [Tokens: 45 / 128000 (0.0%)]
 > List files in /tmp
@@ -55,22 +36,21 @@ Calling tool: bash (command: "ls /tmp")
 
 ## Implementation Notes
 
-### What to Remove
-```go
-// REMOVE this line from main.go:
-tui.AddOutputf("[User] %s", input)
-```
-
-### What to Keep
-```go
-// KEEP these (they're necessary):
-ctx.AddUserMessage(input)  // Add to context for LLM
-tui.AddToHistory(input)    // Add to history for navigation
-```
-
 ### Context vs Display
 - **Context**: User input MUST be added to conversation context (LLM needs to see it)
-- **Display**: User input should NOT be echoed to TUI output (redundant)
+- **Display**: User input must NOT be echoed to TUI output (redundant)
+
+The input is stored for LLM context and history navigation but is never re-displayed in the output area:
+
+```go
+// Add to context for the LLM
+ctx.AddUserMessage(input)
+
+// Add to history for arrow-key navigation
+tui.AddToHistory(input)
+
+// Do NOT echo user input to the output display
+```
 
 ## Edge Cases
 

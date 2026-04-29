@@ -198,7 +198,7 @@ param: messages[...].tool_calls[...].type
 
 ### Request Path
 
-The existing inference client appends `/v1/chat/completions` to the endpoint. The Copilot API expects requests at `/chat/completions` (no `/v1` prefix), and GitHub Models expects `/inference/chat/completions`. The endpoint path construction must account for this:
+The inference client must construct the API request path based on the endpoint type. The Copilot API expects requests at `/chat/completions` (no `/v1` prefix), and GitHub Models expects `/inference/chat/completions`. The default path for other endpoints is `/v1/chat/completions`. The endpoint path construction must account for this:
 
 ```go
 func (ic *InferenceClient) buildURL() string {
@@ -238,7 +238,7 @@ hint: api.githubcopilot.com requires a Copilot user token (ghu_). If you only ha
 
 #### Rate Limiting (429)
 
-The existing retry logic should handle 429 responses. Copilot rate limit headers should be respected:
+Copilot rate limit headers should be respected:
 
 ```go
 if resp.StatusCode == 429 {
@@ -247,7 +247,7 @@ if resp.StatusCode == 429 {
 }
 ```
 
-The existing retry logic only retries on 5xx errors. It must be extended to also retry on 429 status codes.
+Retry logic must retry on both 5xx and 429 status codes.
 
 #### Model Not Available
 
