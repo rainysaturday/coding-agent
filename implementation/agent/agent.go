@@ -47,6 +47,10 @@ type Agent struct {
 	// We use this as the baseline and only estimate deltas for messages
 	// added after the response (e.g., tool results).
 	lastTotalTokens int
+	// toolResultMsgsSinceLastAPI is the set of indices in context that
+	// are tool-result messages added AFTER the last API call.
+	// Messages before this index were already included in lastTotalTokens.
+	toolResultMsgsSinceLastAPI map[int]bool
 }
 
 // Stats represents agent statistics.
@@ -95,10 +99,11 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	agent := &Agent{
-		config:       cfg,
-		inference:    inference.NewInferenceClient(cfg),
-		toolExecutor: tools.NewToolExecutor(),
-		context:      make([]*inference.Message, 0),
+		config:                   cfg,
+		inference:                inference.NewInferenceClient(cfg),
+		toolExecutor:             tools.NewToolExecutor(),
+		context:                  make([]*inference.Message, 0),
+		toolResultMsgsSinceLastAPI: make(map[int]bool),
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
@@ -245,10 +250,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// This is the exact count the API used: system prompt + messages + tools + completion.
 		// We only estimate deltas for new messages added after this response (e.g., tool results).
 		a.lastTotalTokens = response.TokenUsage
-		a.mu.Unlock()
 
-		// Report context size to TUI with real token count
+		// Report context size to TUI with real token count (while holding lock)
 		a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
+		a.mu.Unlock()
 
 		// Log assistant response if debug is enabled
 		if a.debugLogger != nil {
@@ -303,11 +308,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				}
 
 				a.mu.Lock()
+				resultIdx := len(a.context)
 				a.context = append(a.context, &inference.Message{
 					Role:       "tool",
 					Content:    resultMessage,
 					ToolCallId: tc.ID, // Preserve the original tool call ID
 				})
+				// Track this tool result so getActualContextSizeUnlocked only
+				// counts tool messages added AFTER the last API call.
+				a.toolResultMsgsSinceLastAPI[resultIdx] = true
 				a.mu.Unlock()
 			}
 			continue // Loop for next iteration
@@ -364,10 +373,12 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
 }
 
-// reportContextSize calculates and reports the current actual context size using message-level token estimation.
+// reportContextSize calculates and reports the current actual context size.
+// It calls the unlocked version directly since it is always called while
+// the caller already holds a.mu. This avoids deadlocking.
 func (a *Agent) reportContextSize(callback ContextSizeCallback, maxContextSize int) {
 	if callback != nil {
-		actualSize := a.GetActualContextSize()
+		actualSize := a.getActualContextSizeUnlocked()
 		callback(actualSize, maxContextSize)
 	}
 }
@@ -404,6 +415,8 @@ func (a *Agent) ClearContext() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.context = make([]*inference.Message, 0)
+	a.lastTotalTokens = 0
+	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
 }
 
 // AddUserMessage adds a user message to the context.
@@ -447,11 +460,11 @@ func (a *Agent) GetActualContextSize() int {
 // Must be called while holding a.mu.
 func (a *Agent) getActualContextSizeUnlocked() int {
 	if a.lastTotalTokens > 0 {
-		// Tool results are added to context after the API call, so they're
-		// not included in total_tokens. Estimate their size and add.
+		// Only count tool messages added AFTER the last API call.
+		// Messages before the API call were already included in total_tokens.
 		delta := 0
-		for _, msg := range a.context {
-			if msg.Role == "tool" {
+		for idx, msg := range a.context {
+			if msg.Role == "tool" && a.toolResultMsgsSinceLastAPI[idx] {
 				delta += 3 + inference.EstimateTokens(msg.Content)
 			}
 		}
@@ -464,9 +477,9 @@ func (a *Agent) getActualContextSizeUnlocked() int {
 // shouldCompress checks if context compression is needed based on actual context window usage.
 func (a *Agent) shouldCompress() bool {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	total := a.getActualContextSizeUnlocked()
 	maxSize := a.maxContextSize
-	a.mu.Unlock()
 	return total > int(float64(maxSize)*0.8)
 }
 
@@ -487,7 +500,6 @@ func (a *Agent) compressContext(ctx context.Context) error {
 
 	messages := make([]*inference.Message, len(a.context))
 	copy(messages, a.context)
-	systemPrompt := a.systemPrompt
 	a.mu.Unlock()
 
 	// Create summary request - summarize all but system prompt and last messages
@@ -514,21 +526,78 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	a.mu.Lock()
 	newContext := make([]*inference.Message, 0, preserveCount+1)
 	newContext = append(newContext, &inference.Message{Role: "user", Content: "Conversation summary: " + response.Content})
-	newContext = append(newContext, messages[len(messages)-preserveCount:]...)
+
+	// Preserve the last N messages, but reorder to maintain conversation integrity.
+	// Group consecutive tool results with their preceding assistant message so
+	// that we never have a tool message without its corresponding assistant message.
+	preserved := messages[len(messages)-preserveCount:]
+	grouped := a.groupAssistantToolMessages(preserved)
+	newContext = append(newContext, grouped...)
 	a.context = newContext
 	a.compressionCount++
 
-	// Update token stats to reflect the compressed context size.
-	// This prevents the infinite compression loop: the cumulative stats would
-	// otherwise still be high even though the actual context is now small.
-	// We set InputTokens to the estimated size of the compressed context,
-	// which is approximately what the next API request will consume.
-	compressedTokens := inference.EstimateContextSize(newContext, a.inference.GetTools(), systemPrompt)
-	a.stats.InputTokens = compressedTokens
-	a.stats.OutputTokens = 0 // reset output tokens; they'll accumulate from new API calls
+	// Reset lastTotalTokens so context size is recalculated from scratch on next
+	// context size check. This prevents the old (pre-compression) total from
+	// inflating the reported size after compression.
+	a.lastTotalTokens = 0
+
+	// Reset tool result tracking since the context has been rebuilt.
+	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+
+	// Preserve cumulative token stats. The stats represent the total tokens used
+	// across the entire session. We should NOT overwrite them with the compressed
+	// context size; instead, the next API call will add its own token usage on top
+	// of the existing cumulative totals.
+	// (No change to a.stats.InputTokens / a.stats.OutputTokens)
 	a.mu.Unlock()
 
 	return nil
+}
+
+// groupAssistantToolMessages takes a slice of messages and reorders them so that
+// tool results are always immediately after their corresponding assistant message.
+// This prevents broken sequences like: [user_summary, tool_result, assistant, user].
+func (a *Agent) groupAssistantToolMessages(messages []*inference.Message) []*inference.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	// Build groups: each group starts with a non-tool message, followed by its
+	// tool results (if the preceding message was an assistant with tool calls).
+	var groups [][]*inference.Message
+	currentGroup := []*inference.Message{messages[0]}
+
+	for i := 1; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role == "tool" {
+			// Tool results should be grouped with the preceding assistant message.
+			// If the current group's last message is an assistant, keep it here.
+			// Otherwise, we need to move it.
+			if len(currentGroup) > 0 && currentGroup[len(currentGroup)-1].Role == "assistant" {
+				currentGroup = append(currentGroup, msg)
+			} else {
+				// This tool result's assistant is not in the preserved set.
+				// Skip it to avoid broken causality.
+				continue
+			}
+		} else {
+			// Non-tool message starts a new group.
+			if len(currentGroup) > 0 {
+				groups = append(groups, currentGroup)
+			}
+			currentGroup = []*inference.Message{msg}
+		}
+	}
+	if len(currentGroup) > 0 {
+		groups = append(groups, currentGroup)
+	}
+
+	// Flatten groups, preserving order within each group.
+	result := make([]*inference.Message, 0, len(messages))
+	for _, group := range groups {
+		result = append(result, group...)
+	}
+	return result
 }
 
 // formatResult formats a tool result for display with truncation.
@@ -897,6 +966,15 @@ AVAILABLE TOOLS:
    How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
    Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
 
+9. grep
+   Description: Search through file contents using grep-like pattern matching
+   Parameters:
+     - path (string, optional): Path to search (defaults to current directory if not specified)
+     - pattern (string, required): Pattern to search for (supports regex)
+     - flags (array, optional): List of grep-style flags to control output (e.g., 'i' for case insensitive, 'r' for recursive, 'n' for line numbers, 'c' for count only)
+   How to call: Use grep to find specific patterns or text within files.
+   Example use case: Finding where a function is defined, searching for error messages, locating configuration values
+
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -978,7 +1056,8 @@ AVAILABLE TOOLS:
     Description: Show commit logs from a git repository
     Parameters:
       - path (string, optional): Path to the git repository (defaults to current directory)
-      - commit (string, optional): Commit reference (defaults to HEAD)
+      - reference (string, optional): Git reference to view log from (branch name, tag, or commit hash; defaults to HEAD)
+      - count (integer, optional): Number of commits to display (defaults to 10)
       - flags (array, optional): List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')
     How to call: Use git_log to view commit history and understand changes in the repository.
     Example use case: Reviewing recent changes, finding when a bug was introduced, understanding project history
@@ -1310,9 +1389,13 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 							Type:        "string",
 							Description: "Path to the git repository (defaults to current directory)",
 						},
-						"commit": {
+						"reference": {
 							Type:        "string",
-							Description: "Commit reference (defaults to HEAD)",
+							Description: "Git reference to view log from (branch name, tag, or commit hash; defaults to HEAD)",
+						},
+						"count": {
+							Type:        "integer",
+							Description: "Number of commits to display (defaults to 10)",
 						},
 						"flags": {
 							Type:        "array",

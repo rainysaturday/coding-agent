@@ -632,27 +632,14 @@ CacheN       int `json:"cache_n"`
 			}
 
 			// Reset chunk before unmarshaling to prevent stale data from persisting
-			// json.Unmarshal does not clear existing slice values, so we must reset manually
-			chunk = struct {
-				Choices []struct {
-					Delta struct {
-						Content   string        `json:"content"`
-						Reasoning string        `json:"reasoning"`
-						ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
-					} `json:"delta"`
-					FinishReason string `json:"finish_reason"`
-				} `json:"choices"`
-				Usage struct {
-					PromptTokens     int `json:"prompt_tokens"`
-					CompletionTokens int `json:"completion_tokens"`
-					TotalTokens      int `json:"total_tokens"`
-				} `json:"usage"`
-				Timings struct {
-					CacheN       int `json:"cache_n"`
-					PromptN      int `json:"prompt_n"`
-					PredictedN   int `json:"predicted_n"`
-				} `json:"timings"`
-			}{}
+			// json.Unmarshal does not clear existing slice values, so we must reset manually.
+			chunk.Choices = nil
+			chunk.Usage.PromptTokens = 0
+			chunk.Usage.CompletionTokens = 0
+			chunk.Usage.TotalTokens = 0
+			chunk.Timings.CacheN = 0
+			chunk.Timings.PromptN = 0
+			chunk.Timings.PredictedN = 0
 
 			// Try to parse as complete JSON first
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {

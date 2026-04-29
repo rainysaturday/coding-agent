@@ -897,6 +897,18 @@ func (te *ToolExecutor) executePatch(params map[string]interface{}) *ToolResult 
 		}
 	}
 
+	// Resolve symlinks to prevent symlink-based traversal.
+	// If the path contains symlinks, resolve them and check the real target.
+	if resolvedPath, err := filepath.EvalSymlinks(cleanPath); err == nil {
+		if filepath.IsAbs(resolvedPath) && (strings.HasPrefix(resolvedPath, "/etc") || strings.HasPrefix(resolvedPath, "/root") || strings.HasPrefix(resolvedPath, "/home") || resolvedPath == "/") {
+			return &ToolResult{
+				Success: false,
+				Error:   "invalid path: directory traversal not allowed",
+			}
+		}
+		cleanPath = resolvedPath
+	}
+
 	// Check if file exists
 	if _, err := os.Stat(cleanPath); os.IsNotExist(err) {
 		return &ToolResult{
@@ -1046,22 +1058,12 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 		}
 	}
 
-	// Compile the regex pattern
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("invalid regex pattern: %v", err),
-		}
-	}
-
-	// Parse parameters
+	// Parse parameters and flags first (flags affect regex compilation)
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
 	}
 
-	// Parse flags
 	flags := map[string]bool{
 		"i": false, // case-insensitive
 		"r": false, // recursive
@@ -1087,6 +1089,21 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 					flags[flagStr] = true
 				}
 			}
+		}
+	}
+
+	// Compile the regex pattern.
+	// If case-insensitive flag is set, compile with (?i) prefix
+	// so the pattern itself handles case insensitivity.
+	patternToCompile := pattern
+	if flags["i"] {
+		patternToCompile = "(?i)" + pattern
+	}
+	re, err := regexp.Compile(patternToCompile)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid regex pattern: %v", err),
 		}
 	}
 
@@ -1282,12 +1299,9 @@ func (te *ToolExecutor) searchFile(filePath string, re *regexp.Regexp, flags map
 			break
 		}
 
-		matchLine := line
-		if flags["i"] {
-			matchLine = strings.ToLower(line)
-		}
-
-		matched := re.MatchString(matchLine)
+		// The regex is already compiled with (?i) prefix if case-insensitive
+		// was requested, so we can match directly on the original line.
+		matched := re.MatchString(line)
 		if flags["v"] {
 			matched = !matched
 		}
@@ -1310,6 +1324,14 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
+	}
+
+	// Validate path exists and is accessible
+	if _, err := os.Stat(path); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
+		}
 	}
 
 	reference := ""
@@ -1432,6 +1454,14 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 		path = p
 	}
 
+	// Validate path exists and is accessible
+	if _, err := os.Stat(path); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
+		}
+	}
+
 	commit := "HEAD"
 	if c, ok := params["commit"].(string); ok && c != "" {
 		commit = c
@@ -1538,6 +1568,14 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
+	}
+
+	// Validate path exists and is accessible
+	if _, err := os.Stat(path); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
+		}
 	}
 
 	commit1 := ""
