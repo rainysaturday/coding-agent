@@ -3,6 +3,8 @@
 ## Description
 The harness must support a `git_show` tool that allows viewing detailed information about a specific git commit via OpenAI's tool calling interface. This tool enables the agent to inspect individual commits, view their diffs, and understand specific changes made to the codebase.
 
+**Mode:** This tool is available in **read-only mode** only. It is not available in normal (interactive) mode.
+
 ## Acceptance Criteria
 - [ ] Tool named `git_show` is available
 - [ ] Accepts a commit reference (branch, tag, or commit hash)

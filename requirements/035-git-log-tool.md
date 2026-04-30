@@ -3,6 +3,8 @@
 ## Description
 The harness must support a `git_log` tool that allows viewing the commit history of a git repository via OpenAI's tool calling interface. This tool enables the agent to search through commit history, find specific changes, and understand the evolution of the codebase.
 
+**Mode:** This tool is available in **read-only mode** only. It is not available in normal (interactive) mode.
+
 ## Acceptance Criteria
 - [ ] Tool named `git_log` is available
 - [ ] Defaults to showing the repository's commit history

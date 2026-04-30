@@ -3,6 +3,8 @@
 ## Description
 The harness must support a `grep` tool that allows searching through file contents using regular expressions via OpenAI's tool calling interface. This tool enables the agent to efficiently search for patterns across multiple files, similar to the `grep` or `ripgrep` command-line utility.
 
+**Mode:** This tool is available in **read-only mode** only. It is not available in normal (interactive) mode.
+
 ## Acceptance Criteria
 - [ ] Tool named `grep` is available
 - [ ] Accepts a search pattern (regex) as input parameter

@@ -5,7 +5,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 ## Features
 
 - **Interactive TUI**: Terminal-based user interface with history navigation
-- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, patching, and directory listing tools
+- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, and file search tools
 - **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file` and `list_files`)
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
@@ -91,7 +91,7 @@ echo "List files in /tmp" | ./coding-agent --stdin
 ### Running Read-Only Mode
 
 ```bash
-# Read-only mode: only read_file and list_files tools are available
+# Read-only mode: only read_file, read_lines, list_files, grep, git_log, git_show, and git_diff are available
 ./coding-agent --read-only -p "What files are in this directory?"
 
 # Combine with other flags
@@ -106,9 +106,8 @@ In read-only mode, the agent cannot modify, write, delete, or execute any files 
 - `write_file` - Write to files
 - `insert_lines` - Insert lines in files
 - `replace_text` - Replace text in files
-- `patch` - Apply patches to files
 
-Only `read_file`, `read_lines`, and `list_files` are available.
+Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and `git_diff` are available.
 
 ### Available Commands (Interactive Mode)
 

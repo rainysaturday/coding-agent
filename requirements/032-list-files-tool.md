@@ -3,6 +3,8 @@
 ## Description
 The harness must support a `list_files` tool that allows listing directory contents via OpenAI's tool calling interface, formatted like the `ls` command. It should display files, directories, sizes, permissions, timestamps, and other metadata.
 
+**Mode:** This tool is available in **read-only mode** only. It is not available in normal (interactive) mode.
+
 ## Acceptance Criteria
 - [ ] Tool named `list_files` is available
 - [ ] Accepts directory path as input parameter

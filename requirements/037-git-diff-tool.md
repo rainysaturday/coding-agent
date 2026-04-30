@@ -3,6 +3,8 @@
 ## Description
 The harness must support a `git_diff` tool that allows comparing changes between git commits, branches, files, or the working tree via OpenAI's tool calling interface. This tool enables the agent to inspect differences between any two git states, understand changes made in specific commits, and compare branches or tags.
 
+**Mode:** This tool is available in **read-only mode** only. It is not available in normal (interactive) mode.
+
 ## Acceptance Criteria
 - [ ] Tool named `git_diff` is available
 - [ ] Accepts two git references (commits, branches, tags) for comparison
