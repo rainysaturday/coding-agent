@@ -195,8 +195,6 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 		"read_lines",
 		"insert_lines",
 		"replace_text",
-		"patch",
-		"list_files",
 	}
 
 	for _, expected := range expectedNames {
@@ -249,8 +247,6 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 		{"read_lines", "Read a specific line range"},
 		{"insert_lines", "Insert lines at a specific line"},
 		{"replace_text", "Find and replace text"},
-		{"patch", "Apply a unified diff patch"},
-		{"list_files", "List files and directories"},
 	}
 
 	for _, td := range toolDescriptions {
@@ -449,19 +445,6 @@ func TestFormatToolStatus_Success(t *testing.T) {
 			},
 		},
 		{
-			name: "patch success",
-			tool: "patch",
-			result: &tools.ToolResult{
-				Success: true,
-				Extra: map[string]interface{}{
-					"patches_applied": 3,
-				},
-			},
-			check: func(s string) bool {
-				return strings.Contains(s, "3 hunk")
-			},
-		},
-		{
 			name: "unknown tool success",
 			tool: "custom_tool",
 			result: &tools.ToolResult{
@@ -515,7 +498,6 @@ func TestStreamStatus_Callback(t *testing.T) {
 		"read_lines":   {"path": "/test/file.txt", "start": 1, "end": 10},
 		"insert_lines": {"path": "/test/file.txt", "line": 5},
 		"replace_text": {"path": "/test/file.txt", "search": "old"},
-		"patch":        {"path": "/test/file.txt"},
 		"unknown":      nil,
 	}
 
@@ -674,7 +656,7 @@ func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
 	prompt := buildSystemPrompt(false)
 
 	// Count occurrences of key phrases
-	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text", "patch", "list_files"}
+	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text"}
 	for _, name := range toolNames {
 		count := strings.Count(prompt, name)
 		// Tool should appear in tool definition and description, so at least 2 times
@@ -761,8 +743,6 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"read_lines":   {"path", "start", "end"},
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
-		"patch":        {"path", "diff"},
-		"list_files":   {},
 	}
 
 	for _, tool := range toolDefs {

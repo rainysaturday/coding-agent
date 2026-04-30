@@ -437,212 +437,6 @@ func TestExecute_ReplaceText_SearchNotInFile(t *testing.T) {
 	}
 }
 
-func TestExecute_Patch_MissingPath(t *testing.T) {
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"diff": "--- a/test\n+++ b/test\n@@ -1 +1 @@\n-old\n+new\n",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing path parameter")
-	}
-}
-
-func TestExecute_Patch_MissingDiff(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing diff parameter")
-	}
-}
-
-func TestExecute_Patch_EmptyDiff(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for empty diff")
-	}
-	if !strings.Contains(result.Error, "empty") {
-		t.Errorf("Expected 'empty' in error, got: %s", result.Error)
-	}
-}
-
-func TestExecute_Patch_WhitespaceOnlyDiff(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "   \n\t\n  ",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for whitespace-only diff")
-	}
-}
-
-func TestExecute_Patch_MissingHunkHeaders(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\nthis is not a valid diff\n",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for missing @@ headers")
-	}
-	if !strings.Contains(result.Error, "hunk") {
-		t.Errorf("Expected 'hunk' in error, got: %s", result.Error)
-	}
-}
-
-func TestExecute_Patch_ContextMismatch(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("func main() {\n    actual()\n}\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -2,1 +2,1 @@\n-    wrong()\n+    new()\n",
-		},
-	})
-	if result.Success {
-		t.Error("Expected failure for context mismatch")
-	}
-}
-
-func TestExecute_Patch_DryRunFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	// This should fail dry-run since the file doesn't have the expected context
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1 +1 @@\n-old_line\n+new_line\n",
-		},
-	})
-	// The result depends on whether the patch can match the existing content
-	// We just verify it doesn't panic and returns a valid result
-	if result == nil {
-		t.Error("Expected non-nil result")
-	}
-}
-
-func TestExecute_Patch_ExtraOnFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("package main\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1 +1 @@\n-old\n+new\n",
-		},
-	})
-	if result.Success {
-		// If somehow successful, patches_applied should be present
-		return
-	}
-	// On failure, should have patches_applied = 0
-	if result.Extra != nil {
-		if patchesApplied, ok := result.Extra["patches_applied"]; ok {
-			if p, ok := patchesApplied.(int); ok && p != 0 {
-				t.Errorf("Expected 0 patches applied on failure, got %d", p)
-			}
-		}
-	}
-}
-
-func TestExecute_Patch_Rollback(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	originalContent := "func old() {}\nfunc main() {}\n"
-	os.WriteFile(testFile, []byte(originalContent), 0644)
-
-	te := NewToolExecutor()
-	// Patch that will fail dry-run because context doesn't match (first line is wrong)
-	_ = te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1,2 +1,2 @@\n-wrong context line here\n+new line content\n func main() {}\n",
-		},
-	})
-	// File should still contain original content since patch failed
-	content, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read patched file: %v", err)
-	}
-	if string(content) != originalContent {
-		t.Errorf("Expected file to contain original content after failed patch.\nOriginal: %q\nGot:      %q", originalContent, string(content))
-	}
-}
-
-func TestExecute_Patch_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(testFile, []byte("func main() {\n    oldFunc()\n}\n"), 0644)
-
-	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": testFile,
-			"diff": "--- a/test.go\n+++ b/test.go\n@@ -1,3 +1,3 @@\n func main() {\n-    oldFunc()\n+    newFunc()\n }\n",
-		},
-	})
-	if !result.Success {
-		t.Fatalf("Expected patch to succeed, got: %s", result.Error)
-	}
-	content, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read patched file: %v", err)
-	}
-	if !strings.Contains(string(content), "newFunc()") {
-		t.Errorf("Expected patched file to contain 'newFunc()', got: %s", string(content))
-	}
-}
-
 func TestToolExecutor_Stats(t *testing.T) {
 	te := NewToolExecutor()
 
@@ -1335,26 +1129,6 @@ func TestToolExecutor_ReadOnly_ReadFileAllowed(t *testing.T) {
 	}
 }
 
-func TestToolExecutor_ReadOnly_PatchBlocked(t *testing.T) {
-	te := NewToolExecutor()
-	te.SetReadOnly(true)
-
-	result := te.Execute(&ToolCall{
-		Name: "patch",
-		Parameters: map[string]interface{}{
-			"path": "/tmp/test.txt",
-			"diff": "--- a/test\n+++ b/test\n@@ -1 +1 @@\n-old\n+new\n",
-		},
-	})
-
-	if result.Success {
-		t.Error("Expected patch to fail in read-only mode")
-	}
-	if !strings.Contains(result.Error, "not available in read-only mode") {
-		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
-	}
-}
-
 func TestToolExecutor_ReadOnly_InsertLinesBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
@@ -1493,7 +1267,7 @@ func TestIsReadOnlyTool(t *testing.T) {
 	}
 
 	// Test blocked tools
-	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text"}
+	blockedTools := []string{"bash", "write_file", "insert_lines", "replace_text"}
 	for _, tool := range blockedTools {
 		if isReadOnlyTool(tool) {
 			t.Errorf("Expected isReadOnlyTool('%s') to return false", tool)
@@ -2540,7 +2314,7 @@ func TestIsReadOnlyTool_NewTools(t *testing.T) {
 	}
 
 	// Test that they're not in the blocked list
-	blockedTools := []string{"bash", "write_file", "patch", "insert_lines", "replace_text"}
+	blockedTools := []string{"bash", "write_file", "insert_lines", "replace_text"}
 	for _, tool := range blockedTools {
 		if isReadOnlyTool(tool) {
 			t.Errorf("Expected isReadOnlyTool('%s') to return false", tool)

@@ -690,12 +690,6 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
-	case "patch":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Patching] file: %s%s\n", ColorCyan, path, ColorReset)
 	case "list_files":
 		path := ""
 		if p, ok := params["path"].(string); ok {
@@ -727,6 +721,15 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			commit = p
 		}
 		msg = fmt.Sprintf("\n%s[Viewing] commit: %s%s\n", ColorCyan, commit, ColorReset)
+	case "git_diff":
+		commit1, commit2 := "", ""
+		if p, ok := params["commit1"].(string); ok {
+			commit1 = p
+		}
+		if p, ok := params["commit2"].(string); ok {
+			commit2 = p
+		}
+		msg = fmt.Sprintf("\n%s[Diffing] %s vs %s%s\n", ColorCyan, commit1, commit2, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -822,18 +825,24 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				}
 			}
 			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
-		case "patch":
-			hunks := 0
-			if h, ok := result.Extra["patches_applied"].(int); ok {
-				hunks = h
-			}
-			return fmt.Sprintf("%s[Success] applied %d hunk(s)%s\n", ColorGreen, hunks, ColorReset)
 		case "list_files":
 			entries := 0
 			if e, ok := result.Extra["entriesListed"].(int); ok {
 				entries = e
 			}
 			return fmt.Sprintf("%s[Success] listed %d entries%s\n", ColorGreen, entries, ColorReset)
+		case "grep":
+			return fmt.Sprintf("%s[Success] grep completed%s\n", ColorGreen, ColorReset)
+		case "git_log":
+			return fmt.Sprintf("%s[Success] git log completed%s\n", ColorGreen, ColorReset)
+		case "git_show":
+			commit := "HEAD"
+			if c, ok := result.Extra["commit"].(string); ok && c != "" {
+				commit = c
+			}
+			return fmt.Sprintf("%s[Success] git show %s%s\n", ColorGreen, commit, ColorReset)
+		case "git_diff":
+			return fmt.Sprintf("%s[Success] git diff completed%s\n", ColorGreen, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -949,31 +958,6 @@ AVAILABLE TOOLS:
      - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
-
-7. patch
-   Description: Apply a unified diff patch to a file
-   Parameters:
-     - path (string, required): The path to the file to patch
-     - diff (string, required): Unified diff content to apply
-   How to call: Use the patch tool when you need to apply a unified diff to a file.
-   Example use case: Applying code changes, fixing bugs, updating file content
-
-8. list_files
-   Description: List files and directories in a path, similar to the ls command
-   Parameters:
-     - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
-     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)
-   How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
-   Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
-
-9. grep
-   Description: Search through file contents using grep-like pattern matching
-   Parameters:
-     - path (string, optional): Path to search (defaults to current directory if not specified)
-     - pattern (string, required): Pattern to search for (supports regex)
-     - flags (array, optional): List of grep-style flags to control output (e.g., 'i' for case insensitive, 'r' for recursive, 'n' for line numbers, 'c' for count only)
-   How to call: Use grep to find specific patterns or text within files.
-   Example use case: Finding where a function is defined, searching for error messages, locating configuration values
 
 
 TOOL CALLING BEST PRACTICES:
@@ -1234,50 +1218,6 @@ func buildTools(readOnly bool) []inference.ToolDefinition {
 				},
 			},
 		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "patch",
-				Description: "Apply a unified diff patch to a file",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "File path to patch",
-						},
-						"diff": {
-							Type:        "string",
-							Description: "Unified diff content to apply",
-						},
-					},
-					Required: []string{"path", "diff"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "list_files",
-				Description: "List files and directories in a path, similar to the ls command",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "Path to the file or directory to list (defaults to current directory if not specified)",
-						},
-						"flags": {
-							Type:        "array",
-							Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)",
-							Items: &inference.Property{
-								Type: "string",
-							},
-						},
-					},
-				},
-			},
-		},
 	}
 }
 
@@ -1349,7 +1289,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				},
 			},
 		},
-	{
+		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
 				Name:        "grep",
