@@ -484,6 +484,7 @@ func (a *Agent) shouldCompress() bool {
 }
 
 // compressContext compresses the conversation history while preserving system prompt.
+// After compression, the context is: [first_user_message, assistant_summary, ...last_3_messages...]
 func (a *Agent) compressContext(ctx context.Context) error {
 	a.mu.Lock()
 	if len(a.context) <= 2 {
@@ -491,9 +492,9 @@ func (a *Agent) compressContext(ctx context.Context) error {
 		return nil // Nothing to compress
 	}
 
-	// Keep system prompt and last few messages
+	// Keep the first user message and last few messages
 	preserveCount := 3
-	if len(a.context) <= preserveCount {
+	if len(a.context) <= preserveCount+1 {
 		a.mu.Unlock()
 		return nil
 	}
@@ -502,8 +503,11 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	copy(messages, a.context)
 	a.mu.Unlock()
 
-	// Create summary request - summarize all but system prompt and last messages
-	summaryMessages := messages[1 : len(messages)-preserveCount] // Skip system prompt, keep last messages
+	// First user message is always preserved
+	firstUserMsg := messages[0]
+
+	// Messages to summarize: everything between first user msg and last N preserved messages
+	summaryMessages := messages[1 : len(messages)-preserveCount]
 
 	// Build summary prompt
 	summaryReq := fmt.Sprintf("Summarize the following conversation history concisely, preserving key information, decisions, and results:\n\n")
@@ -519,13 +523,17 @@ func (a *Agent) compressContext(ctx context.Context) error {
 		return fmt.Errorf("failed to compress context: %w", err)
 	}
 
-	// Rebuild context: summary + preserved messages
+	// Rebuild context: first_user_message + assistant_summary + preserved messages
 	// Note: we do NOT add the system prompt here because buildMessages() in the
 	// inference client prepends it on every API call. Adding it here would cause
 	// duplicate system prompts.
 	a.mu.Lock()
-	newContext := make([]*inference.Message, 0, preserveCount+1)
-	newContext = append(newContext, &inference.Message{Role: "user", Content: "Conversation summary: " + response.Content})
+	newContext := make([]*inference.Message, 0, preserveCount+2)
+	newContext = append(newContext, firstUserMsg) // Preserve the original user prompt
+
+	// Summary is stored as an assistant message to maintain conversation flow
+	summaryContent := "Conversation summary: " + response.Content
+	newContext = append(newContext, &inference.Message{Role: "assistant", Content: summaryContent})
 
 	// Preserve the last N messages, but reorder to maintain conversation integrity.
 	// Group consecutive tool results with their preceding assistant message so

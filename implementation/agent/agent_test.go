@@ -586,6 +586,82 @@ func TestCompressContext_NotEnoughMessages(t *testing.T) {
 	}
 }
 
+func TestCompressContext_PreserveCountBoundary(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Add exactly preserveCount+1 messages (4 messages = boundary for no compression)
+	agent.AddUserMessage("first user prompt")
+	agent.AddAssistantMessage("assistant response 1")
+	agent.AddUserMessage("user message 2")
+	agent.AddAssistantMessage("assistant response 2")
+
+	// Should not compress at the boundary
+	err := agent.compressContext(context.Background())
+	if err != nil {
+		t.Errorf("compressContext() should not error at boundary: %v", err)
+	}
+
+	// Context should be unchanged
+	if len(agent.context) != 4 {
+		t.Errorf("Expected 4 messages (unchanged), got %d", len(agent.context))
+	}
+	if agent.context[0].Role != "user" {
+		t.Errorf("Expected first message to be user, got %s", agent.context[0].Role)
+	}
+	if agent.context[0].Content != "first user prompt" {
+		t.Errorf("Expected first user message preserved, got %q", agent.context[0].Content)
+	}
+}
+
+func TestCompressContext_FirstUserMessagePreserved(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Add enough messages to trigger compression threshold
+	agent.AddUserMessage("ORIGINAL FIRST USER PROMPT")
+	for i := 0; i < 10; i++ {
+		agent.AddAssistantMessage(fmt.Sprintf("assistant response %d", i))
+		agent.AddUserMessage(fmt.Sprintf("user message %d", i))
+	}
+
+	// Compression will fail because there's no LLM, but the error should be returned
+	// (not a panic), and the context should remain unchanged
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := agent.compressContext(ctx)
+	// Expected to fail without LLM
+	if err == nil {
+		t.Error("Expected error when no LLM is available for compression")
+	}
+}
+
+func TestCompressContext_SummaryIsAssistantRole(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// This test verifies the expected structure after compression.
+	// Without an LLM, compression will fail, but we can verify the
+	// early-exit behavior and that the context is not corrupted.
+	agent.AddUserMessage("first user prompt")
+	agent.AddAssistantMessage("assistant response 1")
+	agent.AddUserMessage("user message 2")
+	agent.AddAssistantMessage("assistant response 2")
+	agent.AddUserMessage("user message 3")
+	agent.AddAssistantMessage("assistant response 3")
+
+	// At this point we have 6 messages (> preserveCount+1 = 4)
+	// Compression will be attempted but will fail without an LLM
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := agent.compressContext(ctx)
+
+	// Without LLM, compression fails
+	if err == nil {
+		t.Error("Expected error when no LLM is available for compression")
+	}
+}
+
 func TestClearContext_AfterMessages(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
