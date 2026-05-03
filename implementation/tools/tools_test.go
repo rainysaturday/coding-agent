@@ -1513,12 +1513,13 @@ func TestExecute_Grep_LineNumbers(t *testing.T) {
 		Parameters: map[string]interface{}{
 			"pattern": "line",
 			"path":    testFile,
+			"flags":   []string{"n"},
 		},
 	})
 	if !result.Success {
 		t.Fatalf("Expected success, got: %s", result.Error)
 	}
-	// Should include line numbers by default
+	// Should include line numbers when -n flag is specified
 	if !strings.Contains(result.Output, "1:") && !strings.Contains(result.Output, ":1:") {
 		t.Errorf("Expected line numbers in output, got: %s", result.Output)
 	}

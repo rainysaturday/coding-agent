@@ -281,8 +281,10 @@ func redactSensitiveData(content string) string {
 		{`"private[_-]?key"\s*:\s*"[^"]+"`, `"private_key": "[REDACTED]"`},
 		// Sk- prefixed keys (OpenAI style)
 		{`sk-[a-zA-Z0-9]{20,}`, "[REDACTED_API_KEY]"},
-		// Generic long alphanumeric strings that look like keys
-		{`\b[a-zA-Z0-9]{32,}\b`, "[REDACTED]"},
+		// Generic long alphanumeric strings that look like API keys or tokens
+		// Avoid matching common patterns like file paths, URLs, or short identifiers
+		// Only match strings that are very long (40+ chars) to reduce false positives
+		{`\b[a-zA-Z0-9]{40,}\b`, "[REDACTED_LONG_STRING]"},
 	}
 
 	result := content

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/coding-agent/harness/agent"
 	"github.com/coding-agent/harness/config"
 )
@@ -26,6 +28,8 @@ type TUI struct {
 	streamBuffer   strings.Builder
 	contextSize    int
 	maxContextSize int
+	inputLine      string // Current input line buffer (shared with history navigation)
+	currentInput   string // Stores typed input when navigating to history
 }
 
 // StreamingContentType represents the type of content being streamed.
@@ -51,6 +55,8 @@ func NewTUI(cfg *config.Config) *TUI {
 		history:        make([]string, 0),
 		historyIndex:   -1,
 		maxHistory:     maxHistory,
+		inputLine:      "",
+		currentInput:   "",
 		contextSize:    0,
 		maxContextSize: cfg.ContextSize,
 	}
@@ -68,6 +74,11 @@ func (t *TUI) Prompt() (string, error) {
 
 	// Display prompt
 	fmt.Printf("> ")
+
+	// Reset input buffer for new input
+	t.mu.Lock()
+	t.inputLine = ""
+	t.mu.Unlock()
 
 	// Read input with history navigation support
 	input, err := t.readLineWithHistory()
@@ -89,62 +100,105 @@ func (t *TUI) Prompt() (string, error) {
 	return input, nil
 }
 
-// readLineWithHistory reads a line with Ctrl+P/Ctrl+N history navigation.
-// Uses ReadString to read the full line at once, preventing character echo issues.
-// In canonical mode, the terminal handles echoing, so we just need to process the input.
+// readLineWithHistory reads a line with arrow key and Ctrl+P/N history navigation.
+// Uses raw mode to capture individual characters and escape sequences.
 func (t *TUI) readLineWithHistory() (string, error) {
-	reader := bufio.NewReader(os.Stdin)
-	var line []byte
+	fd := int(os.Stdin.Fd())
 
-	for {
-		// Read the full line (blocks until Enter is pressed)
+	// Save current terminal state
+	oldState, err := term.GetState(fd)
+	if err != nil {
+		// Fallback to buffered reading if raw mode is not available
+		reader := bufio.NewReader(os.Stdin)
 		input, err := reader.ReadString('\n')
 		if err != nil {
-			return string(line), err
+			return "", err
 		}
+		return strings.TrimRight(input, "\r\n"), nil
+	}
+	defer term.Restore(fd, oldState)
 
-		// Remove trailing newline/carriage return
-		input = strings.TrimRight(input, "\r\n")
+	// Enter raw mode
+	newState, err := term.MakeRaw(fd)
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(fd, newState)
 
-		// Handle empty input (just Enter pressed)
-		if input == "" {
-			fmt.Println()
-			return string(line), nil
+	for {
+		// Read a single byte
+		var buf [1]byte
+		_, err := os.Stdin.Read(buf[:])
+		if err != nil {
+			return t.inputLine, err
 		}
+		b := buf[0]
 
-		// Check if this is a control character sequence (single character)
-		if len(input) == 1 {
-			switch input[0] {
-			case 3: // Ctrl+C
-				t.mu.Lock()
-				t.cancelled = true
-				t.mu.Unlock()
-				fmt.Println("\n[Cancelled]")
-				return "", fmt.Errorf("cancelled")
-			case 16: // Ctrl+P - Previous history
-				t.handleHistoryUp()
-				continue // Continue to read next input
-			case 14: // Ctrl+N - Next history
-				t.handleHistoryDown()
-				continue // Continue to read next input
-			case 127, 8: // Backspace/Delete
-				if len(line) > 0 {
-					line = line[:len(line)-1]
-					fmt.Print("\b \b")
+		// Handle escape sequences (arrow keys start with ESC = 0x1b)
+		if b == 0x1b {
+			// Read next two bytes for escape sequence
+			var seq [2]byte
+			_, err1 := os.Stdin.Read(seq[0:1])
+			if err1 == nil {
+				_, err2 := os.Stdin.Read(seq[1:2])
+				_ = err2
+				if seq[0] == '[' {
+					switch seq[1] {
+					case 'A': // Up arrow
+						t.handleHistoryUp()
+						continue
+					case 'B': // Down arrow
+						t.handleHistoryDown()
+						continue
+					}
 				}
-				continue
 			}
-		}
-
-		// Handle escape sequences (arrow keys, etc.) - ignore them since we use Ctrl+P/N
-		if len(input) > 0 && input[0] == 27 { // ESC
+			// Not a recognized escape sequence, treat as regular characters
+			t.inputLine += string(b)
+			t.inputLine += string(seq[0])
+			t.inputLine += string(seq[1])
+			os.Stdout.Write([]byte{b, seq[0], seq[1]})
 			continue
 		}
 
-		// Regular text input - append to line and return
-		// Note: Terminal already echoed the characters in canonical mode
-		line = append(line, []byte(input)...)
-		return string(line), nil
+		// Handle control characters
+		switch b {
+		case 3: // Ctrl+C
+			t.mu.Lock()
+			t.cancelled = true
+			t.mu.Unlock()
+			fmt.Println("\n[Cancelled]")
+			return "", fmt.Errorf("cancelled")
+		case 16: // Ctrl+P - Previous history
+			t.handleHistoryUp()
+			continue
+		case 14: // Ctrl+N - Next history
+			t.handleHistoryDown()
+			continue
+		case 13: // Enter/Carriage Return
+			fmt.Println()
+			return t.inputLine, nil
+		case 127, 8: // Backspace/Delete
+			if len(t.inputLine) > 0 {
+				t.inputLine = t.inputLine[:len(t.inputLine)-1]
+				fmt.Print("\b \b")
+			}
+			continue
+		case 4: // Ctrl+D - End of input
+			if len(t.inputLine) == 0 {
+				fmt.Println("\nGoodbye!")
+				return "", fmt.Errorf("EOF")
+			}
+			// If there's text, treat as Enter
+			fmt.Println()
+			return t.inputLine, nil
+		default:
+			// Regular printable character
+			if b >= 32 && b < 127 || b >= 0x80 {
+				t.inputLine += string(b)
+				os.Stdout.Write([]byte{b})
+			}
+		}
 	}
 }
 
@@ -157,15 +211,22 @@ func (t *TUI) handleHistoryUp() {
 		return
 	}
 
+	// Save current typed input when first entering history mode
+	if t.historyIndex == -1 {
+		t.currentInput = t.inputLine
+	}
+
 	if t.historyIndex == -1 {
 		t.historyIndex = 0
 	} else if t.historyIndex < len(t.history)-1 {
 		t.historyIndex++
 	}
 
-	// Clear line and display history entry
-	fmt.Print("\r\033[K> ")
+	// Clear entire line and set input to history entry
+	t.inputLine = ""
+	fmt.Print("\r\033[2K> ")
 	if t.historyIndex < len(t.history) {
+		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
 	}
 }
@@ -181,10 +242,16 @@ func (t *TUI) handleHistoryDown() {
 
 	if t.historyIndex > 0 {
 		t.historyIndex--
-		fmt.Print("\r\033[K> ")
+		fmt.Print("\r\033[2K> ")
+		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
 	} else {
-		fmt.Print("\r\033[K> ")
+		// Exiting history mode - restore the current typed input
+		fmt.Print("\r\033[2K> ")
+		t.inputLine = t.currentInput
+		if t.currentInput != "" {
+			fmt.Print(t.currentInput)
+		}
 		t.historyIndex = -1
 	}
 }

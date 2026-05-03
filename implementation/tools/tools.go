@@ -226,7 +226,7 @@ func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResu
 		Output:  string(content),
 		Path:    path,
 		Extra: map[string]interface{}{
-			"linesRead":     len(strings.Split(string(content), "\n")),
+			"linesRead":     countLines(string(content)),
 			"contentLength": len(content),
 		},
 	}
@@ -479,7 +479,7 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 		}
 	}
 
-	if strings.TrimSpace(searchText) == "" {
+	if searchText == "" {
 		return &ToolResult{
 			Success: false,
 			Error:   "search text cannot be empty",
@@ -845,6 +845,21 @@ func humanReadableSize(size int64) string {
 	}
 }
 
+// countLines counts the number of lines in text.
+// A line is defined as text terminated by a newline character.
+// An empty string has 0 lines. Text without a trailing newline still counts as a line.
+func countLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	// Count newlines; if the text doesn't end with a newline, add one more
+	count := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		count++
+	}
+	return count
+}
+
 // formatFileError formats a file error into a user-friendly message.
 func formatFileError(err error, path string) string {
 	if os.IsNotExist(err) {
@@ -890,7 +905,7 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 		"i": false, // case-insensitive
 		"r": false, // recursive
 		"c": false, // count only
-		"n": true,  // line numbers (default true)
+		"n": false, // line numbers (default false per requirement 034)
 		"v": false, // invert match
 		"l": false, // filenames only
 	}
@@ -1187,12 +1202,7 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 	// Build git log command
 	args := []string{"log", fmt.Sprintf("--max-count=%d", count)}
 
-	// Add path limit if specified
-	if path != "." {
-		args = append(args, "--", path)
-	}
-
-	// Add format flags based on options
+	// Add format flags based on options (must come before reference and path)
 	for _, flag := range flags {
 		switch flag {
 		case "s":
@@ -1209,6 +1219,16 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 			args = append(args, "--oneline")
 		case "shortstat":
 			args = append(args, "--shortstat")
+		case "follow":
+			args = append(args, "--follow")
+		case "grep":
+			args = append(args, "--grep="+reference)
+		case "decorate":
+			args = append(args, "--decorate")
+		case "graph":
+			args = append(args, "--graph")
+		case "first-parent":
+			args = append(args, "--first-parent")
 		}
 	}
 
@@ -1217,7 +1237,7 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 		args = append(args, reference)
 	}
 
-	// Execute git log
+	// Execute git log in the specified directory (repo root)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
@@ -1324,15 +1344,18 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 			args = append(args, "--numstat")
 		case "oneline":
 			args = append(args, "--oneline")
+		case "no-patch":
+			args = append(args, "--no-patch")
+		case "summary":
+			args = append(args, "--summary")
+		case "r":
+			args = append(args, "-C")
+		case "M":
+			args = append(args, "--find-copies")
 		}
 	}
 
-	// Add path limit after commit ref (git show <commit> -- <path>)
-	if path != "." {
-		args = append(args, "--", path)
-	}
-
-	// Execute git show
+	// Execute git show in the specified directory (repo root or subdirectory)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
@@ -1400,14 +1423,26 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		}
 	}
 
-	commit1 := ""
-	if c, ok := params["commit1"].(string); ok && c != "" {
-		commit1 = c
+	reference1 := ""
+	if c, ok := params["reference1"].(string); ok && c != "" {
+		reference1 = c
+	}
+	// Also accept "commit1" for backwards compatibility
+	if reference1 == "" {
+		if c, ok := params["commit1"].(string); ok && c != "" {
+			reference1 = c
+		}
 	}
 
-	commit2 := ""
-	if c, ok := params["commit2"].(string); ok && c != "" {
-		commit2 = c
+	reference2 := ""
+	if c, ok := params["reference2"].(string); ok && c != "" {
+		reference2 = c
+	}
+	// Also accept "commit2" for backwards compatibility
+	if reference2 == "" {
+		if c, ok := params["commit2"].(string); ok && c != "" {
+			reference2 = c
+		}
 	}
 
 	// Parse flags
@@ -1452,13 +1487,19 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		case "compact-summary":
 			args = append(args, "--compact-summary")
 		case "ignore-space-at-eol", "ignore-space-at-eol=":
-			args = append(args, "-w")
+			args = append(args, "--ignore-space-at-eol")
 		case "ignore-space-change":
 			args = append(args, "-b")
 		case "ignore-all-space":
 			args = append(args, "-w")
 		case "unified", "unified=":
 			args = append(args, "--unified=3")
+		case "raw":
+			args = append(args, "--raw")
+		case "r":
+			args = append(args, "-C")
+		case "M":
+			args = append(args, "--find-copies")
 		case "patience":
 			args = append(args, "--patience")
 		case "minimal":
@@ -1466,27 +1507,22 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		}
 	}
 
-	// Handle commit1 and commit2
-	if commit1 != "" && commit2 != "" {
+	// Handle reference1 and reference2
+	if reference1 != "" && reference2 != "" {
 		// Diff between two commits/refs
-		args = append(args, commit1, commit2)
-	} else if commit1 != "" {
+		args = append(args, reference1, reference2)
+	} else if reference1 != "" {
 		// Diff between commit and working tree (or index)
-		args = append(args, commit1)
+		args = append(args, reference1)
 	} else {
 		// Default: diff working tree against index
-		if commit2 != "" {
+		if reference2 != "" {
 			// Diff index against a commit
-			args = append(args, commit2)
+			args = append(args, reference2)
 		}
 	}
 
-	// Add path limit after the commits (git diff <commit1> <commit2> -- <path>)
-	if path != "." {
-		args = append(args, "--", path)
-	}
-
-	// Execute git diff
+	// Execute git diff in the specified directory (repo root)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
@@ -1521,10 +1557,10 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		Success: true,
 		Output:  resultStr,
 		Extra: map[string]interface{}{
-			"path":      path,
-			"commit1":   commit1,
-			"commit2":   commit2,
-			"flags":     flags,
+			"path":        path,
+			"reference1":  reference1,
+			"reference2":  reference2,
+			"flags":       flags,
 		},
 	}
 }

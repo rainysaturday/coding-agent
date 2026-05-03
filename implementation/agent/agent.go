@@ -251,6 +251,11 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// We only estimate deltas for new messages added after this response (e.g., tool results).
 		a.lastTotalTokens = response.TokenUsage
 
+		// Reset tool result tracking since the API response already accounts for
+		// all messages currently in context. Keeping stale indices would cause
+		// context size to be overestimated on subsequent calls.
+		a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+
 		// Report context size to TUI with real token count (while holding lock)
 		a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
 		a.mu.Unlock()
@@ -273,8 +278,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			// Execute tool calls
 			for _, tc := range response.ToolCalls {
 				// Stream tool call status to user
-				// In streaming mode, the tool call notification was already sent during inference
-				// So we only need to stream the execution status
+				// In streaming mode, the inference client already sent "[Tool Call] X" notification.
+				// We send "[Running] X" here with parameter details (e.g., the command being executed).
 				streamStatus(tc.Name, tc.Parameters, a.streamCallback)
 
 				step := Step{
@@ -505,6 +510,17 @@ func (a *Agent) compressContext(ctx context.Context) error {
 
 	// First user message is always preserved
 	firstUserMsg := messages[0]
+	// Ensure we actually have a user message as the first message.
+	// If the first message is not a user message (e.g., assistant added programmatically),
+	// find the first user message or use the first message as fallback.
+	if firstUserMsg.Role != "user" {
+		for _, msg := range messages {
+			if msg.Role == "user" {
+				firstUserMsg = msg
+				break
+			}
+		}
+	}
 
 	// Messages to summarize: everything between first user msg and last N preserved messages
 	summaryMessages := messages[1 : len(messages)-preserveCount]
@@ -730,14 +746,24 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		}
 		msg = fmt.Sprintf("\n%s[Viewing] commit: %s%s\n", ColorCyan, commit, ColorReset)
 	case "git_diff":
-		commit1, commit2 := "", ""
-		if p, ok := params["commit1"].(string); ok {
-			commit1 = p
+		ref1, ref2 := "", ""
+		if p, ok := params["reference1"].(string); ok {
+			ref1 = p
 		}
-		if p, ok := params["commit2"].(string); ok {
-			commit2 = p
+		if ref1 == "" {
+			if p, ok := params["commit1"].(string); ok {
+				ref1 = p
+			}
 		}
-		msg = fmt.Sprintf("\n%s[Diffing] %s vs %s%s\n", ColorCyan, commit1, commit2, ColorReset)
+		if p, ok := params["reference2"].(string); ok {
+			ref2 = p
+		}
+		if ref2 == "" {
+			if p, ok := params["commit2"].(string); ok {
+				ref2 = p
+			}
+		}
+		msg = fmt.Sprintf("\n%s[Diffing] %s vs %s%s\n", ColorCyan, ref1, ref2, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -1067,8 +1093,8 @@ AVAILABLE TOOLS:
     Description: Show changes between commits, commit and working tree, etc.
     Parameters:
       - path (string, optional): Path to the git repository (defaults to current directory)
-      - commit1 (string, optional): First commit/branch/revision for the diff
-      - commit2 (string, optional): Second commit/branch/revision for the diff
+      - reference1 (string, optional): First git reference for comparison (commit hash, branch, tag; omit for working tree)
+      - reference2 (string, optional): Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)
       - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
     How to call: Use git_diff to compare different versions of files, branches, or commits.
     Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree
@@ -1397,13 +1423,13 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 							Type:        "string",
 							Description: "Path to the git repository (defaults to current directory)",
 						},
-						"commit1": {
+						"reference1": {
 							Type:        "string",
-							Description: "First commit/branch/revision for the diff",
+							Description: "First git reference for comparison (commit hash, branch, tag; omit for working tree)",
 						},
-						"commit2": {
+						"reference2": {
 							Type:        "string",
-							Description: "Second commit/branch/revision for the diff",
+							Description: "Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)",
 						},
 						"flags": {
 							Type:        "array",

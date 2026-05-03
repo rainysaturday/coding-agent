@@ -304,7 +304,7 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 				if ic.isCopilotEndpoint() {
 					errorMsg += "\nEnsure your GITHUB_TOKEN or --api-key is a valid GitHub Copilot token.\nGenerate one at: https://github.com/settings/tokens"
 				}
-				return nil, fmt.Errorf(errorMsg)
+				return nil, fmt.Errorf("%s", errorMsg)
 			}
 
 			// Handle bad request errors with Copilot-specific guidance
@@ -315,7 +315,7 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 						errorMsg += "\nhint: api.githubcopilot.com does not accept Personal Access Tokens (github_pat). Use a Copilot user token (ghu_) for this endpoint.\nAlternatively switch to CODING_AGENT_API_ENDPOINT=https://models.github.ai when using PAT/OAuth tokens"
 					}
 				}
-				return nil, fmt.Errorf(errorMsg)
+				return nil, fmt.Errorf("%s", errorMsg)
 			}
 
 			// Retry on server errors (5xx), not client errors (4xx)
@@ -353,8 +353,16 @@ func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt strin
 		})
 	}
 
-	// Add conversation messages
-	result = append(result, messages...)
+	// Add conversation messages with normalized tool call types
+	for _, msg := range messages {
+		normalized := *msg
+		for _, tc := range msg.ToolCalls {
+			if tc.Type == "" {
+				tc.Type = "function"
+			}
+		}
+		result = append(result, &normalized)
+	}
 
 	return result
 }
