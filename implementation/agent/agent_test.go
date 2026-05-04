@@ -314,51 +314,6 @@ func TestSetBuildVersion(t *testing.T) {
 	}
 }
 
-func TestFormatResult(t *testing.T) {
-	tests := []struct {
-		name     string
-		result   *tools.ToolResult
-		expected string
-	}{
-		{
-			name: "extra message",
-			result: &tools.ToolResult{
-				Success: true,
-				Output:  "some output",
-				Extra: map[string]interface{}{
-					"message": "custom message",
-				},
-			},
-			expected: "custom message",
-		},
-		{
-			name: "no extra, short output",
-			result: &tools.ToolResult{
-				Success: true,
-				Output:  "line1\nline2\nline3",
-			},
-			expected: "line1\nline2\nline3",
-		},
-		{
-			name: "no extra, long output truncation",
-			result: &tools.ToolResult{
-				Success: true,
-				Output:  "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11\nl12\n",
-			},
-			expected: "... [output truncated]",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatResult(tt.result)
-			if !strings.Contains(result, tt.expected) {
-				t.Errorf("formatResult() = %q, expected to contain %q", result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestFormatToolStatus_Success(t *testing.T) {
 	tests := []struct {
 		name     string

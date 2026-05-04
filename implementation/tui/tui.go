@@ -13,6 +13,7 @@ import (
 
 	"github.com/coding-agent/harness/agent"
 	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/inference"
 )
 
 // TUI represents the terminal user interface.
@@ -31,14 +32,6 @@ type TUI struct {
 	inputLine      string // Current input line buffer (shared with history navigation)
 	currentInput   string // Stores typed input when navigating to history
 }
-
-// StreamingContentType represents the type of content being streamed.
-type StreamingContentType int
-
-const (
-	StreamingContentTypeNormal StreamingContentType = iota
-	StreamingContentTypeReasoning
-)
 
 // NewTUI creates a new TUI instance.
 func NewTUI(cfg *config.Config) *TUI {
@@ -273,11 +266,11 @@ func (t *TUI) AddOutputf(format string, args ...interface{}) {
 // StreamChunk outputs a chunk of streaming text immediately.
 // This is the legacy method that defaults to normal content type.
 func (t *TUI) StreamChunk(text string) {
-	t.StreamChunkWithType(text, StreamingContentTypeNormal)
+	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
 }
 
 // StreamChunkWithType outputs a chunk of streaming text with a specific content type.
-func (t *TUI) StreamChunkWithType(text string, contentType StreamingContentType) {
+func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingContentType) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -287,7 +280,7 @@ func (t *TUI) StreamChunkWithType(text string, contentType StreamingContentType)
 	// Apply appropriate color based on content type
 	var color string
 	switch contentType {
-	case StreamingContentTypeReasoning:
+	case inference.StreamingContentTypeReasoning:
 		color = ColorDim
 	default:
 		color = ColorReset
@@ -303,12 +296,12 @@ func (t *TUI) StreamChunkWithType(text string, contentType StreamingContentType)
 
 // StreamReasoningChunk streams reasoning/thinking content with dim color.
 func (t *TUI) StreamReasoningChunk(text string) {
-	t.StreamChunkWithType(text, StreamingContentTypeReasoning)
+	t.StreamChunkWithType(text, inference.StreamingContentTypeReasoning)
 }
 
 // StreamNormalChunk streams regular content with normal color.
 func (t *TUI) StreamNormalChunk(text string) {
-	t.StreamChunkWithType(text, StreamingContentTypeNormal)
+	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
 }
 
 // StreamEnd finalizes a streaming session.

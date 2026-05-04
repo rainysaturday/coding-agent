@@ -234,7 +234,7 @@ func TestStreamChunk_WithType_Normal(t *testing.T) {
 	tui := NewTUI(cfg)
 
 	tui.StartStream()
-	tui.StreamChunkWithType("normal text", StreamingContentTypeNormal)
+	tui.StreamChunkWithType("normal text", inference.StreamingContentTypeNormal)
 	tui.StreamEnd()
 }
 
@@ -243,7 +243,7 @@ func TestStreamChunk_WithType_Reasoning(t *testing.T) {
 	tui := NewTUI(cfg)
 
 	tui.StartStream()
-	tui.StreamChunkWithType("reasoning text", StreamingContentTypeReasoning)
+	tui.StreamChunkWithType("reasoning text", inference.StreamingContentTypeReasoning)
 	tui.StreamEnd()
 }
 
@@ -611,15 +611,7 @@ func TestTUI_NavigateHistory_BeforeAdding(t *testing.T) {
 }
 
 func TestStreamingChunk_ContentTypeValues(t *testing.T) {
-	// Verify the tui package constants match expected values
-	if StreamingContentTypeNormal != 0 {
-		t.Errorf("Expected StreamingContentTypeNormal = 0, got %d", StreamingContentTypeNormal)
-	}
-	if StreamingContentTypeReasoning != 1 {
-		t.Errorf("Expected StreamingContentTypeReasoning = 1, got %d", StreamingContentTypeReasoning)
-	}
-
-	// Verify inference package constants have same values
+	// Verify inference package constants have expected values
 	if inference.StreamingContentTypeNormal != 0 {
 		t.Errorf("Expected inference.StreamingContentTypeNormal = 0, got %d", inference.StreamingContentTypeNormal)
 	}
@@ -1160,8 +1152,8 @@ func TestTUI_StreamChunk_NilContent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
 
-	tui.StreamChunkWithType("", StreamingContentTypeNormal)
-	tui.StreamChunkWithType("", StreamingContentTypeReasoning)
+	tui.StreamChunkWithType("", inference.StreamingContentTypeNormal)
+	tui.StreamChunkWithType("", inference.StreamingContentTypeReasoning)
 }
 
 func TestTUI_ClearHistory_NoHistory(t *testing.T) {
@@ -1311,8 +1303,8 @@ func TestTUI_StreamChunkWithType_NilContent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
 
-	tui.StreamChunkWithType("", StreamingContentTypeNormal)
-	tui.StreamChunkWithType("", StreamingContentTypeReasoning)
+	tui.StreamChunkWithType("", inference.StreamingContentTypeNormal)
+	tui.StreamChunkWithType("", inference.StreamingContentTypeReasoning)
 }
 
 func TestTUI_ShowContextSize_NoContext(t *testing.T) {

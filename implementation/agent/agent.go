@@ -624,24 +624,6 @@ func (a *Agent) groupAssistantToolMessages(messages []*inference.Message) []*inf
 	return result
 }
 
-// formatResult formats a tool result for display with truncation.
-func formatResult(result *tools.ToolResult) string {
-	if result.Extra != nil {
-		if msg, ok := result.Extra["message"].(string); ok {
-			return msg
-		}
-	}
-
-	// Truncate output if too long (max 10 lines)
-	output := result.Output
-	lines := strings.Split(output, "\n")
-	if len(lines) > 10 {
-		lines = lines[:10]
-		output = strings.Join(lines, "\n") + "\n... [output truncated]"
-	}
-	return output
-}
-
 // ANSI color codes for tool feedback
 const (
 	ColorReset  = "\033[0m"
