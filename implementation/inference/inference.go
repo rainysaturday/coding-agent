@@ -541,9 +541,23 @@ CacheN       int `json:"cache_n"`
 					if len(bufferChunk.Choices) > 0 {
 						if bufferChunk.Choices[0].Delta.Content != "" {
 							fullContent.WriteString(bufferChunk.Choices[0].Delta.Content)
+							// Stream normal content to TUI so it's visible
+							if callback != nil {
+								callback(StreamingChunk{
+									Text:        bufferChunk.Choices[0].Delta.Content,
+									ContentType: StreamingContentTypeNormal,
+								})
+							}
 						}
 						if bufferChunk.Choices[0].Delta.Reasoning != "" {
 							reasoningContent.WriteString(bufferChunk.Choices[0].Delta.Reasoning)
+							// Stream reasoning content to TUI with dim color for visibility
+							if callback != nil {
+								callback(StreamingChunk{
+									Text:        bufferChunk.Choices[0].Delta.Reasoning,
+									ContentType: StreamingContentTypeReasoning,
+								})
+							}
 						}
 						if len(bufferChunk.Choices[0].Delta.ToolCalls) > 0 {
 							for _, deltaTC := range bufferChunk.Choices[0].Delta.ToolCalls {
