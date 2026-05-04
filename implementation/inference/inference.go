@@ -356,7 +356,15 @@ func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt strin
 	// Add conversation messages with normalized tool call types
 	for _, msg := range messages {
 		normalized := *msg
-		for _, tc := range msg.ToolCalls {
+		// Deep-copy ToolCalls so we can normalize types without mutating the original
+		if len(msg.ToolCalls) > 0 {
+			normalized.ToolCalls = make([]*APIToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				cpy := *tc
+				normalized.ToolCalls[i] = &cpy
+			}
+		}
+		for _, tc := range normalized.ToolCalls {
 			if tc.Type == "" {
 				tc.Type = "function"
 			}
@@ -480,6 +488,93 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	// Track the last active tool call index for continuation deltas
 	lastActiveToolCallIndex := -1
 
+	// processToolCallDelta accumulates a single tool call delta into the shared list.
+	// It determines the correct index, merges fields, and notifies the callback.
+	processToolCallDelta := func(deltaTC *APIToolCall) {
+		targetIndex := -1
+
+		// 1. Try to use the index field if present
+		if deltaTC.Index != nil && *deltaTC.Index >= 0 {
+			targetIndex = *deltaTC.Index
+		}
+
+		// 2. If no index, try to find by ID
+		if targetIndex == -1 && deltaTC.ID != "" {
+			for i, tc := range toolCallsList {
+				if tc.ID == deltaTC.ID {
+					targetIndex = i
+					break
+				}
+			}
+		}
+
+		// 3. If still not found and this is a continuation delta (no ID, no name),
+		// find the first tool call with empty arguments to match it correctly
+		if targetIndex == -1 && deltaTC.ID == "" && deltaTC.Function.Name == "" && len(toolCallsList) > 0 {
+			if deltaTC.Function.Arguments != "" {
+				found := false
+				for i, tc := range toolCallsList {
+					if tc.Arguments == "" {
+						targetIndex = i
+						found = true
+						break
+					}
+				}
+				if !found {
+					targetIndex = lastActiveToolCallIndex
+					if targetIndex < 0 {
+						targetIndex = len(toolCallsList) - 1
+					}
+				}
+			}
+		}
+
+		if targetIndex == -1 {
+			// New tool call - create a new entry at the next index
+			targetIndex = len(toolCallsList)
+		}
+
+		// Ensure the slice is large enough
+		for len(toolCallsList) <= targetIndex {
+			toolCallsList = append(toolCallsList, &accumulatedToolCall{})
+		}
+
+		existing := toolCallsList[targetIndex]
+
+		// Update last active tool call index when we see a new tool call start
+		if deltaTC.ID != "" || deltaTC.Function.Name != "" {
+			lastActiveToolCallIndex = targetIndex
+		}
+
+		// Merge with existing tool call - accumulate fields
+		if deltaTC.ID != "" {
+			existing.ID = deltaTC.ID
+		}
+		// Type - normalize empty values to "function" for Copilot compatibility
+		if deltaTC.Type != "" {
+			existing.Type = deltaTC.Type
+		} else if existing.Type == "" {
+			existing.Type = "function"
+		}
+		if deltaTC.Function.Name != "" {
+			existing.Name = deltaTC.Function.Name
+		}
+		if deltaTC.Function.Arguments != "" {
+			existing.Arguments += deltaTC.Function.Arguments
+		}
+
+		// Notify about new tool call if callback is available
+		if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
+			toolName := deltaTC.Function.Name
+			notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
+			callback(StreamingChunk{
+				Text:        notification,
+				ContentType: StreamingContentTypeNormal,
+			})
+			notifiedToolCalls[targetIndex] = true
+		}
+	}
+
 	scanner := bufio.NewScanner(body)
 	var jsonBuffer strings.Builder
 	inJSON := false
@@ -559,72 +654,8 @@ CacheN       int `json:"cache_n"`
 								})
 							}
 						}
-						if len(bufferChunk.Choices[0].Delta.ToolCalls) > 0 {
-							for _, deltaTC := range bufferChunk.Choices[0].Delta.ToolCalls {
-								targetIndex := -1
-								if deltaTC.Index != nil && *deltaTC.Index >= 0 {
-									targetIndex = *deltaTC.Index
-								}
-								if targetIndex == -1 && deltaTC.ID != "" {
-									for i, tc := range toolCallsList {
-										if tc.ID == deltaTC.ID {
-											targetIndex = i
-											break
-										}
-									}
-								}
-								if targetIndex == -1 && deltaTC.ID == "" && deltaTC.Function.Name == "" && len(toolCallsList) > 0 {
-									if deltaTC.Function.Arguments != "" {
-										found := false
-										for i, tc := range toolCallsList {
-											if tc.Arguments == "" {
-												targetIndex = i
-												found = true
-												break
-											}
-										}
-										if !found {
-											targetIndex = lastActiveToolCallIndex
-											if targetIndex < 0 {
-												targetIndex = len(toolCallsList) - 1
-											}
-										}
-									}
-								}
-								if targetIndex == -1 {
-									targetIndex = len(toolCallsList)
-								}
-								for len(toolCallsList) <= targetIndex {
-									toolCallsList = append(toolCallsList, &accumulatedToolCall{})
-								}
-								existing := toolCallsList[targetIndex]
-								if deltaTC.ID != "" || deltaTC.Function.Name != "" {
-									lastActiveToolCallIndex = targetIndex
-								}
-								if deltaTC.ID != "" {
-									existing.ID = deltaTC.ID
-								}
-								if deltaTC.Type != "" {
-									existing.Type = deltaTC.Type
-								} else if existing.Type == "" {
-									existing.Type = "function"
-								}
-								if deltaTC.Function.Name != "" {
-									existing.Name = deltaTC.Function.Name
-								}
-								if deltaTC.Function.Arguments != "" {
-									existing.Arguments += deltaTC.Function.Arguments
-								}
-								if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
-									toolName := deltaTC.Function.Name
-									notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
-									callback(StreamingChunk{
-										Text:        notification,
-										ContentType: StreamingContentTypeNormal,
-									})
-									notifiedToolCalls[targetIndex] = true
-								}
-							}
+						for i := range bufferChunk.Choices[0].Delta.ToolCalls {
+							processToolCallDelta(&bufferChunk.Choices[0].Delta.ToolCalls[i])
 						}
 						if bufferChunk.Usage.TotalTokens > 0 {
 							totalTokens = bufferChunk.Usage.TotalTokens
@@ -696,104 +727,8 @@ CacheN       int `json:"cache_n"`
 			}
 
 			// Accumulate tool calls from streaming delta
-			// Tool calls come in partial chunks that need to be merged
-			// Deltas may arrive with an index field indicating which tool call they belong to
-			// or without an index (continuation of the current tool call being built)
-			if len(chunk.Choices[0].Delta.ToolCalls) > 0 {
-				for _, deltaTC := range chunk.Choices[0].Delta.ToolCalls {
-					// Determine which tool call this delta belongs to
-					// Priority: index field > ID lookup > continuation of last active tool call
-
-					targetIndex := -1
-
-					// 1. Try to use the index field if present
-					if deltaTC.Index != nil && *deltaTC.Index >= 0 {
-						targetIndex = *deltaTC.Index
-					}
-
-					// 2. If no index, try to find by ID
-					if targetIndex == -1 && deltaTC.ID != "" {
-						for i, tc := range toolCallsList {
-							if tc.ID == deltaTC.ID {
-								targetIndex = i
-								break
-							}
-						}
-					}
-
-					// 3. If still not found and this is a continuation delta (no ID, no name),
-					// find the first tool call that has empty arguments to match it correctly
-					if targetIndex == -1 && deltaTC.ID == "" && deltaTC.Function.Name == "" && len(toolCallsList) > 0 {
-						if deltaTC.Function.Arguments != "" {
-							// Find the first tool call with empty arguments to match continuation correctly
-							found := false
-							for i, tc := range toolCallsList {
-								if tc.Arguments == "" {
-									targetIndex = i
-									found = true
-									break
-								}
-							}
-							if !found {
-								targetIndex = lastActiveToolCallIndex
-								if targetIndex < 0 {
-									targetIndex = len(toolCallsList) - 1
-								}
-							}
-						}
-					}
-
-					if targetIndex == -1 {
-						// New tool call - create a new entry at the next index
-						targetIndex = len(toolCallsList)
-					}
-
-					// Ensure the slice is large enough
-					for len(toolCallsList) <= targetIndex {
-						toolCallsList = append(toolCallsList, &accumulatedToolCall{})
-					}
-
-					existing := toolCallsList[targetIndex]
-
-					// Update last active tool call index when we see a new tool call start
-					if deltaTC.ID != "" || deltaTC.Function.Name != "" {
-						lastActiveToolCallIndex = targetIndex
-					}
-
-					// Merge with existing tool call - accumulate fields
-					// ID
-					if deltaTC.ID != "" {
-						existing.ID = deltaTC.ID
-					}
-					// Type - normalize empty values to "function" for Copilot compatibility
-					// This prevents errors like: Invalid value: ''. Supported values are: 'function', 'allowed_tools', and 'custom'.
-					if deltaTC.Type != "" {
-						existing.Type = deltaTC.Type
-					} else if existing.Type == "" {
-						existing.Type = "function"
-					}
-					// Name typically comes first and doesn't change
-					if deltaTC.Function.Name != "" {
-						existing.Name = deltaTC.Function.Name
-					}
-					// Arguments are streamed as incremental JSON string fragments
-					if deltaTC.Function.Arguments != "" {
-						existing.Arguments += deltaTC.Function.Arguments
-					}
-
-					// Notify about new tool call if callback is available
-					// Only notify once per tool call (when we first see the name)
-					if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
-						toolName := deltaTC.Function.Name
-						// Stream a notification that a tool call is being made
-						notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
-						callback(StreamingChunk{
-							Text:        notification,
-							ContentType: StreamingContentTypeNormal,
-						})
-						notifiedToolCalls[targetIndex] = true
-					}
-				}
+			for i := range chunk.Choices[0].Delta.ToolCalls {
+				processToolCallDelta(&chunk.Choices[0].Delta.ToolCalls[i])
 			}
 
 			// Stream reasoning content with appropriate type
