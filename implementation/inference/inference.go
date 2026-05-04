@@ -356,7 +356,9 @@ func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt strin
 	// Add conversation messages with normalized tool call types
 	for _, msg := range messages {
 		normalized := *msg
-		// Deep-copy ToolCalls so we can normalize types without mutating the original
+		// Deep-copy ToolCalls so we can normalize types without mutating the original.
+		// IMPORTANT: if new pointer/slice fields are added to Message in the future,
+		// they must also be deep-copied here to maintain the no-mutation guarantee.
 		if len(msg.ToolCalls) > 0 {
 			normalized.ToolCalls = make([]*APIToolCall, len(msg.ToolCalls))
 			for i, tc := range msg.ToolCalls {

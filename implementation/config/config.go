@@ -281,7 +281,7 @@ func loadConfigFile(path string, cfg *Config) error {
 				cfg.ContextSize = v
 			}
 		case "streaming":
-			cfg.Streaming = value != "false" && value != "0"
+			cfg.Streaming = value == "true" || value == "1"
 		case "api_endpoint":
 			cfg.APIEndpoint = value
 		case "api_key":
@@ -306,6 +306,8 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Debug = value == "true" || value == "1"
 		case "debug_log":
 			cfg.DebugLog = value
+		case "read_only":
+			cfg.ReadOnly = value == "true" || value == "1"
 		}
 	}
 
@@ -379,7 +381,7 @@ func loadEnv(cfg *Config) {
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL
 	if cfg.APIKey == "" {
 		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
-			if isGitHubCopilotEndpoint(cfg.APIEndpoint) {
+			if strings.Contains(cfg.APIEndpoint, "githubcopilot.com") {
 				cfg.APIKey = val
 			}
 		}
@@ -405,10 +407,4 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("read timeout must be at least 10 seconds")
 	}
 	return nil
-}
-
-// isGitHubCopilotEndpoint checks if the endpoint is a GitHub Copilot URL.
-// This is used to conditionally apply Copilot-specific behavior.
-func isGitHubCopilotEndpoint(endpoint string) bool {
-	return strings.Contains(endpoint, "githubcopilot.com")
 }

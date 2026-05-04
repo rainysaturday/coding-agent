@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -773,8 +774,18 @@ func formatFileLong(info os.FileInfo, flags map[string]bool) string {
 		name += "/"
 	}
 
+	// Get actual ownership info via syscall
+	linkCount := "1"
+	owner := "?"
+	group := "?"
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		linkCount = fmt.Sprintf("%d", stat.Nlink)
+		owner = strconv.Itoa(int(stat.Uid))
+		group = strconv.Itoa(int(stat.Gid))
+	}
+
 	// Format: permissions links owner group size timestamp name
-	return fmt.Sprintf("%s  1 user  group  %s  %s  %s", permStr, sizeStr, timeStr, name)
+	return fmt.Sprintf("%s  %s  %s  %s  %s  %s  %s", permStr, linkCount, owner, group, sizeStr, timeStr, name)
 }
 
 // formatPermissions returns a Unix-style permission string.
@@ -1206,7 +1217,7 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 	for _, flag := range flags {
 		switch flag {
 		case "s":
-			args = append(args, "--pretty=format:%h (%d) %s")
+			args = append(args, "--no-patch")
 		case "m":
 			args = append(args, "--merges")
 		case "no-merges":
@@ -1222,7 +1233,17 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 		case "follow":
 			args = append(args, "--follow")
 		case "grep":
-			args = append(args, "--grep="+reference)
+			// Use dedicated grep parameter for searching commit messages
+			grepParam := ""
+			if gp, ok := params["grep"].(string); ok && gp != "" {
+				grepParam = gp
+			} else if reference != "" {
+				// Fall back to reference for backwards compatibility
+				grepParam = reference
+			}
+			if grepParam != "" {
+				args = append(args, "--grep="+grepParam)
+			}
 		case "decorate":
 			args = append(args, "--decorate")
 		case "graph":
@@ -1274,6 +1295,11 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 	resultStr := strings.TrimSpace(string(output))
 	if resultStr == "" {
 		resultStr = "No commits found."
+	}
+
+	// Truncate if excessively large (> 50KB)
+	if len(resultStr) > 50000 {
+		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
 	}
 
 	return &ToolResult{

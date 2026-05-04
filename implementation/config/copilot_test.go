@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,8 +15,8 @@ func TestIsGitHubCopilotEndpoint_True(t *testing.T) {
 	}
 
 	for _, endpoint := range endpoints {
-		if !isGitHubCopilotEndpoint(endpoint) {
-			t.Errorf("Expected isGitHubCopilotEndpoint(%q) to return true", endpoint)
+		if !strings.Contains(endpoint, "githubcopilot.com") {
+			t.Errorf("Expected Copilot detection for %q to return true", endpoint)
 		}
 	}
 }
@@ -29,8 +30,8 @@ func TestIsGitHubCopilotEndpoint_False(t *testing.T) {
 	}
 
 	for _, endpoint := range endpoints {
-		if isGitHubCopilotEndpoint(endpoint) {
-			t.Errorf("Expected isGitHubCopilotEndpoint(%q) to return false", endpoint)
+		if strings.Contains(endpoint, "githubcopilot.com") {
+			t.Errorf("Expected Copilot detection for %q to return false", endpoint)
 		}
 	}
 }

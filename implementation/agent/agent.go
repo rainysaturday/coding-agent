@@ -696,56 +696,6 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
-	case "list_files":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Listing] files in: %s%s\n", ColorCyan, path, ColorReset)
-	case "grep":
-		path := ""
-		pattern := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		if p, ok := params["pattern"].(string); ok {
-			pattern = p
-			if len(pattern) > 30 {
-				pattern = pattern[:30] + "..."
-			}
-		}
-		msg = fmt.Sprintf("\n%s[Searching] pattern '%s' in: %s%s\n", ColorCyan, pattern, path, ColorReset)
-	case "git_log":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Viewing] git log in: %s%s\n", ColorCyan, path, ColorReset)
-	case "git_show":
-		commit := "HEAD"
-		if p, ok := params["commit"].(string); ok && p != "" {
-			commit = p
-		}
-		msg = fmt.Sprintf("\n%s[Viewing] commit: %s%s\n", ColorCyan, commit, ColorReset)
-	case "git_diff":
-		ref1, ref2 := "", ""
-		if p, ok := params["reference1"].(string); ok {
-			ref1 = p
-		}
-		if ref1 == "" {
-			if p, ok := params["commit1"].(string); ok {
-				ref1 = p
-			}
-		}
-		if p, ok := params["reference2"].(string); ok {
-			ref2 = p
-		}
-		if ref2 == "" {
-			if p, ok := params["commit2"].(string); ok {
-				ref2 = p
-			}
-		}
-		msg = fmt.Sprintf("\n%s[Diffing] %s vs %s%s\n", ColorCyan, ref1, ref2, ColorReset)
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
 	}
@@ -1352,6 +1302,10 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						"count": {
 							Type:        "integer",
 							Description: "Number of commits to display (defaults to 10)",
+						},
+						"grep": {
+							Type:        "string",
+							Description: "Search commit messages for this pattern (used with '--grep' flag)",
 						},
 						"flags": {
 							Type:        "array",
