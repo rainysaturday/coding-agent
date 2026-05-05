@@ -79,6 +79,72 @@ type Result struct {
 	TokenUsage  int
 }
 
+// Exit code constants for agent execution.
+const (
+	ExitSuccess        = 0
+	ExitError          = 1
+	ExitUsageError     = 2
+	ExitAuthError      = 3
+	ExitContextLimit   = 4
+)
+
+// AuthError represents an authentication error (exit code 3).
+type AuthError struct {
+	Message string
+}
+
+func (e *AuthError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "authentication failed"
+}
+
+// ContextLimitError represents a context size limit exceeded error (exit code 4).
+type ContextLimitError struct {
+	Message string
+}
+
+func (e *ContextLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "context size limit exceeded"
+}
+
+// isAuthError checks if an error string indicates an authentication failure.
+func isAuthError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "401") ||
+		strings.Contains(msg, "403") ||
+		strings.Contains(msg, "Authorization") ||
+		strings.Contains(msg, "API key")
+}
+
+// isContextLimitError checks if an error string indicates a context size limit.
+func isContextLimitError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "context size limit") ||
+		strings.Contains(msg, "maximum context length") ||
+		strings.Contains(msg, "maximum context length exceeded") ||
+		strings.Contains(msg, "maximum context length")
+}
+
+// wrapError wraps errors with appropriate typed errors for exit codes.
+func wrapError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if isAuthError(err) {
+		return &AuthError{Message: err.Error()}
+	}
+	if isContextLimitError(err) {
+		return &ContextLimitError{Message: err.Error()}
+	}
+	return err
+}
+
 // NewAgent creates a new agent.
 func NewAgent(cfg *config.Config) *Agent {
 	// Create debug logger if enabled
@@ -172,6 +238,11 @@ func (a *Agent) GetSystemPrompt() string {
 // GetTools returns the registered tools.
 func (a *Agent) GetTools() []inference.ToolDefinition {
 	return a.inference.GetTools()
+}
+
+// GetToolExecutor returns the tool executor.
+func (a *Agent) GetToolExecutor() *tools.ToolExecutor {
+	return a.toolExecutor
 }
 
 // Run runs the agent with the given prompt.
@@ -800,15 +871,39 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 		case "grep":
 			return fmt.Sprintf("%s[Success] grep completed%s\n", ColorGreen, ColorReset)
 		case "git_log":
-			return fmt.Sprintf("%s[Success] git log completed%s\n", ColorGreen, ColorReset)
+			reference := "HEAD"
+			if r, ok := result.Extra["reference"].(string); ok && r != "" {
+				reference = r
+			}
+			count := 0
+			if c, ok := result.Extra["count"].(int); ok {
+				count = c
+			}
+			return fmt.Sprintf("%s[Success] git log: %d commits from %s%s\n", ColorGreen, count, reference, ColorReset)
 		case "git_show":
 			commit := "HEAD"
-			if c, ok := result.Extra["commit"].(string); ok && c != "" {
+			if c, ok := result.Extra["commitReference"].(string); ok && c != "" {
 				commit = c
 			}
 			return fmt.Sprintf("%s[Success] git show %s%s\n", ColorGreen, commit, ColorReset)
 		case "git_diff":
-			return fmt.Sprintf("%s[Success] git diff completed%s\n", ColorGreen, ColorReset)
+			ref1 := ""
+			if r, ok := result.Extra["reference1"].(string); ok && r != "" {
+				ref1 = r
+			}
+			ref2 := ""
+			if r, ok := result.Extra["reference2"].(string); ok && r != "" {
+				ref2 = r
+			}
+			msg := fmt.Sprintf("%s[Success] git diff", ColorGreen)
+			if ref1 != "" {
+				msg += fmt.Sprintf(" %s", ref1)
+			}
+			if ref2 != "" {
+				msg += fmt.Sprintf(" %s", ref2)
+			}
+			msg += ColorReset
+			return msg
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
@@ -990,7 +1085,7 @@ AVAILABLE TOOLS:
    Description: List files and directories in a path, similar to the ls command
    Parameters:
      - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
-     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)
+     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted, 'R' for recursive)
    How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
    Example use case: Listing directory contents with details, checking file sizes, viewing hidden files
 4. grep
@@ -1246,7 +1341,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 						"flags": {
 							Type:        "array",
-							Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted)",
+							Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted, 'R' for recursive)",
 							Items: &inference.Property{
 								Type: "string",
 							},
@@ -1273,7 +1368,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 						"flags": {
 							Type:        "array",
-							Description: "List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive)",
+							Description: "List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive, '-f' for pattern file, '-a' for all including hidden, '-c' for count, '-v' for invert match, '-l' for filenames only)",
 							Items: &inference.Property{
 								Type: "string",
 							},
@@ -1309,7 +1404,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 						"flags": {
 							Type:        "array",
-							Description: "List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')",
+							Description: "List of git log flags to control output (e.g., 's' for short format, 'm' for merges, 'no-merges', 'stat', 'patch', 'oneline', 'shortstat', 'follow', 'grep' to search commit messages, 'decorate', 'graph', 'first-parent')",
 							Items: &inference.Property{
 								Type: "string",
 							},
@@ -1337,7 +1432,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 						"flags": {
 							Type:        "array",
-							Description: "List of git show flags to control output (e.g., '--stat', '--patch', '--name-status')",
+							Description: "List of git show flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'oneline', 's' for short format, 'no-patch', 'summary', 'r' for rename detection, 'M' for copy detection)",
 							Items: &inference.Property{
 								Type: "string",
 							},
@@ -1369,7 +1464,7 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 						"flags": {
 							Type:        "array",
-							Description: "List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')",
+							Description: "List of git diff flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'color', 'summary', 'compact-summary', 'stat-width', 'ignore-space-at-eol', 'ignore-space-change', 'ignore-all-space', 'unified', 'raw', 'r' for rename detection, 'M' for copy detection, 'patience', 'minimal')",
 							Items: &inference.Property{
 								Type: "string",
 							},

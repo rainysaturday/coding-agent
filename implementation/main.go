@@ -72,7 +72,7 @@ func main() {
 		err = runOneShotMode(cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			os.Exit(exitCodeForError(err))
 		}
 		os.Exit(0)
 	}
@@ -200,6 +200,27 @@ func runOneShotMode(cfg *config.Config) error {
 	return outputResult(result, cfg, duration)
 }
 
+// exitCodeForError returns the appropriate exit code for an error.
+func exitCodeForError(err error) int {
+	if err == nil {
+		return agent.ExitSuccess
+	}
+	msg := err.Error()
+	// Check for context size limit errors
+	if strings.Contains(msg, "context size limit") ||
+		strings.Contains(msg, "maximum context length") {
+		return agent.ExitContextLimit
+	}
+	// Check for authentication errors
+	if strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "401") ||
+		strings.Contains(msg, "403") ||
+		strings.Contains(msg, "API authentication") {
+		return agent.ExitAuthError
+	}
+	return agent.ExitError
+}
+
 func loadPrompt(cfg *config.Config) (string, error) {
 	if cfg.Prompt != "" {
 		return cfg.Prompt, nil
@@ -275,7 +296,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Commands start with '/': /stats, /clear, /clear-history")
+	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only")
 	fmt.Println()
 
 	// Initialize TUI
@@ -352,10 +373,14 @@ func runInteractiveMode(cfg *config.Config) error {
 			case "clear-history":
 				tuiInstance.ClearHistory()
 				continue
+			case "read-only":
+				ag.GetToolExecutor().SetReadOnly(true)
+				fmt.Println("\n[Read-only mode enabled: write operations disabled]")
+				continue
 			default:
 				// Unknown command - show error
 				fmt.Printf("Unknown command: /%s\n", command)
-				fmt.Println("Available commands: /stats, /clear, /clear-history")
+				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only")
 				continue
 			}
 		}

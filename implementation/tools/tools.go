@@ -2,6 +2,7 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -594,6 +595,7 @@ func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolRes
 		"t": false,
 		"S": false,
 		"r": false,
+		"R": false,
 	}
 
 	if flagsParam, ok := params["flags"]; ok {
@@ -647,8 +649,138 @@ func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	// Read directory
-	entries, err := os.ReadDir(path)
+	var entries []os.DirEntry
+	var output string
+
+	// Handle recursive listing
+	if flags["R"] {
+		var allEntries []os.DirEntry
+		err = filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			// Skip .git directories
+			if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
+				if fileInfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			// Skip hidden files/dirs unless "a" flag is set
+			if !flags["a"] {
+				baseName := fileInfo.Name()
+				if strings.HasPrefix(baseName, ".") {
+					if fileInfo.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			allEntries = append(allEntries, os.DirEntry(nil)) // placeholder
+			_ = allEntries // avoid unused variable warning
+			return nil
+		})
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   formatFileError(err, path),
+			}
+		}
+
+		// Use filepath.Walk to get entries with relative paths
+		var resultEntries []walkEntry
+		walkErr := filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			// Skip .git directories
+			if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
+				if fileInfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			// Skip hidden files/dirs unless "a" flag is set
+			if !flags["a"] {
+				baseName := fileInfo.Name()
+				if strings.HasPrefix(baseName, ".") {
+					if fileInfo.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+			relPath, _ := filepath.Rel(path, filePath)
+			resultEntries = append(resultEntries, walkEntry{
+				path:     relPath,
+				isDir:    fileInfo.IsDir(),
+				info:     fileInfo,
+				modTime:  fileInfo.ModTime(),
+				fileSize: fileInfo.Size(),
+			})
+			return nil
+		})
+		if walkErr != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   formatFileError(walkErr, path),
+			}
+		}
+
+		// Sort entries
+		sort.Slice(resultEntries, func(i, j int) bool {
+			// Directories first
+			iIsDir := resultEntries[i].isDir
+			jIsDir := resultEntries[j].isDir
+			if iIsDir != jIsDir {
+				return iIsDir
+			}
+			// Then by sort criteria
+			switch {
+			case flags["t"]:
+				if flags["r"] {
+					return resultEntries[i].modTime.Before(resultEntries[j].modTime)
+				}
+				return resultEntries[i].modTime.After(resultEntries[j].modTime)
+			case flags["S"]:
+				if flags["r"] {
+					return resultEntries[i].fileSize < resultEntries[j].fileSize
+				}
+				return resultEntries[i].fileSize > resultEntries[j].fileSize
+			default:
+				if flags["r"] {
+					return resultEntries[i].path > resultEntries[j].path
+				}
+				return resultEntries[i].path < resultEntries[j].path
+			}
+		})
+
+		if flags["l"] {
+			output = formatRecursiveLongList(resultEntries, path, flags)
+		} else {
+			var names []string
+			for _, e := range resultEntries {
+				name := e.path
+				if e.isDir {
+					name += "/"
+				}
+				names = append(names, name)
+			}
+			output = strings.Join(names, "\n")
+		}
+
+		return &ToolResult{
+			Success: true,
+			Output:  output,
+			Extra: map[string]interface{}{
+				"entriesListed": len(resultEntries),
+				"path":          path,
+			},
+		}
+	}
+
+	// Read directory (non-recursive)
+	entries, err = os.ReadDir(path)
 	if err != nil {
 		return &ToolResult{
 			Success: false,
@@ -700,7 +832,6 @@ func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolRes
 	})
 
 	// Format output
-	var output string
 	if flags["l"] {
 		output = formatLongList(filtered, flags)
 	} else {
@@ -786,6 +917,87 @@ func formatFileLong(info os.FileInfo, flags map[string]bool) string {
 
 	// Format: permissions links owner group size timestamp name
 	return fmt.Sprintf("%s  %s  %s  %s  %s  %s  %s", permStr, linkCount, owner, group, sizeStr, timeStr, name)
+}
+
+// formatRecursiveLongList formats a list of walkEntries for recursive long-format output.
+func formatRecursiveLongList(entries []walkEntry, basePath string, flags map[string]bool) string {
+	var lines []string
+	for _, e := range entries {
+		// Permissions
+		permStr := formatPermissionsRecursive(e)
+
+		// Size
+		var sizeStr string
+		if flags["h"] {
+			sizeStr = humanReadableSize(e.fileSize)
+		} else {
+			sizeStr = fmt.Sprintf("%d", e.fileSize)
+		}
+
+		// Modification time
+		now := time.Now()
+		age := now.Sub(e.modTime)
+		var timeStr string
+		if age > 365*24*time.Hour {
+			timeStr = e.modTime.Format("Jan 02  2006")
+		} else {
+			timeStr = e.modTime.Format("Jan 02 15:04")
+		}
+
+		// Name (with / suffix for directories)
+		name := e.path
+		if e.isDir {
+			name += "/"
+		}
+
+		lines = append(lines, fmt.Sprintf("%s  1  ?  ?  %s  %s  %s", permStr, sizeStr, timeStr, name))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatPermissionsRecursive returns a Unix-style permission string for recursive listing.
+func formatPermissionsRecursive(e walkEntry) string {
+	mode := e.info.Mode()
+
+	var fileType byte
+	switch {
+	case mode.IsDir():
+		fileType = 'd'
+	case mode&os.ModeSymlink != 0:
+		fileType = 'l'
+	case mode.IsRegular():
+		fileType = '-'
+	default:
+		fileType = '-'
+	}
+
+	perm := mode.Perm()
+	var permStr bytes.Buffer
+	permStr.WriteByte(fileType)
+
+	for _, bit := range []struct {
+		set  string
+		clear string
+		mode os.FileMode
+	}{
+		{"r", "-", 0400},
+		{"w", "-", 0200},
+		{"x", "-", 0100},
+		{"r", "-", 0040},
+		{"w", "-", 0020},
+		{"x", "-", 0010},
+		{"r", "-", 0004},
+		{"w", "-", 0002},
+		{"x", "-", 0001},
+	} {
+		if perm&bit.mode != 0 {
+			permStr.WriteString(bit.set)
+		} else {
+			permStr.WriteString(bit.clear)
+		}
+	}
+
+	return permStr.String()
 }
 
 // formatPermissions returns a Unix-style permission string.
@@ -882,7 +1094,15 @@ func formatFileError(err error, path string) string {
 	return fmt.Sprintf("file error: %v", err)
 }
 
-// executePatch applies a unified diff patch to a file.
+// walkEntry holds a directory entry with its metadata for recursive listing.
+type walkEntry struct {
+	path     string
+	isDir    bool
+	info     os.FileInfo
+	modTime  time.Time
+	fileSize int64
+}
+
 // matchResult represents a single grep match.
 type matchResult struct {
 	filePath string
@@ -906,7 +1126,7 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 		}
 	}
 
-	// Parse parameters and flags first (flags affect regex compilation)
+	// Parse parameters and flags first (flags affect pattern handling and search)
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
@@ -916,9 +1136,11 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 		"i": false, // case-insensitive
 		"r": false, // recursive
 		"c": false, // count only
-		"n": false, // line numbers (default false per requirement 034)
+		"n": false, // line numbers
 		"v": false, // invert match
 		"l": false, // filenames only
+		"a": false, // show all files including hidden
+		"f": false, // use file as pattern source
 	}
 
 	if flagsParam, ok := params["flags"]; ok {
@@ -938,6 +1160,32 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 				}
 			}
 		}
+	}
+
+	// If "f" flag is set, use pattern as a file path containing patterns (one per line)
+	if flags["f"] {
+		patternContent, err := os.ReadFile(pattern)
+		if err != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to read pattern file: %v", err),
+			}
+		}
+		lines := strings.Split(strings.TrimSpace(string(patternContent)), "\n")
+		var escaped []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" {
+				escaped = append(escaped, regexp.QuoteMeta(trimmed))
+			}
+		}
+		if len(escaped) == 0 {
+			return &ToolResult{
+				Success: false,
+				Error:   "pattern file is empty",
+			}
+		}
+		pattern = strings.Join(escaped, "|")
 	}
 
 	// Compile the regex pattern.
@@ -1258,15 +1506,42 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 		args = append(args, reference)
 	}
 
-	// Execute git log in the specified directory (repo root)
+	// Resolve path: if it's a git repo root, use it as cmd.Dir;
+	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
+	cmdDir := path
+	subpath := ""
+	if path != "." {
+		// Check if path is itself a git repo root
+		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
+			// path is a git repo root (or . itself)
+			repoRoot := strings.TrimSpace(string(repoRootOut))
+			if repoRoot == path || repoRoot == "." {
+				cmdDir = path
+			} else {
+				// path is a subdirectory within a git repo
+				cmdDir = repoRoot
+				relPath, relErr := filepath.Rel(repoRoot, path)
+				if relErr == nil {
+					subpath = relPath
+				}
+			}
+		}
+	}
+
+	// Add subpath to limit log scope
+	if subpath != "" {
+		args = append(args, "--", subpath)
+	}
+
+	// Execute git log
 	cmd := exec.Command("git", args...)
-	cmd.Dir = path
+	cmd.Dir = cmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		gitCmd.Dir = path
+		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
@@ -1370,6 +1645,8 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 			args = append(args, "--numstat")
 		case "oneline":
 			args = append(args, "--oneline")
+		case "s":
+			args = append(args, "--oneline", "--no-patch")
 		case "no-patch":
 			args = append(args, "--no-patch")
 		case "summary":
@@ -1381,15 +1658,40 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 		}
 	}
 
-	// Execute git show in the specified directory (repo root or subdirectory)
+	// Resolve path: if it's a git repo root, use it as cmd.Dir;
+	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
+	showCmdDir := path
+	showSubpath := ""
+	if path != "." {
+		// Check if path is itself a git repo root
+		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
+			repoRoot := strings.TrimSpace(string(repoRootOut))
+			if repoRoot == path || repoRoot == "." {
+				showCmdDir = path
+			} else {
+				showCmdDir = repoRoot
+				relPath, relErr := filepath.Rel(repoRoot, path)
+				if relErr == nil {
+					showSubpath = relPath
+				}
+			}
+		}
+	}
+
+	// Add subpath to limit show scope
+	if showSubpath != "" {
+		args = append(args, "--", showSubpath)
+	}
+
+	// Execute git show
 	cmd := exec.Command("git", args...)
-	cmd.Dir = path
+	cmd.Dir = showCmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		gitCmd.Dir = path
+		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
@@ -1548,15 +1850,39 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		}
 	}
 
-	// Execute git diff in the specified directory (repo root)
+	// Resolve path: if it's a git repo root, use it as cmd.Dir;
+	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
+	diffCmdDir := path
+	diffSubpath := ""
+	if path != "." {
+		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
+			repoRoot := strings.TrimSpace(string(repoRootOut))
+			if repoRoot == path || repoRoot == "." {
+				diffCmdDir = path
+			} else {
+				diffCmdDir = repoRoot
+				relPath, relErr := filepath.Rel(repoRoot, path)
+				if relErr == nil {
+					diffSubpath = relPath
+				}
+			}
+		}
+	}
+
+	// Add subpath to limit diff scope
+	if diffSubpath != "" {
+		args = append(args, "--", diffSubpath)
+	}
+
+	// Execute git diff
 	cmd := exec.Command("git", args...)
-	cmd.Dir = path
+	cmd.Dir = diffCmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		gitCmd.Dir = path
+		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
