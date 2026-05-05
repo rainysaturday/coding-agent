@@ -154,62 +154,6 @@ Duration: 3.2s
 ================================================================================
 ```
 
-### Structured Log Format (Optional JSON)
-
-For programmatic parsing, JSON format can be enabled:
-
-```bash
-coding-agent --debug --debug-format json
-```
-
-```json
-{
-  "timestamp": "2024-01-15T10:30:00Z",
-  "session_id": "sess_abc123",
-  "version": "a1b2c3d",
-  "messages": [
-    {
-      "role": "system",
-      "content": "...",
-      "tokens": 1250
-    },
-    {
-      "role": "user",
-      "content": "Create a Go hello world program",
-      "tokens": 15
-    },
-    {
-      "role": "assistant",
-      "content": "I'll create a simple Go hello world program for you.",
-      "tokens": 50
-    },
-    {
-      "role": "tool_call",
-      "tool_id": "call_abc123",
-      "tool_name": "write_file",
-      "parameters": {
-        "path": "hello.go",
-        "content": "..."
-      }
-    },
-    {
-      "role": "tool_result",
-      "tool_id": "call_abc123",
-      "tool_name": "write_file",
-      "status": "success",
-      "output": "File written successfully"
-    }
-  ],
-  "summary": {
-    "total_messages": 6,
-    "total_input_tokens": 1285,
-    "total_output_tokens": 75,
-    "total_tool_calls": 1,
-    "duration_seconds": 3.2
-  }
-}
-```
-
 ## Implementation Details
 
 ### Debug Logger Interface
@@ -331,13 +275,11 @@ func (d *debugLogger) LogStreamingComplete() {
 
    - `--debug` - Enable debug logging
    - `--debug-log path` - Specify log file path
-   - `--debug-format format` - Specify log format (text/json)
 
 2. **Environment variables** (medium priority)
 
    - `CODING_AGENT_DEBUG=true/false`
    - `CODING_AGENT_DEBUG_LOG=/path/to/log`
-   - `CODING_AGENT_DEBUG_FORMAT=text/json`
 
 3. **Config file** (lowest priority)
    - `debug = true`
@@ -422,7 +364,6 @@ This may include sensitive information. Ensure the log file is protected.
 - [ ] Tool calls and results are logged
 - [ ] Sensitive data is redacted
 - [ ] Session summary is accurate
-- [ ] JSON format output is valid
 
 ### Integration Tests
 

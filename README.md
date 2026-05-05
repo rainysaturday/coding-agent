@@ -114,6 +114,7 @@ Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and
 - `/stats` - Display runtime statistics
 - `/clear` - Clear the output display
 - `/clear-history` - Clear input history
+- `/read-only` - Enable read-only mode (disables write operations)
 
 ## Usage Examples
 

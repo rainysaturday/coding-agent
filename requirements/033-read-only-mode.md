@@ -126,4 +126,4 @@ When a tool that is not available in read-only mode is called, the tool executor
 - The agent should be informed of read-only mode at startup
 - The TUI should indicate when read-only mode is active (e.g., in the status bar)
 - The read-only flag takes precedence over any other configuration that might enable write tools
-- The `git_log` and `git_show` tools are read-only operations and are available in all modes including read-only mode
+- The `git_log`, `git_show`, and `git_diff` tools are read-only operations and are available only in read-only mode
