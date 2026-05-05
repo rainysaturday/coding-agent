@@ -767,8 +767,9 @@ CacheN       int `json:"cache_n"`
 		return nil, fmt.Errorf("stream error: %w", err)
 	}
 
-	// Combine content and reasoning content
-	content := reasoningContent.String() + fullContent.String()
+	// Content is the actual response text (does NOT include reasoning).
+	// Reasoning is stored separately in the Reasoning field.
+	content := fullContent.String()
 
 	// Convert accumulated API tool calls to internal format
 	var apiToolCalls []*APIToolCall

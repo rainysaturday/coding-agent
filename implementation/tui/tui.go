@@ -18,19 +18,21 @@ import (
 
 // TUI represents the terminal user interface.
 type TUI struct {
-	config         *config.Config
-	output         []string
-	history        []string
-	historyIndex   int
-	maxHistory     int
-	cancelled      bool
-	mu             sync.Mutex
-	streaming      bool
-	streamBuffer   strings.Builder
-	contextSize    int
-	maxContextSize int
-	inputLine      string // Current input line buffer (shared with history navigation)
-	currentInput   string // Stores typed input when navigating to history
+	config            *config.Config
+	output            []string
+	history           []string
+	historyIndex      int
+	maxHistory        int
+	cancelled         bool
+	mu                sync.Mutex
+	streaming         bool
+	streamBuffer      strings.Builder // Normal (non-reasoning) content
+	reasoningBuffer   strings.Builder // Reasoning/thinking content
+	contextSize       int
+	maxContextSize    int
+	inputLine         string // Current input line buffer (shared with history navigation)
+	currentInput      string // Stores typed input when navigating to history
+	transitionedFromReasoning bool // Whether we've transitioned from reasoning to normal content
 }
 
 // NewTUI creates a new TUI instance.
@@ -274,22 +276,19 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Buffer the chunk
-	t.streamBuffer.WriteString(text)
-
-	// Apply appropriate color based on content type
-	var color string
+	// Apply appropriate color and buffer based on content type
 	switch contentType {
 	case inference.StreamingContentTypeReasoning:
-		color = ColorDim
+		t.reasoningBuffer.WriteString(text)
+		fmt.Printf("%s%s%s", ColorDim, text, ColorReset)
 	default:
-		color = ColorReset
-	}
-
-	// Print immediately without newline for smooth streaming
-	if color != ColorReset {
-		fmt.Printf("%s%s%s", color, text, ColorReset)
-	} else {
+		// Transitioning from reasoning to normal content - add separator
+		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
+			fmt.Println()
+			fmt.Printf("%s--- Thinking Complete ---%s\n\n", ColorDim, ColorReset)
+			t.transitionedFromReasoning = true
+		}
+		t.streamBuffer.WriteString(text)
 		fmt.Print(text)
 	}
 }
@@ -312,12 +311,21 @@ func (t *TUI) StreamEnd() {
 	// Ensure we're on a new line
 	fmt.Println()
 
-	// Store the complete streamed content in output
+	// Store reasoning content if present
+	reasoning := t.reasoningBuffer.String()
+	if reasoning != "" {
+		t.output = append(t.output, "[Reasoning] "+reasoning)
+	}
+
+	// Store the normal (non-reasoning) content
 	content := t.streamBuffer.String()
 	if content != "" {
 		t.output = append(t.output, content)
 	}
+
 	t.streamBuffer.Reset()
+	t.reasoningBuffer.Reset()
+	t.transitionedFromReasoning = false
 	t.streaming = false
 }
 
@@ -328,6 +336,8 @@ func (t *TUI) StartStream() {
 
 	t.streaming = true
 	t.streamBuffer.Reset()
+	t.reasoningBuffer.Reset()
+	t.transitionedFromReasoning = false
 }
 
 // IsStreaming returns whether we're currently streaming.

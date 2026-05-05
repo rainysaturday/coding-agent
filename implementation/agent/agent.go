@@ -75,6 +75,7 @@ type Step struct {
 // Result represents the final result of an agent run.
 type Result struct {
 	FinalOutput string
+	Reasoning   string
 	Steps       []Step
 	TokenUsage  int
 }
@@ -401,6 +402,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// No tool calls - this is the final response
 		return &Result{
 			FinalOutput: response.Content,
+			Reasoning:   response.Reasoning,
 			Steps:       steps,
 			TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,
 		}, nil

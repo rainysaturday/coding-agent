@@ -24,6 +24,12 @@ import (
 )
 
 // Version information injected at build time
+// Terminal color codes for one-shot mode output.
+const (
+	ColorReset  = "\033[0m"
+	ColorDim    = "\033[90m"
+)
+
 var (
 	gitHash   string
 	gitDirty  string
@@ -180,10 +186,21 @@ func runOneShotMode(cfg *config.Config) error {
 
 	// Run agent with streaming to show LLM responses in real-time
 	startTime := time.Now()
+	transitionedFromReasoning := false
 	result, err := ag.RunStream(ctx, prompt, func(chunk inference.StreamingChunk) {
-		// Stream LLM responses to stdout for visibility in one-shot mode
-		// This ensures LLM responses are visible in one-shot mode, same as in interactive mode
-		fmt.Print(chunk.Text)
+		// Stream LLM responses to stdout with appropriate coloring
+		switch chunk.ContentType {
+		case inference.StreamingContentTypeReasoning:
+			fmt.Printf("%s%s%s", ColorDim, chunk.Text, ColorReset)
+		default:
+			// Add separator when transitioning from reasoning to normal content
+			if !transitionedFromReasoning && chunk.Text != "" {
+				fmt.Println()
+				fmt.Printf("%s--- Thinking Complete ---%s\n\n", ColorDim, ColorReset)
+				transitionedFromReasoning = true
+			}
+			fmt.Print(chunk.Text)
+		}
 	})
 	duration := time.Since(startTime)
 
@@ -251,6 +268,9 @@ func loadPrompt(cfg *config.Config) (string, error) {
 func outputResult(result *agent.Result, cfg *config.Config, duration time.Duration) error {
 	if cfg.Quiet {
 		// Minimal output - just the final answer
+		if result.Reasoning != "" {
+			fmt.Printf("%s[Reasoning]\n%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
+		}
 		fmt.Println(result.FinalOutput)
 		return nil
 	}
@@ -268,7 +288,18 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 				fmt.Printf("Result: %s\n", step.ToolResult.Output)
 			}
 		}
+		fmt.Println("\n=== Reasoning ===")
+		if result.Reasoning != "" {
+			fmt.Printf("%s%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
+		} else {
+			fmt.Println("(No reasoning provided)")
+		}
 		fmt.Println("\n=== Final Output ===")
+	}
+
+	// Display reasoning first if present
+	if result.Reasoning != "" {
+		fmt.Printf("%s[Reasoning]\n%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
 	}
 
 	fmt.Println(result.FinalOutput)
@@ -278,6 +309,9 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 		fmt.Printf("\n=== Summary ===\n")
 		fmt.Printf("Steps executed: %d\n", len(result.Steps))
 		fmt.Printf("Tokens used: %d\n", result.TokenUsage)
+		if result.Reasoning != "" {
+			fmt.Printf("Reasoning: %d chars\n", len(result.Reasoning))
+		}
 		fmt.Printf("Duration: %s\n", duration)
 	}
 
@@ -439,13 +473,20 @@ func runInteractiveMode(cfg *config.Config) error {
 
 			// Display final output if not already streamed
 			if !cfg.Streaming && result.FinalOutput != "" {
-				tuiInstance.AddOutputf("\n[Assistant] %s", result.FinalOutput)
+				if result.Reasoning != "" {
+					tuiInstance.AddOutputf("\n[Assistant] %s[Reasoning]\n%s%s", ColorDim, result.Reasoning, ColorReset)
+				} else {
+					tuiInstance.AddOutputf("\n[Assistant] %s", result.FinalOutput)
+				}
 			}
 
 			// Display summary if verbose
 			if cfg.Verbose {
 				tuiInstance.AddOutputf("\n--- Summary ---")
 				tuiInstance.AddOutputf("Steps: %d, Tokens: %d", len(result.Steps), result.TokenUsage)
+				if result.Reasoning != "" {
+					tuiInstance.AddOutputf("Reasoning: %d chars", len(result.Reasoning))
+				}
 			}
 		}(input)
 
