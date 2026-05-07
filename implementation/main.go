@@ -351,17 +351,18 @@ func runInteractiveMode(cfg *config.Config) error {
 		tuiInstance.SetContextSize(size, max)
 	})
 
-	// Set up cancellation (single signal handler outside loop)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Set up cancellation with a root context that signal handler controls.
+	// Each request gets a child context derived from this, so cancelling the
+	// root cancels the currently running agent operation.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle signals - single goroutine
+	// Handle signals - single goroutine that cancels the root context
 	go func() {
 		<-sigChan
-		cancel()
+		rootCancel()
 	}()
 
 	// Wait group to track running agent operations
@@ -381,10 +382,10 @@ func runInteractiveMode(cfg *config.Config) error {
 			if err.Error() == "EOF" {
 				// End of input (Ctrl+D), exit gracefully
 				fmt.Println("\nGoodbye!")
-				cancel()
+				rootCancel()
 				return nil
 			}
-			cancel()
+			rootCancel()
 			return err
 		}
 
@@ -419,9 +420,9 @@ func runInteractiveMode(cfg *config.Config) error {
 			}
 		}
 
-		// Reset cancellation for new request
-		cancel()
-		ctx, cancel = context.WithCancel(context.Background())
+		// Create a new child context for this request (derived from rootCtx)
+		// Cancelling rootCtx (via signal handler) will cancel this context too
+		ctx, cancel := context.WithCancel(rootCtx)
 
 		// Show waiting indicator
 		fmt.Println()
@@ -433,6 +434,7 @@ func runInteractiveMode(cfg *config.Config) error {
 		// Run agent with the prompt
 		go func(userInput string) {
 			defer wg.Done()
+			defer cancel() // Clean up child context when goroutine completes
 
 			var result *agent.Result
 			var err error
