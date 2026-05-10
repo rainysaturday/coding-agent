@@ -266,6 +266,14 @@ func loadPrompt(cfg *config.Config) (string, error) {
 }
 
 func outputResult(result *agent.Result, cfg *config.Config, duration time.Duration) error {
+	// Write to file if specified (do this first, before any early return)
+	if cfg.OutputFile != "" {
+		err := os.WriteFile(cfg.OutputFile, []byte(result.FinalOutput), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+	}
+
 	if cfg.Quiet {
 		// Minimal output - just the final answer
 		if result.Reasoning != "" {
@@ -315,14 +323,6 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 		fmt.Printf("Duration: %s\n", duration)
 	}
 
-	// Write to file if specified
-	if cfg.OutputFile != "" {
-		err := os.WriteFile(cfg.OutputFile, []byte(result.FinalOutput), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write output file: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -354,15 +354,17 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Set up cancellation with a root context that signal handler controls.
 	// Each request gets a child context derived from this, so cancelling the
 	// root cancels the currently running agent operation.
+	// These are re-created after each cancellation so subsequent Ctrl+C works.
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle signals - single goroutine that cancels the root context
+	// Handle signals - goroutine that cancels the root context on each signal
 	go func() {
-		<-sigChan
-		rootCancel()
+		for range sigChan {
+			rootCancel()
+		}
 	}()
 
 	// Wait group to track running agent operations
@@ -376,7 +378,9 @@ func runInteractiveMode(cfg *config.Config) error {
 		input, err := tuiInstance.Prompt()
 		if err != nil {
 			if err.Error() == "cancelled" {
-				// Handle cancellation
+				// Handle cancellation - recreate root context so future requests work
+				rootCancel()
+				rootCtx, rootCancel = context.WithCancel(context.Background())
 				continue
 			}
 			if err.Error() == "EOF" {

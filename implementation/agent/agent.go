@@ -633,10 +633,11 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	a.context = newContext
 	a.compressionCount++
 
-	// Reset lastTotalTokens so context size is recalculated from scratch on next
-	// context size check. This prevents the old (pre-compression) total from
-	// inflating the reported size after compression.
-	a.lastTotalTokens = 0
+	// Set lastTotalTokens to the estimated size of the compressed context so that
+	// context size reporting remains consistent until the next API response.
+	// This prevents a temporary distortion where getActualContextSizeUnlocked()
+	// falls back to a rough EstimateContextSize() heuristic.
+	a.lastTotalTokens = inference.EstimateContextSize(newContext, a.inference.GetTools(), a.systemPrompt)
 
 	// Reset tool result tracking since the context has been rebuilt.
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)

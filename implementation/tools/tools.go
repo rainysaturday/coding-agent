@@ -291,24 +291,38 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	start, ok := params["start"].(float64)
+	startVal, ok := params["start"].(float64)
 	if !ok {
 		return &ToolResult{
 			Success: false,
-			Error:   "missing required parameter: start",
+			Error:   "parameter 'start' must be a number",
 		}
 	}
 
-	end, ok := params["end"].(float64)
+	endVal, ok := params["end"].(float64)
 	if !ok {
 		return &ToolResult{
 			Success: false,
-			Error:   "missing required parameter: end",
+			Error:   "parameter 'end' must be a number",
 		}
 	}
 
-	startLine := int(start)
-	endLine := int(end)
+	startLine := int(startVal)
+	endLine := int(endVal)
+
+	// Validate start and end are positive (1-indexed line numbers)
+	if startLine < 1 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("start line must be >= 1, got %d", startLine),
+		}
+	}
+	if endLine < 1 {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("end line must be >= 1, got %d", endLine),
+		}
+	}
 
 	if startLine > endLine {
 		return &ToolResult{
@@ -1414,6 +1428,16 @@ func (te *ToolExecutor) searchFile(filePath string, re *regexp.Regexp, flags map
 	return results, 0, 0
 }
 
+// hasFlag checks if a flag is present in a slice of flags.
+func hasFlag(flags []string, flag string) bool {
+	for _, f := range flags {
+		if f == flag {
+			return true
+		}
+	}
+	return false
+}
+
 // executeGitLog views the commit history of a git repository.
 func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult {
 	// Parse parameters
@@ -1460,6 +1484,28 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 
 	// Build git log command
 	args := []string{"log", fmt.Sprintf("--max-count=%d", count)}
+
+	// Validate conflicting format flags
+	if hasFlag(flags, "oneline") {
+		if hasFlag(flags, "stat") {
+			return &ToolResult{
+				Success: false,
+				Error:   "conflicting flags: --oneline cannot be used with --stat",
+			}
+		}
+		if hasFlag(flags, "patch") {
+			return &ToolResult{
+				Success: false,
+				Error:   "conflicting flags: --oneline cannot be used with --patch",
+			}
+		}
+		if hasFlag(flags, "shortstat") {
+			return &ToolResult{
+				Success: false,
+				Error:   "conflicting flags: --oneline cannot be used with --shortstat",
+			}
+		}
+	}
 
 	// Add format flags based on options (must come before reference and path)
 	for _, flag := range flags {

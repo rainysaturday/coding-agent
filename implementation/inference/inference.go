@@ -160,7 +160,7 @@ func (ic *InferenceClient) GetTools() []ToolDefinition {
 
 // isCopilotEndpoint checks if the endpoint is a GitHub Copilot URL.
 func (ic *InferenceClient) isCopilotEndpoint() bool {
-	return strings.Contains(ic.endpoint, "githubcopilot.com")
+	return config.IsGitHubCopilotEndpoint(ic.endpoint)
 }
 
 // isGitHubModelsEndpoint checks if the endpoint is a GitHub Models URL.
@@ -632,7 +632,10 @@ CacheN       int `json:"cache_n"`
 					} `json:"timings"`
 				}
 				if err := json.Unmarshal([]byte(jsonBuffer.String()), &bufferChunk); err != nil {
-					jsonBuffer.Reset()
+					// On parse failure, keep the buffer and continue accumulating.
+					// The next chunk may complete the JSON. Only reset if we see a
+					// new "data:" line that parses successfully.
+					inJSON = true
 				} else {
 					// Process the buffered chunk data immediately
 					if len(bufferChunk.Choices) > 0 {

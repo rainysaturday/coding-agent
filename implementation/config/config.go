@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// IsGitHubCopilotEndpoint checks whether the given API endpoint URL
+// points to a GitHub Copilot API.  This is a shared utility to avoid
+// duplicating the detection logic across packages (see also
+// InferenceClient.isCopilotEndpoint in inference/inference.go).
+func IsGitHubCopilotEndpoint(endpoint string) bool {
+	return strings.Contains(endpoint, "githubcopilot.com")
+}
+
 // Config holds all configuration for the agent.
 type Config struct {
 	// Mode
@@ -306,8 +314,10 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Debug = value == "true" || value == "1"
 		case "debug_log":
 			cfg.DebugLog = value
-		case "read_only":
+		case "read_only", "read-only":
 			cfg.ReadOnly = value == "true" || value == "1"
+		default:
+			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
 		}
 	}
 
@@ -381,7 +391,7 @@ func loadEnv(cfg *Config) {
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL
 	if cfg.APIKey == "" {
 		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
-			if strings.Contains(cfg.APIEndpoint, "githubcopilot.com") {
+			if IsGitHubCopilotEndpoint(cfg.APIEndpoint) {
 				cfg.APIKey = val
 			}
 		}
