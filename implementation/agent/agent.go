@@ -728,9 +728,6 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		cmd := ""
 		if p, ok := params["command"].(string); ok {
 			cmd = p
-			if len(cmd) > 50 {
-				cmd = cmd[:50] + "..."
-			}
 		}
 		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", ColorCyan, cmd, ColorReset)
 	case "read_file":

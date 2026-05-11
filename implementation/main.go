@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -362,12 +363,28 @@ func runInteractiveMode(cfg *config.Config) error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Handle signals - goroutine that cancels the root context on each signal
-	go func() {
-		for range sigChan {
-			rootCancel()
-		}
-	}()
+	// Track whether we're waiting at the prompt. The signal handler checks this
+	// flag and skips cancellation when we're waiting for user input. This prevents
+	// Ctrl+C pressed during prompt input from immediately cancelling the next request.
+	var isPrompting atomic.Bool
+
+	// Signal handler goroutine - listens for SIGINT/SIGTERM and cancels root context
+	// when NOT waiting at the prompt. Restarted after context recreation to use new rootCancel.
+	sigHandlerDone := make(chan struct{})
+	startSigHandler := func() {
+		go func() {
+			defer close(sigHandlerDone)
+			for range sigChan {
+				// If we're currently waiting for user input at the prompt,
+				// skip cancellation - the TUI handles Ctrl+C internally.
+				if isPrompting.Load() {
+					continue
+				}
+				rootCancel()
+			}
+		}()
+	}
+	startSigHandler()
 
 	// Wait group to track running agent operations
 	var wg sync.WaitGroup
@@ -377,12 +394,24 @@ func runInteractiveMode(cfg *config.Config) error {
 		// Wait for any previous operation to complete
 		wg.Wait()
 
+		// Mark that we're waiting at the prompt - signal handler will skip
+		// cancellation during this time, letting the TUI handle Ctrl+C internally
+		isPrompting.Store(true)
 		input, err := tuiInstance.Prompt()
+		isPrompting.Store(false)
+
 		if err != nil {
 			if err.Error() == "cancelled" {
-				// Handle cancellation - recreate root context so future requests work
-				rootCancel()
+				// Handle cancellation - wait for old signal handler to finish
+				// (so it doesn't interfere with the new context), drain any
+				// pending SIGINT signals, and recreate a fresh root context.
+				<-sigHandlerDone
+				select {
+				case <-sigChan:
+				default:
+				}
 				rootCtx, rootCancel = context.WithCancel(context.Background())
+				startSigHandler()
 				continue
 			}
 			if err.Error() == "EOF" {

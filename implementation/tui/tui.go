@@ -219,7 +219,8 @@ func (t *TUI) handleHistoryUp() {
 
 	// Clear entire line and set input to history entry
 	t.inputLine = ""
-	fmt.Print("\r\033[2K> ")
+	t.printContextSizeInternal()
+	fmt.Printf("> ")
 	if t.historyIndex < len(t.history) {
 		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
@@ -237,12 +238,14 @@ func (t *TUI) handleHistoryDown() {
 
 	if t.historyIndex > 0 {
 		t.historyIndex--
-		fmt.Print("\r\033[2K> ")
+		t.printContextSizeInternal()
+		fmt.Printf("> ")
 		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
 	} else {
 		// Exiting history mode - restore the current typed input
-		fmt.Print("\r\033[2K> ")
+		t.printContextSizeInternal()
+		fmt.Printf("> ")
 		t.inputLine = t.currentInput
 		if t.currentInput != "" {
 			fmt.Print(t.currentInput)
@@ -450,16 +453,24 @@ func (t *TUI) SetContextSize(size, max int) {
 
 // ShowContextSize displays the current context size to the user.
 func (t *TUI) ShowContextSize() {
-	t.printContextSize()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.printContextSizeInternal()
 	fmt.Println()
 }
 
 // printContextSize prints the current context size indicator.
 func (t *TUI) printContextSize() {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.printContextSizeInternal()
+}
+
+// printContextSizeInternal prints the current context size indicator.
+// Caller must hold t.mu.
+func (t *TUI) printContextSizeInternal() {
 	size := t.contextSize
 	max := t.maxContextSize
-	t.mu.Unlock()
 
 	if max > 0 {
 		percentage := float64(size) / float64(max) * 100
