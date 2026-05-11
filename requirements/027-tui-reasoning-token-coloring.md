@@ -12,6 +12,17 @@ Many modern LLMs produce reasoning or thinking content before their final respon
 
 This reasoning content is valuable for transparency but should be visually distinct from the final response to improve readability.
 
+## Reasoning Content Field Names
+
+Different inference backends use different field names for reasoning content:
+
+| Backend | Field Name | Description |
+|---------|------------|-------------|
+| llama.cpp | `reasoning_content` | llama.cpp uses this field for thinking/reasoning content |
+| OpenAI (o1, o3-mini, etc.) | `reasoning` | OpenAI standard field |
+
+The TUI receives already-normalized reasoning content from the inference layer. The inference layer tracks which field the server used (`ReasoningContentType`) and preserves it in the `Message` struct.
+
 ## Acceptance Criteria
 - [ ] Reasoning tokens are detected and separated from regular response content
 - [ ] Reasoning tokens are displayed in a darker/dimmed text color
@@ -41,9 +52,10 @@ When receiving complete responses:
 - Apply appropriate colors before displaying
 
 ### Content Separation
-The inference layer provides separate fields:
+The inference layer provides separate fields (normalized from whichever field the server used):
 - `Content`: The main response text
-- `ReasoningContent`: The reasoning/thinking text
+- `Reasoning`: The reasoning/thinking text (normalized from either `reasoning` or `reasoning_content`)
+- `ReasoningContentType`: Indicates which field was used (`"reasoning"` or `"reasoning_content"`)
 
 The TUI should color these differently when displaying.
 

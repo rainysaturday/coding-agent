@@ -129,7 +129,8 @@ interface Choice {
 interface AssistantMessage {
   role: "assistant";
   content: string; // Response text
-  reasoning?: string; // Reasoning content (for reasoning models)
+  reasoning?: string; // Reasoning content (OpenAI standard field for reasoning models like o1, o3-mini)
+  reasoning_content?: string; // Alternative field name used by llama.cpp for reasoning/thinking content
   tool_calls?: ToolCall[]; // Tool calls made
 }
 
@@ -217,8 +218,8 @@ interface StreamChoice {
 interface Delta {
   role?: string; // Message role ("assistant"), only in first chunk
   content: string | null; // Text content fragment, null if only tool call
-  reasoning?: string | null; // Reasoning content fragment (reasoning models)
-  reasoning_content?: string | null; // Alternative name for reasoning field
+  reasoning?: string | null; // Reasoning content fragment (OpenAI standard field)
+  reasoning_content?: string | null; // Alternative field name used by llama.cpp for reasoning content
   tool_calls?: ToolCallDelta[]; // Tool call deltas (if model uses tools)
 }
 
@@ -833,7 +834,14 @@ def handle_streaming_response(response: requests.Response):
 
 ### Reasoning Models
 
-For reasoning models (e.g., o1, o3-mini, Qwen with thinking), the response includes a `reasoning_content` field:
+For reasoning models (e.g., o1, o3-mini, Qwen with thinking), the response includes reasoning content. **Different backends use different field names for this content:**
+
+| Backend | Field Name | Example |
+|---------|------------|---------|
+| **llama.cpp** | `reasoning_content` | Used by local llama.cpp server |
+| **OpenAI** (o1, o3-mini, etc.) | `reasoning` | OpenAI standard field |
+
+#### Example Response (llama.cpp - uses `reasoning_content`)
 
 ```json
 {
@@ -845,7 +853,28 @@ For reasoning models (e.g., o1, o3-mini, Qwen with thinking), the response inclu
 }
 ```
 
-In streaming mode, reasoning content is sent as separate chunks with `delta.reasoning`.
+#### Example Response (OpenAI - uses `reasoning`)
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "content": "The answer is 4.",
+    "reasoning": "Let me think step by step...\n\n1. The user asks for 2+2\n2. 2 + 2 = 4"
+  }
+}
+```
+
+#### Streaming Mode
+
+In streaming mode, reasoning content is sent as separate chunks. The field name depends on the backend:
+
+- **llama.cpp streaming**: Uses `delta.reasoning_content`
+- **OpenAI streaming**: Uses `delta.reasoning`
+
+The inference client automatically detects which field the server uses and handles both transparently.
+
+**Important**: The client tracks which reasoning field type was used (`ReasoningContentType`) to maintain consistency when storing reasoning content in conversation context. When sending messages back to the server, the same field name is used.
 
 ---
 
@@ -993,10 +1022,13 @@ The API supports tool calling. When the model wants to use a tool, it returns to
 
 3. **Reasoning Models**: If the model has thinking enabled, you cannot provide assistant response prefills (as shown in the 400 error example).
 
-4. **Content Types**: Streaming supports two content types:
+4. **Content Types**: Streaming supports three content types:
 
    - Normal content (`delta.content`)
-   - Reasoning content (`delta.reasoning` or `delta.reasoning_content`)
+   - Reasoning content via `delta.reasoning` (OpenAI standard field)
+   - Reasoning content via `delta.reasoning_content` (llama.cpp field)
+
+   The inference client handles both reasoning fields transparently.
 
 5. **Finish Reasons**:
    - `"stop"`: Natural end of response
