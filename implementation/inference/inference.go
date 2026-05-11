@@ -40,28 +40,30 @@ type StreamingCallbackWithType func(chunk StreamingChunk)
 
 // InferenceClient handles communication with the LLM backend.
 type InferenceClient struct {
-	endpoint     string
-	apiKey       string
-	model        string
-	temperature  *float64
-	maxTokens    int
-	contextSize  int
-	streaming    bool
-	timeout      time.Duration
-	client       *http.Client
-	maxRetries           int
-	retryDelay           time.Duration
-	tools                []ToolDefinition
-	debugVerbose         bool
-	debugVerboseVerbose  bool
+	endpoint            string
+	apiKey              string
+	model               string
+	temperature         *float64
+	maxTokens           int
+	contextSize         int
+	streaming           bool
+	timeout             time.Duration
+	client              *http.Client
+	maxRetries          int
+	retryDelay          time.Duration
+	tools               []ToolDefinition
+	debugVerbose        bool
+	debugVerboseVerbose bool
 }
 
 // Message represents a chat message.
 type Message struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content"`
-	ToolCallId string         `json:"tool_call_id,omitempty"` // For tool call output messages
-	ToolCalls  []*APIToolCall `json:"tool_calls,omitempty"`   // For assistant messages with tool calls
+	Role             string         `json:"role"`
+	Content          string         `json:"content"`
+	Reasoning        string         `json:"reasoning,omitempty"`         // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
+	ReasoningContent string         `json:"reasoning_content,omitempty"` // llama.cpp
+	ToolCallId       string         `json:"tool_call_id,omitempty"`      // For tool call output messages
+	ToolCalls        []*APIToolCall `json:"tool_calls,omitempty"`        // For assistant messages with tool calls
 }
 
 // ToolDefinition represents a tool definition for the LLM (OpenAI format).
@@ -86,9 +88,9 @@ type ParameterSchema struct {
 
 // Property defines a single property in the schema.
 type Property struct {
-	Type        string     `json:"type"`
-	Description string     `json:"description"`
-	Items       *Property  `json:"items,omitempty"`
+	Type        string    `json:"type"`
+	Description string    `json:"description"`
+	Items       *Property `json:"items,omitempty"`
 }
 
 // ToolCall represents a tool call from the OpenAI API response.
@@ -107,14 +109,15 @@ type FunctionCall struct {
 
 // Response represents an inference response.
 type Response struct {
-	Content      string
-	Reasoning    string            // Reasoning content from the model (OpenAI standard "reasoning" field)
-	ToolCalls    []*tools.ToolCall // Parsed tool calls compatible with tool executor
-	APIToolCalls []*APIToolCall    // Raw tool calls from API for reference
-	TokenUsage   int
-	StreamUsage  int
-	InputTokens  int // Prompt tokens from API (actual input to LLM)
-	OutputTokens int // Completion tokens from API (actual output from LLM)
+	Content              string            // The actual response text (does NOT include reasoning)
+	Reasoning            string            // Reasoning content from the model (from whichever field the server used)
+	ReasoningContentType string            // Which reasoning field the server used: "reasoning" or "reasoning_content"
+	ToolCalls            []*tools.ToolCall // Parsed tool calls compatible with tool executor
+	APIToolCalls         []*APIToolCall    // Raw tool calls from API for reference
+	TokenUsage           int
+	StreamUsage          int
+	InputTokens          int // Prompt tokens from API (actual input to LLM)
+	OutputTokens         int // Completion tokens from API (actual output from LLM)
 }
 
 // NewInferenceClient creates a new inference client.
@@ -125,21 +128,21 @@ func NewInferenceClient(cfg *config.Config) *InferenceClient {
 	}
 
 	return &InferenceClient{
-		endpoint:     cfg.APIEndpoint,
-		apiKey:       cfg.APIKey,
-		model:        cfg.Model,
-		temperature:  cfg.Temperature,
-		maxTokens:    cfg.MaxTokens,
-		contextSize:  cfg.ContextSize,
-		streaming:    cfg.Streaming,
-		timeout:      totalTimeout,
+		endpoint:    cfg.APIEndpoint,
+		apiKey:      cfg.APIKey,
+		model:       cfg.Model,
+		temperature: cfg.Temperature,
+		maxTokens:   cfg.MaxTokens,
+		contextSize: cfg.ContextSize,
+		streaming:   cfg.Streaming,
+		timeout:     totalTimeout,
 		client: &http.Client{
 			Timeout: totalTimeout,
 		},
-		maxRetries: 3,
-		retryDelay: 1 * time.Second,
-		debugVerbose:         cfg.DebugVerbose,
-		debugVerboseVerbose:  cfg.DebugVerboseVerbose,
+		maxRetries:          3,
+		retryDelay:          1 * time.Second,
+		debugVerbose:        cfg.DebugVerbose,
+		debugVerboseVerbose: cfg.DebugVerboseVerbose,
 	}
 }
 
@@ -412,13 +415,8 @@ func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt strin
 func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	var respBody struct {
 		Choices []struct {
-			Message struct {
-				Role      string        `json:"role"`
-				Content   string        `json:"content"`
-				Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
-				ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
+			Message      Message `json:"message"`
+			FinishReason string  `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -426,9 +424,9 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 		Timings struct {
-			CacheN       int `json:"cache_n"`
-			PromptN      int `json:"prompt_n"`
-			PredictedN   int `json:"predicted_n"`
+			CacheN     int `json:"cache_n"`
+			PromptN    int `json:"prompt_n"`
+			PredictedN int `json:"predicted_n"`
 		} `json:"timings"`
 	}
 
@@ -443,6 +441,17 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	message := respBody.Choices[0].Message
 	content := message.Content
 
+	// Determine which reasoning field the server used and set ReasoningContentType accordingly
+	var reasoning string
+	var reasoningContentType string
+	if message.Reasoning != "" {
+		reasoning = message.Reasoning
+		reasoningContentType = "reasoning"
+	} else if message.ReasoningContent != "" {
+		reasoning = message.ReasoningContent
+		reasoningContentType = "reasoning_content"
+	}
+
 	// Parse OpenAI tool calls
 	var toolCalls []*tools.ToolCall
 	var apiToolCalls []*APIToolCall
@@ -450,7 +459,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	if len(message.ToolCalls) > 0 {
 		// Convert API tool calls to internal tool calls
 		for _, apiTC := range message.ToolCalls {
-			apiToolCalls = append(apiToolCalls, &apiTC)
+			apiToolCalls = append(apiToolCalls, apiTC)
 
 			// Parse the arguments JSON string
 			var params map[string]interface{}
@@ -489,23 +498,26 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 	}
 
 	return &Response{
-		Content:      content,
-		Reasoning:    message.Reasoning, // OpenAI standard "reasoning" field
-		ToolCalls:    toolCalls,
-		APIToolCalls: apiToolCalls,
-		TokenUsage:   tokenUsage,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		Content:              content,
+		Reasoning:            reasoning,
+		ReasoningContentType: reasoningContentType,
+		ToolCalls:            toolCalls,
+		APIToolCalls:         apiToolCalls,
+		TokenUsage:           tokenUsage,
+		InputTokens:          inputTokens,
+		OutputTokens:         outputTokens,
 	}, nil
 }
 
 // handleStreamResponse handles a streaming response.
 func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback StreamingCallbackWithType) (*Response, error) {
 	var fullContent strings.Builder
-	var reasoningContent strings.Builder
+	var fullReasoning strings.Builder
 	var totalTokens int
 	var inputTokens int
 	var outputTokens int
+	// Track which reasoning field was used during streaming
+	var reasoningContentType string
 
 	// Use a slice to accumulate tool calls in order
 	// Each entry accumulates partial data from streaming deltas
@@ -613,24 +625,21 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	inJSON := false
 
 	// Declare chunk for JSON parsing - used for both single-line and multi-line SSE
+	// Uses Message struct to support both reasoning and reasoning_content fields
 	var chunk struct {
 		Choices []struct {
-			Delta struct {
-				Content   string        `json:"content"`
-				Reasoning string        `json:"reasoning"` // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
-				ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
-			} `json:"delta"`
-			FinishReason string `json:"finish_reason"`
+			Delta        Message `json:"delta"`
+			FinishReason string  `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
-	Timings struct {
-			CacheN       int `json:"cache_n"`
-			PromptN      int `json:"prompt_n"`
-			PredictedN   int `json:"predicted_n"`
+		Timings struct {
+			CacheN     int `json:"cache_n"`
+			PromptN    int `json:"prompt_n"`
+			PredictedN int `json:"predicted_n"`
 		} `json:"timings"`
 	}
 
@@ -644,12 +653,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				inJSON = false
 				var bufferChunk struct {
 					Choices []struct {
-						Delta struct {
-							Content   string        `json:"content"`
-							Reasoning string        `json:"reasoning"`
-							ToolCalls []APIToolCall `json:"tool_calls,omitempty"`
-						} `json:"delta"`
-						FinishReason string `json:"finish_reason"`
+						Delta        Message `json:"delta"`
+						FinishReason string  `json:"finish_reason"`
 					} `json:"choices"`
 					Usage struct {
 						PromptTokens     int `json:"prompt_tokens"`
@@ -657,7 +662,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 						TotalTokens      int `json:"total_tokens"`
 					} `json:"usage"`
 					Timings struct {
-CacheN       int `json:"cache_n"`
+						CacheN     int `json:"cache_n"`
 						PromptN    int `json:"prompt_n"`
 						PredictedN int `json:"predicted_n"`
 					} `json:"timings"`
@@ -670,28 +675,45 @@ CacheN       int `json:"cache_n"`
 				} else {
 					// Process the buffered chunk data immediately
 					if len(bufferChunk.Choices) > 0 {
-						if bufferChunk.Choices[0].Delta.Content != "" {
-							fullContent.WriteString(bufferChunk.Choices[0].Delta.Content)
+						delta := bufferChunk.Choices[0].Delta
+						if delta.Content != "" {
+							fullContent.WriteString(delta.Content)
 							// Stream normal content to TUI so it's visible
 							if callback != nil {
 								callback(StreamingChunk{
-									Text:        bufferChunk.Choices[0].Delta.Content,
+									Text:        delta.Content,
 									ContentType: StreamingContentTypeNormal,
 								})
 							}
 						}
-						if bufferChunk.Choices[0].Delta.Reasoning != "" {
-							reasoningContent.WriteString(bufferChunk.Choices[0].Delta.Reasoning)
+						if delta.Reasoning != "" {
+							fullReasoning.WriteString(delta.Reasoning)
+							if reasoningContentType == "" {
+								reasoningContentType = "reasoning"
+							}
 							// Stream reasoning content to TUI with dim color for visibility
 							if callback != nil {
 								callback(StreamingChunk{
-									Text:        bufferChunk.Choices[0].Delta.Reasoning,
+									Text:        delta.Reasoning,
 									ContentType: StreamingContentTypeReasoning,
 								})
 							}
 						}
-						for i := range bufferChunk.Choices[0].Delta.ToolCalls {
-							processToolCallDelta(&bufferChunk.Choices[0].Delta.ToolCalls[i])
+						if delta.ReasoningContent != "" {
+							fullReasoning.WriteString(delta.ReasoningContent)
+							if reasoningContentType == "" {
+								reasoningContentType = "reasoning_content"
+							}
+							// Stream reasoning content to TUI with dim color for visibility
+							if callback != nil {
+								callback(StreamingChunk{
+									Text:        delta.ReasoningContent,
+									ContentType: StreamingContentTypeReasoning,
+								})
+							}
+						}
+						for i := range delta.ToolCalls {
+							processToolCallDelta(delta.ToolCalls[i])
 						}
 						if bufferChunk.Usage.TotalTokens > 0 {
 							totalTokens = bufferChunk.Usage.TotalTokens
@@ -755,35 +777,53 @@ CacheN       int `json:"cache_n"`
 
 		if len(chunk.Choices) > 0 {
 			// Get content from delta
+			delta := chunk.Choices[0].Delta
 			chunkText := ""
-			if chunk.Choices[0].Delta.Content != "" {
-				chunkText = chunk.Choices[0].Delta.Content
+			if delta.Content != "" {
+				chunkText = delta.Content
 				fullContent.WriteString(chunkText)
 			}
-			if chunk.Choices[0].Delta.Reasoning != "" {
-				reasoningContent.WriteString(chunk.Choices[0].Delta.Reasoning)
+			if delta.Reasoning != "" {
+				fullReasoning.WriteString(delta.Reasoning)
 				if chunkText == "" {
-					chunkText = chunk.Choices[0].Delta.Reasoning
+					chunkText = delta.Reasoning
+				}
+				if reasoningContentType == "" {
+					reasoningContentType = "reasoning"
+				}
+			}
+			if delta.ReasoningContent != "" {
+				fullReasoning.WriteString(delta.ReasoningContent)
+				if reasoningContentType == "" {
+					reasoningContentType = "reasoning_content"
 				}
 			}
 
 			// Accumulate tool calls from streaming delta
-			for i := range chunk.Choices[0].Delta.ToolCalls {
-				processToolCallDelta(&chunk.Choices[0].Delta.ToolCalls[i])
+			for i := range delta.ToolCalls {
+				processToolCallDelta(delta.ToolCalls[i])
 			}
 
 			// Stream reasoning content with appropriate type
-			if chunk.Choices[0].Delta.Reasoning != "" && callback != nil {
+			if delta.ReasoningContent != "" && callback != nil {
 				callback(StreamingChunk{
-					Text:        chunk.Choices[0].Delta.Reasoning,
+					Text:        delta.ReasoningContent,
+					ContentType: StreamingContentTypeReasoning,
+				})
+			}
+
+			// Stream reasoning content with appropriate type
+			if delta.Reasoning != "" && callback != nil {
+				callback(StreamingChunk{
+					Text:        delta.Reasoning,
 					ContentType: StreamingContentTypeReasoning,
 				})
 			}
 
 			// Stream normal content with appropriate type
-			if chunk.Choices[0].Delta.Content != "" && callback != nil {
+			if delta.Content != "" && callback != nil {
 				callback(StreamingChunk{
-					Text:        chunk.Choices[0].Delta.Content,
+					Text:        delta.Content,
 					ContentType: StreamingContentTypeNormal,
 				})
 			}
@@ -860,13 +900,14 @@ CacheN       int `json:"cache_n"`
 	}
 
 	return &Response{
-		Content:      content,
-		Reasoning:    reasoningContent.String(), // OpenAI standard "reasoning" field
-		ToolCalls:    toolCalls,
-		APIToolCalls: apiToolCalls,
-		TokenUsage:   totalTokens,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		Content:              content,
+		Reasoning:            fullReasoning.String(),
+		ReasoningContentType: reasoningContentType,
+		ToolCalls:            toolCalls,
+		APIToolCalls:         apiToolCalls,
+		TokenUsage:           totalTokens,
+		InputTokens:          inputTokens,
+		OutputTokens:         outputTokens,
 	}, nil
 }
 
@@ -931,6 +972,13 @@ func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, 
 			total += 3
 		}
 		total += EstimateTokens(msg.Content)
+		// Also estimate tokens for reasoning content if present
+		if msg.Reasoning != "" {
+			total += EstimateTokens(msg.Reasoning)
+		}
+		if msg.ReasoningContent != "" {
+			total += EstimateTokens(msg.ReasoningContent)
+		}
 	}
 
 	// Add tool definition tokens (rough estimate)
@@ -946,6 +994,7 @@ func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, 
 
 	return total
 }
+
 // truncateJSON truncates a JSON string to a maximum length, appending "..." if truncated.
 func truncateJSON(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -953,4 +1002,3 @@ func truncateJSON(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-

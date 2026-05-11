@@ -298,11 +298,22 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 
 		// Add assistant response to context for continuity
 		a.mu.Lock()
-		a.context = append(a.context, &inference.Message{
+		assistantMsg := &inference.Message{
 			Role:      "assistant",
 			Content:   response.Content,
 			ToolCalls: response.APIToolCalls,
-		})
+		}
+		// Preserve reasoning content in the same property used by the inference server
+		// to maintain consistency in the conversation context
+		if response.Reasoning != "" {
+			if response.ReasoningContentType == "reasoning_content" {
+				assistantMsg.ReasoningContent = response.Reasoning
+			} else {
+				// Default to "reasoning" for "reasoning" or any other/empty type
+				assistantMsg.Reasoning = response.Reasoning
+			}
+		}
+		a.context = append(a.context, assistantMsg)
 		a.mu.Unlock()
 
 		// Update token stats with accurate values from API
