@@ -121,6 +121,8 @@ func displayHelp() {
 	fmt.Println("      --config path        Load configuration from file")
 	fmt.Println("      --debug              Enable debug logging (saves conversation to file)")
 	fmt.Println("      --debug-log path     Path to debug log file (default: debug.log)")
+	fmt.Println("      --debug-verbose             Print every request/response to stderr during inference")
+	fmt.Println("      --debug-verbose-verbose     Print raw SSE body for every streaming chunk to stderr")
 	fmt.Println("      --model string       Model to use (default: \"llama3\")")
 	fmt.Println("      --temperature float  Inference temperature (omitted when not set, uses model default)")
 	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 64000)")

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -39,18 +40,20 @@ type StreamingCallbackWithType func(chunk StreamingChunk)
 
 // InferenceClient handles communication with the LLM backend.
 type InferenceClient struct {
-	endpoint    string
-	apiKey      string
-	model       string
-	temperature *float64
-	maxTokens   int
-	contextSize int
-	streaming   bool
-	timeout     time.Duration
-	client      *http.Client
-	maxRetries  int
-	retryDelay  time.Duration
-	tools       []ToolDefinition
+	endpoint     string
+	apiKey       string
+	model        string
+	temperature  *float64
+	maxTokens    int
+	contextSize  int
+	streaming    bool
+	timeout      time.Duration
+	client       *http.Client
+	maxRetries           int
+	retryDelay           time.Duration
+	tools                []ToolDefinition
+	debugVerbose         bool
+	debugVerboseVerbose  bool
 }
 
 // Message represents a chat message.
@@ -122,19 +125,21 @@ func NewInferenceClient(cfg *config.Config) *InferenceClient {
 	}
 
 	return &InferenceClient{
-		endpoint:    cfg.APIEndpoint,
-		apiKey:      cfg.APIKey,
-		model:       cfg.Model,
-		temperature: cfg.Temperature,
-		maxTokens:   cfg.MaxTokens,
-		contextSize: cfg.ContextSize,
-		streaming:   cfg.Streaming,
-		timeout:     totalTimeout,
+		endpoint:     cfg.APIEndpoint,
+		apiKey:       cfg.APIKey,
+		model:        cfg.Model,
+		temperature:  cfg.Temperature,
+		maxTokens:    cfg.MaxTokens,
+		contextSize:  cfg.ContextSize,
+		streaming:    cfg.Streaming,
+		timeout:      totalTimeout,
 		client: &http.Client{
 			Timeout: totalTimeout,
 		},
 		maxRetries: 3,
 		retryDelay: 1 * time.Second,
+		debugVerbose:         cfg.DebugVerbose,
+		debugVerboseVerbose:  cfg.DebugVerboseVerbose,
 	}
 }
 
@@ -254,11 +259,37 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 			req.Header.Set("Editor-Version", "coding-agent/1.0")
 		}
 
+		// Debug verbose: log the request
+		if ic.debugVerbose {
+			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Request: POST %s\n", ic.buildURL())
+			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Headers: ")
+			first := true
+			for k, v := range req.Header {
+				if !first {
+					fmt.Fprintf(os.Stderr, ", ")
+				}
+				fmt.Fprintf(os.Stderr, "%s=%s", k, strings.Join(v, ";"))
+				first = false
+			}
+			fmt.Fprintln(os.Stderr)
+			// Log body (redact authorization)
+			bodyStr := string(jsonData)
+			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Body (%d bytes): %s\n", len(jsonData), truncateJSON(bodyStr, 1000))
+		}
+
 		// Make request
 		resp, err := ic.client.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to make request (attempt %d): %w", attempt+1, err)
+			if ic.debugVerbose {
+				fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] <<< Request failed: %v\n", err)
+			}
 			continue
+		}
+
+		// Debug verbose: log response status
+		if ic.debugVerbose {
+			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] <<< Response: %d %s\n", resp.StatusCode, resp.Status)
 		}
 
 		// Handle 429 rate limiting - retry with backoff
@@ -684,6 +715,11 @@ CacheN       int `json:"cache_n"`
 
 			data := strings.TrimPrefix(line, "data: ")
 
+			// Debug verbose-verbose: log raw SSE data before any processing
+			if ic.debugVerboseVerbose {
+				fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE-VERBOSE] >>> SSE raw body: %s\n", data)
+			}
+
 			// Check for end of stream
 			if data == "[DONE]" {
 				break
@@ -910,3 +946,11 @@ func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, 
 
 	return total
 }
+// truncateJSON truncates a JSON string to a maximum length, appending "..." if truncated.
+func truncateJSON(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+

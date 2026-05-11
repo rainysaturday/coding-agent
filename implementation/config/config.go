@@ -54,8 +54,10 @@ type Config struct {
 	MaxIterations int
 
 	// Debug settings
-	Debug    bool
-	DebugLog string
+	Debug                 bool
+	DebugLog              string
+	DebugVerbose          bool
+	DebugVerboseVerbose   bool
 }
 
 // DefaultConfig returns a config with default values.
@@ -221,6 +223,10 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.DebugLog = args[i]
+		case "--debug-verbose":
+			cfg.DebugVerbose = true
+		case "--debug-verbose-verbose":
+			cfg.DebugVerboseVerbose = true
 		case "--api-key":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--api-key requires an argument")
@@ -382,6 +388,12 @@ func loadEnv(cfg *Config) {
 	}
 	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
 		cfg.DebugLog = val
+	}
+	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE"); val != "" {
+		cfg.DebugVerbose = val == "true" || val == "1"
+	}
+	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE_VERBOSE"); val != "" {
+		cfg.DebugVerboseVerbose = val == "true" || val == "1"
 	}
 	// Read-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
