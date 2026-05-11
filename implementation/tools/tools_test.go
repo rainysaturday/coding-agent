@@ -2390,3 +2390,83 @@ func TestExecute_GitShow_InReadOnlyMode_Allowed(t *testing.T) {
 		t.Fatalf("Expected git_show to succeed in read-only mode, got: %s", result.Error)
 	}
 }
+
+func TestExecute_Bash_Timeout(t *testing.T) {
+	te := NewToolExecutor()
+	// Use a very short timeout (10ms) to trigger the timeout quickly
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "sleep 10",
+			"timeout": 10,
+		},
+	})
+	if result.Success {
+		t.Fatal("Expected failure due to timeout")
+	}
+	if result.ExitCode != 124 {
+		t.Errorf("Expected exit code 124 for timeout, got %d", result.ExitCode)
+	}
+	if !strings.Contains(result.Error, "timed out") {
+		t.Errorf("Expected timeout error message, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Error, "10ms") {
+		t.Errorf("Expected timeout value in error message, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Error, "Consider increasing the timeout") {
+		t.Errorf("Expected timeout suggestion in error message, got: %s", result.Error)
+	}
+}
+
+func TestExecute_Bash_DefaultTimeout(t *testing.T) {
+	te := NewToolExecutor()
+	// Command should succeed within default 30s timeout
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo hello",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "hello") {
+		t.Errorf("Expected 'hello' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Bash_CustomTimeout(t *testing.T) {
+	te := NewToolExecutor()
+	// Use a custom timeout of 5000ms (5 seconds) for a quick command
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo test",
+			"timeout": 5000,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "test") {
+		t.Errorf("Expected 'test' in output, got: %s", result.Output)
+	}
+}
+
+func TestExecute_Bash_ZeroTimeoutFallsBackToDefault(t *testing.T) {
+	te := NewToolExecutor()
+	// Zero timeout should fall back to default
+	result := te.Execute(&ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo fallback",
+			"timeout": 0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "fallback") {
+		t.Errorf("Expected 'fallback' in output, got: %s", result.Output)
+	}
+}

@@ -3,6 +3,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -168,6 +169,9 @@ func isReadOnlyTool(name string) bool { //nolint:funlen
 	return name == "read_file" || name == "list_files" || name == "read_lines" || name == "grep" || name == "git_log" || name == "git_show" || name == "git_diff"
 }
 
+// Default timeout for bash commands in milliseconds
+const defaultBashTimeoutMs = 30000
+
 // executeBash executes a bash command.
 func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
 	command, ok := params["command"].(string)
@@ -178,30 +182,83 @@ func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
 		}
 	}
 
-	cmd := exec.Command("bash", "-c", command)
-	output, err := cmd.CombinedOutput()
-
-	// Extract exit code
-	exitCode := 0
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode = exitError.ExitCode()
+	// Parse optional timeout parameter (in milliseconds), default to 30 seconds
+	timeoutMs := defaultBashTimeoutMs
+	if timeoutParam, hasTimeout := params["timeout"]; hasTimeout {
+		switch v := timeoutParam.(type) {
+		case float64:
+			timeoutMs = int(v)
+		case int:
+			timeoutMs = v
+		case string:
+			if t, err := strconv.Atoi(v); err == nil && t > 0 {
+				timeoutMs = t
+			}
 		}
 	}
 
-	result := &ToolResult{
-		ExitCode: exitCode,
+	// Ensure timeout is positive
+	if timeoutMs <= 0 {
+		timeoutMs = defaultBashTimeoutMs
 	}
 
-	if err != nil {
-		result.Success = false
-		result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", err, string(output))
-	} else {
-		result.Success = true
-		result.Output = string(output)
-	}
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
 
-	return result
+	// Channel to receive command result
+	type cmdResult struct {
+		output []byte
+		err    error
+	}
+	resultChan := make(chan cmdResult, 1)
+
+	go func() {
+		cmd := exec.CommandContext(ctx, "bash", "-c", command)
+		output, err := cmd.CombinedOutput()
+		resultChan <- cmdResult{output: output, err: err}
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-ctx.Done():
+		// Timeout occurred
+		exitCode := 124 // Convention: 124 for timeout (like GNU timeout)
+		if ctx.Err() == context.DeadlineExceeded {
+			return &ToolResult{
+				Success:  false,
+				ExitCode: exitCode,
+				Error:    fmt.Sprintf("command timed out after %dms (timeout exceeded). The command did not complete within the specified timeout period. Consider increasing the timeout parameter (in milliseconds) if the command needs more time, or optimizing the command to run faster.", timeoutMs),
+			}
+		}
+		return &ToolResult{
+			Success:  false,
+			ExitCode: exitCode,
+			Error:    fmt.Sprintf("command failed with context error: %v", ctx.Err()),
+		}
+	case res := <-resultChan:
+		// Extract exit code
+		exitCode := 0
+		if res.err != nil {
+			if exitError, ok := res.err.(*exec.ExitError); ok {
+				exitCode = exitError.ExitCode()
+			}
+		}
+
+		result := &ToolResult{
+			ExitCode: exitCode,
+		}
+
+		if res.err != nil {
+			result.Success = false
+			result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", res.err, string(res.output))
+		} else {
+			result.Success = true
+			result.Output = string(res.output)
+		}
+
+		return result
+	}
 }
 
 // executeReadFile reads a file.
