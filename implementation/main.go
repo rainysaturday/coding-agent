@@ -14,7 +14,6 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -27,8 +26,8 @@ import (
 // Version information injected at build time
 // Terminal color codes for one-shot mode output.
 const (
-	ColorReset  = "\033[0m"
-	ColorDim    = "\033[90m"
+	ColorReset = "\033[0m"
+	ColorDim   = "\033[90m"
 )
 
 var (
@@ -354,37 +353,84 @@ func runInteractiveMode(cfg *config.Config) error {
 		tuiInstance.SetContextSize(size, max)
 	})
 
-	// Set up cancellation with a root context that signal handler controls.
-	// Each request gets a child context derived from this, so cancelling the
-	// root cancels the currently running agent operation.
-	// These are re-created after each cancellation so subsequent Ctrl+C works.
-	rootCtx, rootCancel := context.WithCancel(context.Background())
+	// signalState holds the current signal handling state, protected by a mutex.
+	// This prevents race conditions during signal handler recreation.
+	type signalState struct {
+		rootCtx     context.Context
+		rootCancel  context.CancelFunc
+		sigChan     chan os.Signal
+		handlerDone chan struct{} // Closed when the signal handler goroutine exits
+	}
 
+	var sigMu sync.Mutex
+	st := &signalState{
+		handlerDone: make(chan struct{}),
+	}
+
+	// initSignalHandler sets up the root context and signal handler goroutine.
+	// Must be called with sigMu held.
+	initSignalHandler := func(s *signalState) {
+		s.rootCtx, s.rootCancel = context.WithCancel(context.Background())
+		s.sigChan = make(chan os.Signal, 1)
+		signal.Notify(s.sigChan, syscall.SIGINT, syscall.SIGTERM)
+		s.handlerDone = make(chan struct{})
+	}
+	initSignalHandler(st)
+
+	// recreateSignalState shuts down the old signal handler and creates a fresh
+	// context and handler. Must be called when rootCtx is cancelled. Thread-safe.
+	recreateSignalState := func() {
+		sigMu.Lock()
+		defer sigMu.Unlock()
+
+		// Stop signal delivery to the old channel and close it.
+		signal.Stop(st.sigChan)
+		close(st.sigChan)
+
+		// Wait briefly for the old handler to exit
+		select {
+		case <-st.handlerDone:
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Create fresh state
+		initSignalHandler(st)
+	}
+
+	// promptState tracks whether we're at the input prompt.
+	// When true, signals are ignored (TUI handles Ctrl+C in raw mode).
+	// When false, signals trigger cancellation.
+	var promptMu sync.Mutex
+	atPrompt := false
+
+	// cancelSignal is sent when Ctrl+C should cancel the current operation.
+	cancelSignal := make(chan struct{}, 1)
+
+	// Start the prompt-aware signal handler goroutine.
+	// This goroutine runs for the lifetime of interactive mode.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for range sigChan {
+			promptMu.Lock()
+			isPrompting := atPrompt
+			promptMu.Unlock()
 
-	// Track whether we're waiting at the prompt. The signal handler checks this
-	// flag and skips cancellation when we're waiting for user input. This prevents
-	// Ctrl+C pressed during prompt input from immediately cancelling the next request.
-	var isPrompting atomic.Bool
-
-	// Signal handler goroutine - listens for SIGINT/SIGTERM and cancels root context
-	// when NOT waiting at the prompt. Restarted after context recreation to use new rootCancel.
-	sigHandlerDone := make(chan struct{})
-	startSigHandler := func() {
-		go func() {
-			defer close(sigHandlerDone)
-			for range sigChan {
-				// If we're currently waiting for user input at the prompt,
-				// skip cancellation - the TUI handles Ctrl+C internally.
-				if isPrompting.Load() {
-					continue
-				}
-				rootCancel()
+			if isPrompting {
+				// Signal during prompt input - let TUI handle it via its raw mode
+				// The TUI will detect the Ctrl+C byte directly
+				continue
 			}
-		}()
-	}
-	startSigHandler()
+
+			// Signal during agent execution - cancel the operation
+			select {
+			case cancelSignal <- struct{}{}:
+			default:
+				// Already signalling cancellation
+			}
+		}
+	}()
 
 	// Wait group to track running agent operations
 	var wg sync.WaitGroup
@@ -394,33 +440,41 @@ func runInteractiveMode(cfg *config.Config) error {
 		// Wait for any previous operation to complete
 		wg.Wait()
 
-		// Mark that we're waiting at the prompt - signal handler will skip
-		// cancellation during this time, letting the TUI handle Ctrl+C internally
-		isPrompting.Store(true)
-		input, err := tuiInstance.Prompt()
-		isPrompting.Store(false)
+		// Ensure we have a valid root context (recreate if cancelled)
+		sigMu.Lock()
+		select {
+		case <-st.rootCtx.Done():
+			// Root context was cancelled, recreate everything
+			sigMu.Unlock()
+			recreateSignalState()
+		default:
+			sigMu.Unlock()
+		}
 
+		// Mark that we're at the prompt - signal handler will skip cancellation
+		promptMu.Lock()
+		atPrompt = true
+		promptMu.Unlock()
+
+		input, err := tuiInstance.Prompt()
+
+		// Mark that we're no longer at the prompt
+		promptMu.Lock()
+		atPrompt = false
+		promptMu.Unlock()
+
+		// Handle prompt errors
 		if err != nil {
-			if err.Error() == "cancelled" {
-				// Handle cancellation - wait for old signal handler to finish
-				// (so it doesn't interfere with the new context), drain any
-				// pending SIGINT signals, and recreate a fresh root context.
-				<-sigHandlerDone
-				select {
-				case <-sigChan:
-				default:
+			if err.Error() == "cancelled" || err.Error() == "EOF" {
+				if err.Error() == "EOF" {
+					fmt.Println("\nGoodbye!")
 				}
-				rootCtx, rootCancel = context.WithCancel(context.Background())
-				startSigHandler()
-				continue
-			}
-			if err.Error() == "EOF" {
-				// End of input (Ctrl+D), exit gracefully
-				fmt.Println("\nGoodbye!")
-				rootCancel()
+				signal.Stop(sigChan)
+				close(sigChan)
 				return nil
 			}
-			rootCancel()
+			signal.Stop(sigChan)
+			close(sigChan)
 			return err
 		}
 
@@ -455,9 +509,26 @@ func runInteractiveMode(cfg *config.Config) error {
 			}
 		}
 
-		// Create a new child context for this request (derived from rootCtx)
-		// Cancelling rootCtx (via signal handler) will cancel this context too
-		ctx, cancel := context.WithCancel(rootCtx)
+		// Get current root context for this request
+		sigMu.Lock()
+		currentRootCtx := st.rootCtx
+		sigMu.Unlock()
+
+		// Create a cancellable context for this request derived from rootCtx.
+		// The context can be cancelled by:
+		// 1. Ctrl+C during agent execution (via cancelSignal channel)
+		// 2. Root context cancellation
+		ctx, cancel := context.WithCancel(currentRootCtx)
+
+		// Start a goroutine to forward cancelSignal to this context's cancel
+		go func() {
+			select {
+			case <-cancelSignal:
+				cancel()
+			case <-ctx.Done():
+				// Context already cancelled (e.g., by root or completion)
+			}
+		}()
 
 		// Show waiting indicator
 		fmt.Println()
@@ -469,7 +540,7 @@ func runInteractiveMode(cfg *config.Config) error {
 		// Run agent with the prompt
 		go func(userInput string) {
 			defer wg.Done()
-			defer cancel() // Clean up child context when goroutine completes
+			defer cancel()
 
 			var result *agent.Result
 			var err error
@@ -485,27 +556,22 @@ func runInteractiveMode(cfg *config.Config) error {
 						tuiInstance.StreamNormalChunk(chunk.Text)
 					}
 				})
+				// Ensure streaming session is ended even on error
+				defer tuiInstance.StreamEnd()
 			} else {
 				// Non-streaming mode
 				result, err = ag.Run(ctx, userInput)
 			}
 
-			// Check for cancellation
-			select {
-			case <-ctx.Done():
+			// Check if we were cancelled
+			if err == context.Canceled || err == context.DeadlineExceeded {
 				fmt.Println("\n[Cancelled]")
 				return
-			default:
 			}
 
 			if err != nil {
 				fmt.Printf("\nError: %v\n", err)
 				return
-			}
-
-			// End streaming session - ensures proper newline
-			if cfg.Streaming {
-				tuiInstance.StreamEnd()
 			}
 
 			// Display final output if not already streamed

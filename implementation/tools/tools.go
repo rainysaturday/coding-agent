@@ -109,7 +109,15 @@ func ParseToolCall(raw string) (*ToolCall, error) {
 }
 
 // Execute executes a tool call and returns the result.
+// Deprecated: Use ExecuteCtx instead, which supports cancellation.
 func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
+	return te.ExecuteCtx(context.Background(), tc)
+}
+
+// ExecuteCtx executes a tool call with context support for cancellation.
+// If the context is cancelled during execution, the tool will be interrupted
+// and a cancellation result will be returned.
+func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResult {
 	te.stats.TotalCalls++
 
 	// Check if tool is allowed in read-only mode
@@ -128,7 +136,7 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 
 	switch tc.Name {
 	case "bash":
-		result = te.executeBash(tc.Parameters)
+		result = te.executeBashCtx(ctx, tc.Parameters)
 	case "read_file":
 		result = te.executeReadFile(tc.Parameters)
 	case "write_file":
@@ -140,15 +148,15 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 	case "replace_text":
 		result = te.executeReplaceText(tc.Parameters)
 	case "list_files":
-		result = te.executeListFiles(tc.Parameters)
+		result = te.executeListFilesCtx(ctx, tc.Parameters)
 	case "grep":
-		result = te.executeGrep(tc.Parameters)
+		result = te.executeGrepCtx(ctx, tc.Parameters)
 	case "git_log":
-		result = te.executeGitLog(tc.Parameters)
+		result = te.executeGitLogCtx(ctx, tc.Parameters)
 	case "git_show":
-		result = te.executeGitShow(tc.Parameters)
+		result = te.executeGitShowCtx(ctx, tc.Parameters)
 	case "git_diff":
-		result = te.executeGitDiff(tc.Parameters)
+		result = te.executeGitDiffCtx(ctx, tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,
@@ -163,6 +171,7 @@ func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
 	return result
 }
 
+
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, and git_show are safe read-only operations.
 func isReadOnlyTool(name string) bool { //nolint:funlen
@@ -172,8 +181,19 @@ func isReadOnlyTool(name string) bool { //nolint:funlen
 // Default timeout for bash commands in milliseconds
 const defaultBashTimeoutMs = 30000
 
+// isCancelled returns true if the operation was cancelled by the user.
+func isCancelled(err error) bool {
+	return err == context.Canceled
+}
+
 // executeBash executes a bash command.
+// Deprecated: Use executeBashCtx instead.
 func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
+	return te.executeBashCtx(context.Background(), params)
+}
+
+// executeBashCtx executes a bash command with context support for cancellation.
+func (te *ToolExecutor) executeBashCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	command, ok := params["command"].(string)
 	if !ok {
 		return &ToolResult{
@@ -202,8 +222,8 @@ func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
 		timeoutMs = defaultBashTimeoutMs
 	}
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	// Create a child context that respects both the parent cancellation and the timeout
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 
 	// Channel to receive command result
@@ -219,21 +239,27 @@ func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
 		resultChan <- cmdResult{output: output, err: err}
 	}()
 
-	// Wait for either completion or timeout
+	// Wait for either completion, timeout, or cancellation
 	select {
 	case <-ctx.Done():
-		// Timeout occurred
-		exitCode := 124 // Convention: 124 for timeout (like GNU timeout)
+		// Timeout or cancellation occurred
 		if ctx.Err() == context.DeadlineExceeded {
 			return &ToolResult{
 				Success:  false,
-				ExitCode: exitCode,
+				ExitCode: 124, // Convention: 124 for timeout (like GNU timeout)
 				Error:    fmt.Sprintf("command timed out after %dms (timeout exceeded). The command did not complete within the specified timeout period. Consider increasing the timeout parameter (in milliseconds) if the command needs more time, or optimizing the command to run faster.", timeoutMs),
+			}
+		}
+		if isCancelled(ctx.Err()) {
+			return &ToolResult{
+				Success:  false,
+				ExitCode: 130, // Convention: 130 for SIGINT (like bash)
+				Error:    "command was cancelled by the user",
 			}
 		}
 		return &ToolResult{
 			Success:  false,
-			ExitCode: exitCode,
+			ExitCode: 1,
 			Error:    fmt.Sprintf("command failed with context error: %v", ctx.Err()),
 		}
 	case res := <-resultChan:
@@ -651,7 +677,13 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 }
 
 // executeListFiles lists files and directories, formatted like ls.
+// Deprecated: Use executeListFilesCtx instead, which supports cancellation.
 func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolResult {
+	return te.executeListFilesCtx(context.Background(), params)
+}
+
+// executeListFilesCtx lists files and directories with context support for cancellation.
+func (te *ToolExecutor) executeListFilesCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
@@ -724,39 +756,6 @@ func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolRes
 
 	// Handle recursive listing
 	if flags["R"] {
-		var allEntries []os.DirEntry
-		err = filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			// Skip .git directories
-			if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
-				if fileInfo.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			// Skip hidden files/dirs unless "a" flag is set
-			if !flags["a"] {
-				baseName := fileInfo.Name()
-				if strings.HasPrefix(baseName, ".") {
-					if fileInfo.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
-			allEntries = append(allEntries, os.DirEntry(nil)) // placeholder
-			_ = allEntries // avoid unused variable warning
-			return nil
-		})
-		if err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   formatFileError(err, path),
-			}
-		}
-
 		// Use filepath.Walk to get entries with relative paths
 		var resultEntries []walkEntry
 		walkErr := filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
@@ -917,7 +916,6 @@ func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolRes
 		},
 	}
 }
-
 // formatSimpleList returns a simple one-per-line listing (like `ls`).
 func formatSimpleList(entries []os.DirEntry) string {
 	var lines []string
@@ -1174,7 +1172,13 @@ type matchResult struct {
 }
 
 // executeGrep searches through file contents using grep-like pattern matching.
+// Deprecated: Use executeGrepCtx instead.
 func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
+	return te.executeGrepCtx(context.Background(), params)
+}
+
+// executeGrepCtx searches through file contents using grep-like pattern matching.
+func (te *ToolExecutor) executeGrepCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	pattern, ok := params["pattern"].(string)
 	if !ok {
 		return &ToolResult{
@@ -1284,6 +1288,12 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 		// It's a directory, search recursively if flag is set
 		if flags["r"] {
 			err = filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+				// Check for cancellation
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 				if walkErr != nil {
 					return nil // Skip inaccessible files
 				}
@@ -1316,6 +1326,15 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 			})
 		} else {
 			// Non-recursive, just list files in the directory
+			// Check for cancellation before reading directory
+			select {
+			case <-ctx.Done():
+				return &ToolResult{
+					Success: false,
+					Error:   "operation was cancelled",
+				}
+			default:
+			}
 			entries, err := os.ReadDir(path)
 			if err != nil {
 				return &ToolResult{
@@ -1324,6 +1343,15 @@ func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
 				}
 			}
 			for _, entry := range entries {
+				// Check for cancellation between files
+				select {
+				case <-ctx.Done():
+					return &ToolResult{
+						Success: false,
+						Error:   "operation was cancelled",
+					}
+				default:
+				}
 				if entry.IsDir() {
 					continue
 				}
@@ -1488,7 +1516,13 @@ func hasFlag(flags []string, flag string) bool {
 }
 
 // executeGitLog views the commit history of a git repository.
+// Deprecated: Use executeGitLogCtx instead.
 func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult {
+	return te.executeGitLogCtx(context.Background(), params)
+}
+
+// executeGitLogCtx views the commit history of a git repository with context support.
+func (te *ToolExecutor) executeGitLogCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
@@ -1607,7 +1641,7 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 	subpath := ""
 	if path != "." {
 		// Check if path is itself a git repo root
-		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
 			// path is a git repo root (or . itself)
 			repoRoot := strings.TrimSpace(string(repoRootOut))
@@ -1629,14 +1663,21 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 		args = append(args, "--", subpath)
 	}
 
-	// Execute git log
-	cmd := exec.Command("git", args...)
+	// Execute git log with context for cancellation support
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = cmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
+		// Check if it was cancelled
+		if ctx.Err() != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("git log was cancelled: %v", ctx.Err()),
+			}
+		}
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
@@ -1685,7 +1726,13 @@ func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult
 }
 
 // executeGitShow shows details of a specific commit.
+// Deprecated: Use executeGitShowCtx instead.
 func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResult {
+	return te.executeGitShowCtx(context.Background(), params)
+}
+
+// executeGitShowCtx shows details of a specific commit with context support.
+func (te *ToolExecutor) executeGitShowCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
@@ -1759,7 +1806,7 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 	showSubpath := ""
 	if path != "." {
 		// Check if path is itself a git repo root
-		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
 			repoRoot := strings.TrimSpace(string(repoRootOut))
 			if repoRoot == path || repoRoot == "." {
@@ -1779,14 +1826,21 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 		args = append(args, "--", showSubpath)
 	}
 
-	// Execute git show
-	cmd := exec.Command("git", args...)
+	// Execute git show with context for cancellation support
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = showCmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
+		// Check if it was cancelled
+		if ctx.Err() != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("git show was cancelled: %v", ctx.Err()),
+			}
+		}
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,
@@ -1831,7 +1885,13 @@ func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResul
 }
 
 // executeGitDiff shows the diff between two commits, branches, or the working tree.
+// Deprecated: Use executeGitDiffCtx instead.
 func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResult {
+	return te.executeGitDiffCtx(context.Background(), params)
+}
+
+// executeGitDiffCtx shows the diff between two commits, branches, or the working tree with context support.
+func (te *ToolExecutor) executeGitDiffCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
@@ -1950,7 +2010,7 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 	diffCmdDir := path
 	diffSubpath := ""
 	if path != "." {
-		repoRootCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
 			repoRoot := strings.TrimSpace(string(repoRootOut))
 			if repoRoot == path || repoRoot == "." {
@@ -1970,14 +2030,21 @@ func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResul
 		args = append(args, "--", diffSubpath)
 	}
 
-	// Execute git diff
-	cmd := exec.Command("git", args...)
+	// Execute git diff with context for cancellation support
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = diffCmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
+		// Check if it was cancelled
+		if ctx.Err() != nil {
+			return &ToolResult{
+				Success: false,
+				Error:   fmt.Sprintf("git diff was cancelled: %v", ctx.Err()),
+			}
+		}
 		// Check if it's a git repository
-		gitCmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
 			return &ToolResult{
 				Success: false,

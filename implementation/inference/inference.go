@@ -367,6 +367,12 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 
 		// Handle streaming or non-streaming response
 		if ic.streaming {
+			// Set read deadline to prevent hanging on slow/stalled streams.
+			// http.Response.Body implements SetReadDeadline for network connections,
+			// so this always succeeds in normal operation.
+			if rc, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
+				_ = rc.SetReadDeadline(time.Now().Add(ic.timeout))
+			}
 			return ic.handleStreamResponse(resp.Body, callback)
 		}
 		return ic.handleResponse(resp.Body)
@@ -518,6 +524,8 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var outputTokens int
 	// Track which reasoning field was used during streaming
 	var reasoningContentType string
+	// Track whether we saw the [DONE] marker (normal stream termination)
+	streamEndedNormally := false
 
 	// Use a slice to accumulate tool calls in order
 	// Each entry accumulates partial data from streaming deltas
@@ -744,6 +752,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 
 			// Check for end of stream
 			if data == "[DONE]" {
+				streamEndedNormally = true
 				break
 			}
 
@@ -843,7 +852,13 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("stream error: %w", err)
+		return nil, fmt.Errorf("stream error (scanner failure): %w", err)
+	}
+
+	// Check if the stream ended unexpectedly (without [DONE] marker)
+	// This can happen when the inference provider closes the connection mid-stream
+	if !streamEndedNormally {
+		return nil, fmt.Errorf("stream ended unexpectedly (EOF before [DONE] marker)")
 	}
 
 	// Content is the actual response text (does NOT include reasoning).

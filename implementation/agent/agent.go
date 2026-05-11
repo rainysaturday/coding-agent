@@ -360,6 +360,13 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		if len(response.ToolCalls) > 0 {
 			// Execute tool calls
 			for _, tc := range response.ToolCalls {
+				// Check for cancellation before executing each tool
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				default:
+				}
+
 				// Stream tool call status to user
 				// In streaming mode, the inference client already sent "[Tool Call] X" notification.
 				// We send "[Running] X" here with parameter details (e.g., the command being executed).
@@ -370,8 +377,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					ToolCall: tc,
 				}
 
-				// Execute the tool
-				result := a.toolExecutor.Execute(tc)
+				// Execute the tool with context support for cancellation
+				result := a.toolExecutor.ExecuteCtx(ctx, tc)
 				step.ToolResult = result
 
 				// Log tool result if debug is enabled
