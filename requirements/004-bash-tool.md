@@ -26,6 +26,10 @@ The harness must support a `bash` tool that allows execution of shell commands v
         "command": {
           "type": "string",
           "description": "The bash command or script to execute"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout in milliseconds (default: 30000)"
         }
       },
       "required": ["command"]
@@ -89,6 +93,11 @@ The OpenAI API returns tool calls in the following format:
   - Single-line commands use regular JSON strings
   - Multi-line scripts use `\n` escape sequences
   - All special characters must be JSON-escaped
+- `timeout`: Command timeout in milliseconds (optional, integer, default: 30000)
+  - If the command does not complete within the timeout, execution is terminated
+  - Timeout value must be positive
+  - If timeout occurs, the error message will clearly indicate it was a timeout
+
 
 ### Examples
 
@@ -151,3 +160,8 @@ On failure:
 - `error`: Description of the error
 - `success`: `false`
 - `exit_code`: Non-zero exit code
+On timeout (exit code 124):
+- `error`: "command timed out after Xms (timeout exceeded). The command did not complete within the specified timeout period. Consider increasing the timeout parameter..."
+- `success`: `false`
+- `exit_code`: 124 (convention used by GNU `timeout` command)
+

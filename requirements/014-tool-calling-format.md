@@ -126,6 +126,7 @@ Execute a bash command in the terminal.
 
 **Parameters:**
 - `command` (string, required): The bash command to execute
+- `timeout` (integer, optional): Timeout in milliseconds (default: 30000)
 
 **Example Request:**
 ```json
@@ -140,6 +141,10 @@ Execute a bash command in the terminal.
         "command": {
           "type": "string",
           "description": "The bash command to execute"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout in milliseconds (default: 30000)"
         }
       },
       "required": ["command"]
@@ -156,6 +161,18 @@ Execute a bash command in the terminal.
   "function": {
     "name": "bash",
     "arguments": "{\"command\":\"ls -la /home/user\"}"
+  }
+}
+```
+
+**Example Tool Call with timeout:**
+```json
+{
+  "id": "call_abc123",
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "arguments": "{\"command\":\"long-running-command\",\"timeout\":60000}"
   }
 }
 ```
