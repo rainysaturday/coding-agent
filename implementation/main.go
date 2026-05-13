@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/coding-agent/harness/agent"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/inference"
@@ -340,6 +342,16 @@ func runInteractiveMode(cfg *config.Config) error {
 
 	// Initialize agent
 	ag := agent.NewAgent(cfg)
+
+	// Detect terminal width and set max display width for tool call arguments
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		width, _, err := term.GetSize(fd)
+		if err == nil && width > 0 {
+			// Reserve space for UI elements and use remaining width for arguments
+			// Typically we want to leave ~30 chars for other UI elements (tool name, brackets, etc.)
+			ag.SetMaxDisplayWidth(width - 30)
+		}
+	}
 
 	// Ensure debug logger is closed on exit
 	if cfg.Debug {

@@ -231,6 +231,12 @@ func (a *Agent) SetAPIKey(key string) {
 	a.inference.SetAPIKey(key)
 }
 
+// SetMaxDisplayWidth sets the maximum display width for tool call arguments.
+// This is used to truncate long parameter values to prevent terminal line wrapping.
+func (a *Agent) SetMaxDisplayWidth(width int) {
+	a.inference.SetMaxDisplayWidth(width)
+}
+
 // GetSystemPrompt returns the current system prompt.
 func (a *Agent) GetSystemPrompt() string {
 	return a.systemPrompt
@@ -367,10 +373,10 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				default:
 				}
 
-				// Stream tool call status to user
-				// In streaming mode, the inference client already sent "[Tool Call] X" notification.
-				// We send "[Running] X" here with parameter details (e.g., the command being executed).
-				streamStatus(tc.Name, tc.Parameters, a.streamCallback)
+				// Show full tool parameters to user before execution
+				// The streaming display showed truncated args, but we show the complete
+				// command/parameters when the tool is actually called
+				streamToolCallWithFullParams(tc, a.streamCallback)
 
 				step := Step{
 					Action:   fmt.Sprintf("Calling tool: %s", tc.Name),
@@ -714,6 +720,119 @@ func (a *Agent) groupAssistantToolMessages(messages []*inference.Message) []*inf
 		result = append(result, group...)
 	}
 	return result
+}
+
+// streamToolCallWithFullParams streams the full tool call with complete parameters.
+// This is called when a tool is about to be executed, showing the full command/parameters
+// (not truncated like during streaming display).
+func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
+	var msg string
+
+	// Format the full parameters for display
+	var paramsStr string
+	if len(tc.Parameters) > 0 {
+		paramsStr = formatFullToolParams(tc.Parameters)
+	}
+
+	switch tc.Name {
+	case "bash":
+		cmd := ""
+		if p, ok := tc.Parameters["command"].(string); ok {
+			cmd = p
+		}
+		if cmd != "" && paramsStr != "" {
+			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", ColorCyan, cmd, ColorReset)
+		} else if cmd != "" {
+			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", ColorCyan, cmd, ColorReset)
+		} else if paramsStr != "" {
+			msg = fmt.Sprintf("\n%s[Bash] (%s)%s\n", ColorCyan, paramsStr, ColorReset)
+		}
+	case "read_file":
+		path := ""
+		if p, ok := tc.Parameters["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", ColorCyan, path, ColorReset)
+	case "read_lines":
+		path := ""
+		if p, ok := tc.Parameters["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", ColorCyan, path, ColorReset)
+	case "write_file":
+		path := ""
+		if p, ok := tc.Parameters["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Write] %s%s\n", ColorCyan, path, ColorReset)
+	case "insert_lines":
+		path := ""
+		if p, ok := tc.Parameters["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", ColorCyan, path, ColorReset)
+	case "replace_text":
+		path := ""
+		if p, ok := tc.Parameters["path"].(string); ok {
+			path = p
+		}
+		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", ColorCyan, path, ColorReset)
+	default:
+		if paramsStr != "" {
+			msg = fmt.Sprintf("\n%s[Tool: %s] (%s)%s\n", ColorCyan, tc.Name, paramsStr, ColorReset)
+		} else {
+			msg = fmt.Sprintf("\n%s[Tool: %s]%s\n", ColorCyan, tc.Name, ColorReset)
+		}
+	}
+
+	if callback != nil {
+		callback(inference.StreamingChunk{
+			Text:        msg,
+			ContentType: inference.StreamingContentTypeNormal,
+		})
+	} else if msg != "" {
+		fmt.Print(msg)
+	}
+}
+
+// formatFullToolParams formats tool parameters as a readable string for display.
+func formatFullToolParams(params map[string]interface{}) string {
+	if len(params) == 0 {
+		return ""
+	}
+
+	var parts []string
+	for key, value := range params {
+		parts = append(parts, fmt.Sprintf("%s: %s", key, formatParamValue(value)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatParamValue formats a single parameter value for display.
+func formatParamValue(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return fmt.Sprintf("%q", v)
+	case float64:
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%.1f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	case nil:
+		return "null"
+	case map[string]interface{}:
+		return formatFullToolParams(v)
+	case []interface{}:
+		var items []string
+		for _, item := range v {
+			items = append(items, formatParamValue(item))
+		}
+		return "[" + strings.Join(items, ", ") + "]"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // ANSI color codes for tool feedback

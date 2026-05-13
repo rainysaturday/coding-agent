@@ -29,7 +29,8 @@ type TUI struct {
 	streamBuffer      strings.Builder // Normal (non-reasoning) content
 	reasoningBuffer   strings.Builder // Reasoning/thinking content
 	contextSize       int
-	maxContextSize    int
+	lastContentWasToolCall bool
+	maxContextSize        int
 	inputLine         string // Current input line buffer (shared with history navigation)
 	currentInput      string // Stores typed input when navigating to history
 	transitionedFromReasoning bool // Whether we've transitioned from reasoning to normal content
@@ -275,6 +276,8 @@ func (t *TUI) StreamChunk(text string) {
 }
 
 // StreamChunkWithType outputs a chunk of streaming text with a specific content type.
+// For tool call parameter updates (indicated by "[Tool Call] " prefix), it uses
+// ANSI cursor positioning to update the line in place instead of appending.
 func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingContentType) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -292,7 +295,26 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 			t.transitionedFromReasoning = true
 		}
 		t.streamBuffer.WriteString(text)
-		fmt.Print(text)
+		
+		// Check if this is a tool call parameter update
+		// Tool call updates start with "[Tool Call] " prefix (e.g., "[Tool Call] bash (command: "value")")
+		// We want to update the previous [Tool Call] line in place using ANSI cursor positioning
+		if strings.HasPrefix(text, "[Tool Call] ") {
+			// Use ANSI cursor positioning to update the line in place:
+			// \033[2K - Clear entire current line
+			// \r - Return cursor to start of line
+			// Then print the new full tool call with parameters
+			fmt.Print("\033[2K\r" + text)
+			t.lastContentWasToolCall = true
+		} else {
+			// For non-tool-call content: ensure we start on a new line if previous content was a tool call
+			if t.lastContentWasToolCall {
+				fmt.Print("\n")
+			}
+			// Regular content - just print it
+			fmt.Print(text)
+			t.lastContentWasToolCall = false
+		}
 	}
 }
 

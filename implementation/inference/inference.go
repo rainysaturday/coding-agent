@@ -54,6 +54,7 @@ type InferenceClient struct {
 	tools               []ToolDefinition
 	debugVerbose        bool
 	debugVerboseVerbose bool
+	maxDisplayWidth     int // Maximum display width for tool call arguments (0 = no limit)
 }
 
 // Message represents a chat message.
@@ -159,6 +160,12 @@ func (ic *InferenceClient) SetAPIKey(key string) {
 // SetTools sets the available tools for tool calling.
 func (ic *InferenceClient) SetTools(tools []ToolDefinition) {
 	ic.tools = tools
+}
+
+// SetMaxDisplayWidth sets the maximum display width for tool call arguments.
+// This is used to truncate long parameter values to prevent terminal line wrapping.
+func (ic *InferenceClient) SetMaxDisplayWidth(width int) {
+	ic.maxDisplayWidth = width
 }
 
 // GetTools returns the registered tools.
@@ -616,15 +623,43 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			existing.Arguments += deltaTC.Function.Arguments
 		}
 
-		// Notify about new tool call if callback is available
+	// Notify about new tool call if callback is available
 		if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
 			toolName := deltaTC.Function.Name
-			notification := fmt.Sprintf("\n[Tool Call] %s\n", toolName)
+			notification := fmt.Sprintf("\n[Tool Call] %s", toolName)
 			callback(StreamingChunk{
 				Text:        notification,
 				ContentType: StreamingContentTypeNormal,
 			})
 			notifiedToolCalls[targetIndex] = true
+		}
+
+		// Stream accumulated arguments as they arrive (if we have any and have seen the name)
+		if callback != nil && existing.Name != "" && existing.Arguments != "" {
+			// Format the accumulated arguments for display
+			var prettyArgs string
+			var params map[string]interface{}
+			if err := json.Unmarshal([]byte(existing.Arguments), &params); err == nil {
+				// Calculate available width for arguments
+				// Format: " (key: value, ...)"
+				// Reserve space for " (" (2 chars) and ")" (1 char)
+				argsMaxWidth := ic.maxDisplayWidth - 3
+				if argsMaxWidth < 20 {
+					argsMaxWidth = 20 // Minimum width for readability
+				}
+				prettyArgs = formatToolCallArgs(params, argsMaxWidth)
+			} else {
+				// If JSON parsing fails, show raw arguments (truncated if needed)
+				prettyArgs = existing.Arguments
+				if ic.maxDisplayWidth > 0 && len(prettyArgs) > ic.maxDisplayWidth-3 {
+					prettyArgs = prettyArgs[:ic.maxDisplayWidth-6] + "..."
+				}
+			}
+			argsUpdate := fmt.Sprintf("[Tool Call] %s (%s)", existing.Name, prettyArgs)
+			callback(StreamingChunk{
+				Text:        argsUpdate,
+				ContentType: StreamingContentTypeNormal,
+			})
 		}
 	}
 
@@ -1008,6 +1043,166 @@ func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, 
 	}
 
 	return total
+}
+
+// formatToolCallArgs formats tool call arguments as a flat single-line string
+// for display in the TUI during streaming.
+// The maxArgWidth parameter limits the total width of the argument display.
+// This produces output like: key1: "value1", key2: "value2"
+// Instead of pretty-printed multi-line JSON which causes visual noise.
+func formatToolCallArgs(params map[string]interface{}, maxArgWidth int) string {
+	if len(params) == 0 {
+		return "{}"
+	}
+
+	numParams := len(params)
+
+	// Reserve space for separators (", " between params = 2 chars each)
+	separatorWidth := (numParams - 1) * 2
+	availableWidth := maxArgWidth - separatorWidth
+	if availableWidth < 20 {
+		availableWidth = 20
+	}
+
+	// Calculate per-parameter budget
+	// Reserve ~6 chars for "key: " prefix (key name + ": ")
+	perParamWidth := availableWidth / numParams
+	valueWidth := perParamWidth - 6
+	if valueWidth < 8 {
+		valueWidth = 8
+	}
+
+	// Build flat single-line output for streaming
+	var parts []string
+	for key, value := range params {
+		formattedValue := formatJSONValueWithMaxWidth(value, valueWidth)
+		parts = append(parts, fmt.Sprintf("%s: %s", key, formattedValue))
+	}
+
+	result := strings.Join(parts, ", ")
+
+	// Safety: if result still exceeds max width (can happen with many params),
+	// truncate and indicate truncation
+	if maxArgWidth > 0 && len(result) > maxArgWidth {
+		// Truncate to max width minus space for "..." suffix
+		truncLimit := maxArgWidth - 4
+		if truncLimit < 10 {
+			truncLimit = 10
+		}
+		return result[:truncLimit] + "..."
+	}
+
+	return result
+}
+
+// formatJSONValue formats a single JSON value for display with a default max width.
+func formatJSONValue(value interface{}) string {
+	return formatJSONValueWithMaxWidth(value, 100)
+}
+
+// formatJSONValueWithMaxWidth formats a single JSON value for display with a maximum width limit.
+func formatJSONValueWithMaxWidth(value interface{}, maxWidth int) string {
+	switch v := value.(type) {
+	case string:
+		// Truncate long strings for display
+		// Leave room for quotes and potential " (N chars)" suffix
+		quoteWidth := 2 // opening and closing quotes
+		suffixWidth := 10 // " (...) " minimum for suffix
+		availableWidth := maxWidth - quoteWidth - suffixWidth
+		if availableWidth < 10 {
+			availableWidth = 10
+		}
+		if len(v) > availableWidth {
+			return fmt.Sprintf("%q (%d chars)", v[:availableWidth], len(v))
+		}
+		return fmt.Sprintf("%q", v)
+	case float64:
+		// JSON numbers are unmarshaled as float64
+		if v == float64(int64(v)) {
+			return fmt.Sprintf("%d", int64(v))
+		}
+		return fmt.Sprintf("%.1f", v)
+	case bool:
+		return fmt.Sprintf("%t", v)
+	case nil:
+		return "null"
+	case map[string]interface{}:
+		return formatJSONMapWithMaxWidth(v, maxWidth)
+	case []interface{}:
+		return formatJSONArrayWithMaxWidth(v, maxWidth)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// formatJSONMap formats a nested map for display as a flat single-line string.
+// This keeps the streaming display clean by avoiding newlines.
+func formatJSONMap(m map[string]interface{}) string {
+	return formatJSONMapWithMaxWidth(m, 100)
+}
+
+// formatJSONMapWithMaxWidth formats a nested map for display with a maximum width limit.
+func formatJSONMapWithMaxWidth(m map[string]interface{}, maxWidth int) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+
+	// Reserve space for braces and separators
+	bracesWidth := 2 // { }
+	numEntries := len(m)
+	separatorWidth := (numEntries - 1) * 2 // ", "
+	availableWidth := maxWidth - bracesWidth - separatorWidth
+	if availableWidth < 10 {
+		return "{...}"
+	}
+
+	perEntryWidth := availableWidth / numEntries
+
+	var parts []string
+	for key, value := range m {
+		// Reserve space for "key: "
+		valueWidth := perEntryWidth - 5
+		if valueWidth < 5 {
+			valueWidth = 5
+		}
+		formattedValue := formatJSONValueWithMaxWidth(value, valueWidth)
+		parts = append(parts, fmt.Sprintf("%s: %s", key, formattedValue))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// formatJSONArray formats a nested array for display.
+func formatJSONArray(arr []interface{}) string {
+	return formatJSONArrayWithMaxWidth(arr, 100)
+}
+
+// formatJSONArrayWithMaxWidth formats a nested array for display with a maximum width limit.
+func formatJSONArrayWithMaxWidth(arr []interface{}, maxWidth int) string {
+	if len(arr) == 0 {
+		return "[]"
+	}
+	// For arrays, just show the length if it's long
+	if len(arr) > 10 {
+		return fmt.Sprintf("[%d items]", len(arr))
+	}
+
+	// Reserve space for brackets and separators
+	bracketsWidth := 2 // [ ]
+	numItems := len(arr)
+	separatorWidth := (numItems - 1) * 2 // ", "
+	availableWidth := maxWidth - bracketsWidth - separatorWidth
+	if availableWidth < 10 {
+		return fmt.Sprintf("[%d items]", len(arr))
+	}
+
+	perItemWidth := availableWidth / numItems
+
+	var parts []string
+	for _, item := range arr {
+		formattedItem := formatJSONValueWithMaxWidth(item, perItemWidth)
+		parts = append(parts, formattedItem)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // truncateJSON truncates a JSON string to a maximum length, appending "..." if truncated.
