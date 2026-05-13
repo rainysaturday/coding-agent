@@ -14,6 +14,7 @@ LDFLAGS := -X main.gitHash=$(GIT_HASH) \
 BINARY := coding-agent
 
 .PHONY: all build build-all build-darwin-arm64 build-linux-amd64 build-windows-amd64 clean test vet lint help
+.PARALLEL:
 
 all: build-all
 
@@ -41,7 +42,8 @@ build:
 	@echo "Build Time: $(BUILD_TIME)"
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
-build-all: build-darwin-arm64 build-linux-amd64 build-windows-amd64
+build-all:
+	@$(MAKE) -j build-darwin-arm64 build-linux-amd64 build-windows-amd64
 
 build-darwin-arm64:
 	@echo "Building $(BINARY) for arm64-darwin..."
