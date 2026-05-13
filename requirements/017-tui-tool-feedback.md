@@ -5,7 +5,8 @@ The coding agent harness must provide brief but relevant feedback to the user in
 
 ## Acceptance Criteria
 - [ ] Tool call initiation is displayed in the TUI before execution
-- [ ] Tool call display includes tool name and key parameters
+- [ ] Tool call display includes tool name and parameters
+- [ ] **Tool parameters are displayed in real-time as they are streamed from the LLM**
 - [ ] Tool execution results are displayed in the TUI after completion
 - [ ] Success messages are brief and informative (e.g., "File written successfully")
 - [ ] Tool output is displayed in a readable format (truncated if too long)
@@ -17,17 +18,27 @@ The coding agent harness must provide brief but relevant feedback to the user in
 
 ## Implementation Details
 
-### Tool Call Display Format
+### Tool Call Display Format (Streaming)
 
-When a tool is called, display:
+When a tool is being called, the TUI displays the tool name and parameters **as they are streamed in from the LLM**. The format is:
+
 ```
-Calling tool: tool_name
+[Tool Call] tool_name (parameter: "value", another_param: "value")
 ```
 
-Or with key parameter:
-```
-Calling tool: bash (command: "ls -la")
-```
+**Important**: Parameters should be displayed in real-time as they arrive during streaming. The parameters are shown in a flat, single-line format (not pretty-printed JSON) to keep the display clean. The line updates **in-place** using ANSI cursor positioning (clear line + carriage return) so the user sees a single evolving line rather than multiple appended lines.
+
+### Streaming Implementation Notes
+
+The tool call parameters are streamed in real-time from the LLM response. The display should:
+
+1. Show the tool name when first detected
+2. Continuously update **in place on the same line** to show accumulating parameters as they arrive
+3. Format parameters in a **flat, single-line format** (e.g., `command: "ls -la", path: "/tmp"`) rather than pretty-printed multi-line JSON
+4. Use ANSI escape sequences (`\033[2K\r`) to clear and re-print the line for in-place updates
+5. **Truncate long parameter values** to fit within the terminal width, with a "(N chars)" suffix indicating the original length
+6. **Ensure total argument display stays within terminal width** - if multiple parameters would exceed the limit, values are truncated progressively
+7. Handle multiple tool calls in sequence correctly
 
 ### Success Result Display Format
 
@@ -85,8 +96,9 @@ Tool 'write_file' failed: permission denied
 1. **Brevity**: Feedback should be concise and to the point
 2. **Clarity**: Users should immediately understand what happened
 3. **Completeness**: Enough information to diagnose issues
-4. **Non-intrusive**: Feedback should not interrupt user flow
-5. **Accessible**: All users can see and understand the feedback
+4. **Real-time visibility**: Tool parameters should be visible as they stream in, not only after completion
+5. **Non-intrusive**: Feedback should not interrupt user flow
+6. **Accessible**: All users can see and understand the feedback
 
 ## Example Flow
 
@@ -100,7 +112,7 @@ Tool 'write_file' failed: permission denied
 
 [Assistant] I'll list the files in /tmp first.
 
-Calling tool: bash (command: "ls -la /tmp")
+[Tool Call] bash (command: "ls -la /tmp")
 
 Tool 'bash' executed successfully:
 total 24
@@ -109,13 +121,24 @@ drwxrwxrwt 1 user user 4096 ...
 
 [Assistant] Now I'll save this listing to a file.
 
-Calling tool: write_file (path: "/tmp/list.txt")
+[Tool Call] write_file (path: "/tmp/list.txt", content: "...")
 
 Tool 'write_file' executed successfully:
 File written to /tmp/list.txt
 
 [Assistant] I've listed the files in /tmp and saved the output to /tmp/list.txt.
 ```
+
+## Streaming Implementation Notes
+
+The tool call parameters are streamed in real-time from the LLM response. The display should:
+
+1. Show the tool name when first detected
+2. Continuously update **in place on the same line** to show accumulating parameters as they arrive
+3. Format parameters in a **flat, single-line format** (e.g., `command: "ls -la", path: "/tmp"`) rather than pretty-printed multi-line JSON
+4. Use ANSI escape sequences (`\033[2K\r`) to clear and re-print the line for in-place updates
+5. Truncate very long parameter values to prevent terminal flooding
+6. Handle multiple tool calls in sequence correctly
 
 ## Security Considerations
 

@@ -330,11 +330,21 @@ When using streaming mode, tool calls arrive as partial deltas that must be accu
    - **Full arguments required**: Only execute when all arguments are accumulated
    - **Parse after stream**: Convert accumulated tool calls to internal format after stream ends
 
+### TUI Streaming Display
+
+During streaming, the TUI displays tool calls and their parameters in real-time:
+
+1. **Tool Name Display**: When the tool name is first detected, display `[Tool Call] <name>`
+2. **Parameter Streaming**: As arguments stream in, continuously update the display with accumulating parameters **in-place on the same line**
+3. **Format**: Parameters are shown in a flat, single-line format, e.g., `[Tool Call] bash (command: "ls -la /tmp")`
+4. **Real-time Updates**: The user sees parameters as they arrive, not only after the stream completes
+5. **In-place Updates**: The TUI uses ANSI cursor positioning (clear line + carriage return) to update the display on the same line, preventing visual noise from multiple lines
+
 ### Streaming vs Non-Streaming Behavior
 
 | Mode | Tool Call Processing | User Feedback |
 |------|---------------------|---------------|
-| Streaming | Accumulate deltas, execute after `[DONE]` | Stream via callback |
+| Streaming | Accumulate deltas, execute after `[DONE]` | Stream tool name and parameters in real-time |
 | Non-Streaming | Parse complete response, execute immediately | Print to stdout |
 
 ### Example Streaming Sequence
@@ -345,7 +355,14 @@ Chunk 2: delta.tool_calls[0] = {id: "call_1", function: {arguments: "{\"command\
 Chunk 3: delta.tool_calls[0] = {id: "call_1", function: {arguments: ":\"ls -la\"}"}}
 [DONE]
 
+TUI Display (updates in place on same line):
+[Tool Call] bash
+[Tool Call] bash (command:
+[Tool Call] bash (command: "ls -la")
+
 Accumulated: {id: "call_1", function: {name: "bash", arguments: "{\"command\":\"ls -la\"}"}}
 Parsed params: {command: "ls -la"}
 → Execute bash tool
 ```
+
+**Note**: The TUI uses ANSI escape sequences (`\033[2K\r`) to clear the current line and return the cursor to the beginning before printing updated parameters. This ensures the parameter display updates in place rather than appending to multiple lines, providing a clean, readable user experience.
