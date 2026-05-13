@@ -377,12 +377,13 @@ func TestFormatToolStatus_Success(t *testing.T) {
 			tool: "insert_lines",
 			result: &tools.ToolResult{
 				Success: true,
+				Output:  "Inserted 3 line(s) at line 5 in: /test/file.txt\n--- Content inserted ---\nline1\nline2\nline3",
 				Extra: map[string]interface{}{
 					"linesInserted": 3,
 				},
 			},
 			check: func(s string) bool {
-				return strings.Contains(s, "inserted 3")
+				return strings.Contains(s, "inserted 3") || strings.Contains(s, "Inserted 3")
 			},
 		},
 		{
@@ -390,13 +391,14 @@ func TestFormatToolStatus_Success(t *testing.T) {
 			tool: "replace_text",
 			result: &tools.ToolResult{
 				Success: true,
+				Output:  "Replaced 'old' with 'new' 2 time(s) in: /test/file.txt\n--- Preview ---\nreplaced line",
 				Extra: map[string]interface{}{
 					"replacementsMade": 2,
 					"search":           "old",
 				},
 			},
 			check: func(s string) bool {
-				return strings.Contains(s, "replaced") && strings.Contains(s, "'old'")
+				return strings.Contains(s, "Replaced") && strings.Contains(s, "'old'")
 			},
 		},
 		{

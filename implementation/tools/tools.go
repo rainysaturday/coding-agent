@@ -354,7 +354,7 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 
 	return &ToolResult{
 		Success: true,
-		Output:  fmt.Sprintf("File written successfully: %s (%d bytes)", path, len(content)),
+		Output:  fmt.Sprintf("File written: %s (%d bytes)\n--- Content preview ---\n%s", path, len(content), truncateOutput(content, 20)),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"message":       fmt.Sprintf("File written successfully: %s", path),
@@ -550,7 +550,7 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 
 	return &ToolResult{
 		Success: true,
-		Output:  fmt.Sprintf("Inserted %d line(s) at line %d in: %s", len(newLines), insertLine, path),
+		Output:  fmt.Sprintf("Inserted %d line(s) at line %d in: %s\n--- Content inserted ---\n%s", len(newLines), insertLine, path, truncateOutput(insertLines, 10)),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"line":          insertLine,
@@ -666,7 +666,7 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 
 	return &ToolResult{
 		Success: true,
-		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s", searchText, replaceText, replacementsMade, path),
+		Output:  fmt.Sprintf("Replaced '%s' with '%s' %d time(s) in: %s\n--- Preview ---\n%s", truncateString(searchText, 30), truncateString(replaceText, 30), replacementsMade, path, previewReplacement(originalContent, searchText, replaceText, 5)),
 		Path:    path,
 		Extra: map[string]interface{}{
 			"search":           searchText,
@@ -1132,6 +1132,42 @@ func humanReadableSize(size int64) string {
 // countLines counts the number of lines in text.
 // A line is defined as text terminated by a newline character.
 // An empty string has 0 lines. Text without a trailing newline still counts as a line.
+// truncateOutput truncates text to a maximum number of lines for display purposes.
+// It adds a "[truncated]" suffix if the content was truncated.
+func truncateOutput(text string, maxLines int) string {
+	if text == "" {
+		return "(empty file)"
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > maxLines {
+		return strings.Join(lines[:maxLines], "\n") + "\n... [content truncated]"
+	}
+	return text
+}
+// truncateString truncates a string to a maximum length, adding "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// previewReplacement shows the first N lines of the content after replacement for verification.
+func previewReplacement(original, search, replace string, maxLines int) string {
+	lines := strings.Split(original, "\n")
+	var result []string
+	for _, line := range lines {
+		if strings.Contains(line, search) {
+			result = append(result, strings.Replace(line, search, replace, 1))
+		} else {
+			result = append(result, line)
+		}
+	}
+	if len(result) > maxLines {
+		return strings.Join(result[:maxLines], "\n") + "\n... [truncated]"
+	}
+	return strings.Join(result, "\n")
+}
 func countLines(text string) int {
 	if text == "" {
 		return 0

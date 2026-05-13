@@ -846,10 +846,10 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			}
 			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
 		case "write_file":
-			if msg, ok := result.Extra["message"].(string); ok {
-				return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, msg, ColorReset)
-			}
-			return fmt.Sprintf("%s[Success] file written%s\n", ColorGreen, ColorReset)
+			// Show the file path, size, and truncated content preview
+			output := result.Output
+			// Parse the output to extract path and size info
+			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
 		case "read_lines":
 			// Show the lines that were read, truncated if too long
 			output := result.Output
@@ -862,33 +862,43 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			}
 			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
 		case "insert_lines":
-			count := 0
-			if c, ok := result.Extra["linesInserted"].(int); ok {
-				count = c
-			}
-			return fmt.Sprintf("%s[Success] inserted %d line(s)%s\n", ColorGreen, count, ColorReset)
+			// Show the full output including path, line count, and content preview
+			output := result.Output
+			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
 		case "replace_text":
-			count := 0
-			if c, ok := result.Extra["replacementsMade"].(int); ok {
-				count = c
-			}
-			search := ""
-			if s, ok := result.Extra["search"].(string); ok {
-				search = s
-				if len(search) > 20 {
-					search = search[:20] + "..."
-				}
-			}
-			return fmt.Sprintf("%s[Success] replaced '%s' %d time(s)%s\n", ColorGreen, search, count, ColorReset)
+			// Show the full output including search, replace, count, and preview
+			output := result.Output
+			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
 		case "list_files":
+			// Show the actual file listing with path and count
+			output := result.Output
 			entries := 0
 			if e, ok := result.Extra["entriesListed"].(int); ok {
 				entries = e
 			}
-			return fmt.Sprintf("%s[Success] listed %d entries%s\n", ColorGreen, entries, ColorReset)
+			// Truncate output if too long
+			if len(output) > 500 {
+				output = output[:500] + "\n... [listing truncated]"
+			}
+			return fmt.Sprintf("%s[Success] listed %d entries%s\n%s\n", ColorGreen, entries, ColorReset, output)
 		case "grep":
-			return fmt.Sprintf("%s[Success] grep completed%s\n", ColorGreen, ColorReset)
+			// Show the actual grep results with match count
+			output := result.Output
+			matches := 0
+			if m, ok := result.Extra["matchesFound"].(int); ok {
+				matches = m
+			}
+			// Truncate output if too long
+			if len(output) > 1000 {
+				output = output[:1000] + "\n... [output truncated]"
+			}
+			if matches == 0 {
+				return fmt.Sprintf("%s[Success] grep: 0 matches found%s\n", ColorGreen, ColorReset)
+			}
+			return fmt.Sprintf("%s[Success] grep: %d matches found\n%s%s\n", ColorGreen, matches, output, ColorReset)
 		case "git_log":
+			// Show the git log output with summary info
+			output := result.Output
 			reference := "HEAD"
 			if r, ok := result.Extra["reference"].(string); ok && r != "" {
 				reference = r
@@ -897,14 +907,26 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if c, ok := result.Extra["count"].(int); ok {
 				count = c
 			}
-			return fmt.Sprintf("%s[Success] git log: %d commits from %s%s\n", ColorGreen, count, reference, ColorReset)
+			// Truncate output if too long
+			if len(output) > 1000 {
+				output = output[:1000] + "\n... [log truncated]"
+			}
+			return fmt.Sprintf("%s[Success] git log: %d commits from %s\n%s%s\n", ColorGreen, count, reference, output, ColorReset)
 		case "git_show":
+			// Show the git show output with commit details
+			output := result.Output
 			commit := "HEAD"
 			if c, ok := result.Extra["commitReference"].(string); ok && c != "" {
 				commit = c
 			}
-			return fmt.Sprintf("%s[Success] git show %s%s\n", ColorGreen, commit, ColorReset)
+			// Truncate output if too long
+			if len(output) > 1000 {
+				output = output[:1000] + "\n... [output truncated]"
+			}
+			return fmt.Sprintf("%s[Success] git show %s\n%s%s\n", ColorGreen, commit, output, ColorReset)
 		case "git_diff":
+			// Show the git diff output with summary info
+			output := result.Output
 			ref1 := ""
 			if r, ok := result.Extra["reference1"].(string); ok && r != "" {
 				ref1 = r
@@ -913,6 +935,10 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if r, ok := result.Extra["reference2"].(string); ok && r != "" {
 				ref2 = r
 			}
+			// Truncate output if too long
+			if len(output) > 1000 {
+				output = output[:1000] + "\n... [diff truncated]"
+			}
 			msg := fmt.Sprintf("%s[Success] git diff", ColorGreen)
 			if ref1 != "" {
 				msg += fmt.Sprintf(" %s", ref1)
@@ -920,7 +946,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if ref2 != "" {
 				msg += fmt.Sprintf(" %s", ref2)
 			}
-			msg += ColorReset
+			msg += "\n" + output + ColorReset
 			return msg
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
