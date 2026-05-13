@@ -13,42 +13,56 @@ LDFLAGS := -X main.gitHash=$(GIT_HASH) \
 # Output binary name
 BINARY := coding-agent
 
-.PHONY: all build clean test vet lint help
+.PHONY: all build build-all build-darwin-arm64 build-linux-amd64 build-windows-amd64 clean test vet lint help
 
-all: build
+all: build-all
 
 help:
 	@echo "Minimal Coding Agent Harness"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make build     - Build the binary"
-	@echo "  make test      - Run tests"
-	@echo "  make vet       - Run go vet"
-	@echo "  make lint      - Run golangci-lint (if available)"
-	@echo "  make clean     - Clean build artifacts"
-	@echo "  make version   - Show version information"
-	@echo "  make help      - Show this help"
+	@echo "  make all                        - Build for all platforms (arm64-darwin, x86_64-linux, x86_64-windows)"
+	@echo "  make build                      - Build for the current platform"
+	@echo "  make build-all                  - Build for all platforms (alias for make all)"
+	@echo "  make build-darwin-arm64         - Build for Apple Silicon macOS"
+	@echo "  make build-linux-amd64          - Build for 64-bit Linux"
+	@echo "  make build-windows-amd64        - Build for 64-bit Windows"
+	@echo "  make test                       - Run tests"
+	@echo "  make vet                        - Run go vet"
+	@echo "  make lint                       - Run golangci-lint (if available)"
+	@echo "  make clean                      - Clean build artifacts"
+	@echo "  make version                    - Show version information"
+	@echo "  make help                       - Show this help"
 
 build:
-	@echo "Building $(BINARY)..."
+	@echo "Building $(BINARY) for current platform..."
 	@echo "Git Hash: $(GIT_HASH)"
 	@echo "Dirty: $(GIT_DIRTY)"
 	@echo "Build Time: $(BUILD_TIME)"
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
-build-windows:
-	@echo "Building $(BINARY) for Windows..."
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY).exe .
+build-all: build-darwin-arm64 build-linux-amd64 build-windows-amd64
 
-build-linux:
-	@echo "Building $(BINARY) for Linux..."
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-linux .
+build-darwin-arm64:
+	@echo "Building $(BINARY) for arm64-darwin..."
+	@echo "Git Hash: $(GIT_HASH)"
+	@echo "Dirty: $(GIT_DIRTY)"
+	@echo "Build Time: $(BUILD_TIME)"
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-arm64 .
 
-build-macos:
-	@echo "Building $(BINARY) for macOS..."
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-macos .
+build-linux-amd64:
+	@echo "Building $(BINARY) for x86_64-linux..."
+	@echo "Git Hash: $(GIT_HASH)"
+	@echo "Dirty: $(GIT_DIRTY)"
+	@echo "Build Time: $(BUILD_TIME)"
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-linux-amd64 .
 
-build-all: build-windows build-linux build-macos
+build-windows-amd64:
+	@echo "Building $(BINARY) for x86_64-windows..."
+	@echo "Git Hash: $(GIT_HASH)"
+	@echo "Dirty: $(GIT_DIRTY)"
+	@echo "Build Time: $(BUILD_TIME)"
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-windows-amd64.exe .
 
 test:
 	@echo "Running tests with coverage..."
@@ -75,6 +89,7 @@ lint:
 clean:
 	@echo "Cleaning..."
 	rm -f $(BINARY) $(BINARY).exe $(BINARY)-linux $(BINARY)-macos
+	rm -f $(BINARY)-darwin-arm64 $(BINARY)-linux-amd64 $(BINARY)-windows-amd64.exe
 	rm -f coverage.out coverage.html
 	go clean
 

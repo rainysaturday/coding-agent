@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -919,15 +918,8 @@ func formatFileLong(info os.FileInfo, flags map[string]bool) string {
 		name += "/"
 	}
 
-	// Get actual ownership info via syscall
-	linkCount := "1"
-	owner := "?"
-	group := "?"
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
-		linkCount = fmt.Sprintf("%d", stat.Nlink)
-		owner = strconv.Itoa(int(stat.Uid))
-		group = strconv.Itoa(int(stat.Gid))
-	}
+	// Get ownership info via platform-specific function
+	linkCount, owner, group := getFileInfoDetails(info.Sys())
 
 	// Format: permissions links owner group size timestamp name
 	return fmt.Sprintf("%s  %s  %s  %s  %s  %s  %s", permStr, linkCount, owner, group, sizeStr, timeStr, name)
