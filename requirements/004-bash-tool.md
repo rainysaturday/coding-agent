@@ -12,6 +12,25 @@ The harness must support a `bash` tool that allows execution of shell commands v
 - [ ] Handles command execution errors gracefully
 - [ ] Tool call failures are tracked in statistics
 
+## TUI Feedback for Bash Output
+
+When displaying bash tool results in the TUI:
+- The output should show the **last lines (tail)** of the command output, not the beginning
+- This is because for bash commands, the end of output typically contains the actual results and is more useful for the user
+- If the output exceeds 5 lines, show only the last 5 lines with a "[output truncated]" indicator at the beginning
+- Display the exit code if non-zero
+
+Example TUI display:
+```
+Tool 'bash' executed successfully:
+... [output truncated]
+line_n-4
+line_n-3
+line_n-2
+line_n-1
+line_n
+```
+
 ## Tool Definition (OpenAI Format)
 
 ```json
