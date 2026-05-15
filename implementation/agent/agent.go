@@ -937,12 +937,12 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 	if result.Success {
 		switch toolName {
 		case "bash":
-			// Show exit code and truncated output
+			// Show exit code and truncated output (tail end is more useful for bash commands)
 			output := result.Output
 			lines := strings.Split(output, "\n")
 			if len(lines) > 5 {
-				lines = lines[:5]
-				output = strings.Join(lines, "\n") + "\n... [output truncated]"
+				lines = lines[len(lines)-5:]
+				output = "... [output truncated]\n" + strings.Join(lines, "\n")
 			}
 			exitCode := ""
 			if result.ExitCode != 0 {
