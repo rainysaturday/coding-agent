@@ -142,6 +142,13 @@ func displayHelp() {
 	fmt.Println("  -h, --help               Show this help message")
 	fmt.Println("  -v, --version            Show version information")
 	fmt.Println()
+	fmt.Println("Interactive Commands:")
+	fmt.Println("  /stats       - Display runtime statistics")
+	fmt.Println("  /clear       - Clear the output display")
+	fmt.Println("  /clear-history - Clear input history")
+	fmt.Println("  /read-only   - Enable read-only mode")
+	fmt.Println("  /compress    - Manually trigger context compression")
+	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  coding-agent -p \"Create a REST API in Go\"")
 	fmt.Println("  coding-agent --prompt-file task.txt")
@@ -334,7 +341,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only")
+	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only, /compress")
 	fmt.Println()
 
 	// Initialize TUI
@@ -513,10 +520,25 @@ func runInteractiveMode(cfg *config.Config) error {
 				ag.GetToolExecutor().SetReadOnly(true)
 				fmt.Println("\n[Read-only mode enabled: write operations disabled]")
 				continue
+			case "compress":
+				fmt.Print("\n[Compressing context...]")
+				timeout := time.Duration(cfg.ReadTimeout) * time.Second
+				if timeout == 0 {
+					timeout = 7200 * time.Second // Default to 2 hours if not set
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), timeout)
+				err := ag.CompressContext(ctx)
+				cancel()
+				if err != nil {
+					fmt.Printf("\n[Compression failed: %v]\n", err)
+				} else {
+					fmt.Println("\n[Context compressed successfully]")
+				}
+				continue
 			default:
 				// Unknown command - show error
 				fmt.Printf("Unknown command: /%s\n", command)
-				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only")
+				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only, /compress")
 				continue
 			}
 		}

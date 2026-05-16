@@ -115,6 +115,7 @@ Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and
 - `/clear` - Clear the output display
 - `/clear-history` - Clear input history
 - `/read-only` - Enable read-only mode (disables write operations)
+- `/compress` - Manually trigger context compression
 
 ## Usage Examples
 

@@ -1640,6 +1640,13 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 	}
 }
 
+// CompressContext manually triggers context compression.
+// This is a public wrapper around the internal compressContext method,
+// allowing the TUI to trigger compression on demand via the /compress command.
+func (a *Agent) CompressContext(ctx context.Context) error {
+	return a.compressContext(ctx)
+}
+
 // getBuildVersion returns the build version string.
 // This is injected at build time via linker flags.
 var buildVersion = "unknown"
