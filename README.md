@@ -9,6 +9,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 - **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and `git_diff`)
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
+- **Goal Mode**: Set a goal with `/goal` and the agent will automatically check if it's achieved
 - **One-Shot Mode**: Non-interactive mode for CI/CD integration
 - **Zero External Dependencies**: Built entirely with Go standard library
 
@@ -116,6 +117,8 @@ Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and
 - `/clear-history` - Clear input history
 - `/read-only` - Enable read-only mode (disables write operations)
 - `/compress` - Manually trigger context compression
+- `/goal <prompt>` - Set a goal to guide the agent (e.g., `/goal Create a REST API`)
+- `/goal-off` - Deactivate goal mode
 
 ## Usage Examples
 

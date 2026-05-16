@@ -39,6 +39,8 @@ type Agent struct {
 	contextSizeCallback ContextSizeCallback
 	maxContextSize      int
 	compressionCount    int
+	goal                string        // Current goal prompt (empty string means goal mode is off)
+	goalActive          bool          // Whether goal mode is currently active
 	debugLogger         *debug.DebugLogger
 	mu                  sync.Mutex
 	// lastTotalTokens is the exact total_tokens from the last API response.
@@ -252,6 +254,71 @@ func (a *Agent) GetToolExecutor() *tools.ToolExecutor {
 	return a.toolExecutor
 }
 
+// SetGoal sets a goal for the agent. When goal mode is active, the agent will
+// check if the goal has been achieved after each inference response that has
+// no tool calls (a natural end).
+func (a *Agent) SetGoal(goal string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if goal == "" {
+		a.goalActive = false
+		a.goal = ""
+		return
+	}
+	a.goal = goal
+	a.goalActive = true
+}
+
+// ClearGoal deactivates goal mode.
+func (a *Agent) ClearGoal() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.goalActive = false
+	a.goal = ""
+}
+
+// IsGoalActive returns whether goal mode is currently active.
+func (a *Agent) IsGoalActive() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.goalActive
+}
+
+// GetGoal returns the current goal prompt (empty string if goal mode is off).
+func (a *Agent) GetGoal() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.goal
+}
+
+// shouldCheckGoal returns true if goal mode is active and a goal is set.
+func (a *Agent) shouldCheckGoal() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.goalActive && a.goal != ""
+}
+
+// injectGoalCheck injects a goal check user message into the context.
+// This is treated as an automatically injected user prompt that will go through
+// the full agentic loop on the next iteration. The LLM can run tools to verify
+// its work before responding with "goal achieved" or continuing.
+func (a *Agent) injectGoalCheck() {
+	goalCheckPrompt := fmt.Sprintf(`Please review the current state of your work. Have you achieved the following goal?
+
+Goal: %s
+
+If you have achieved the goal, respond with "goal achieved".
+If you have not achieved the goal, explain what remains to be done and continue working.`, a.goal)
+
+	// Create and add a user message for the goal check
+	a.mu.Lock()
+	a.context = append(a.context, &inference.Message{
+		Role:    "user",
+		Content: goalCheckPrompt,
+	})
+	a.mu.Unlock()
+}
+
 // Run runs the agent with the given prompt.
 func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 	// Log user message if debug is enabled
@@ -423,9 +490,37 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			continue // Loop for next iteration
 		}
 
-		// No tool calls - this is the final response
+		// No tool calls - this is a natural end of the agentic loop
+		// First, save the assistant response
+		a.mu.Lock()
+		assistantResponse := response.Content
+		a.mu.Unlock()
+
+		// Check if goal mode is active
+		if a.shouldCheckGoal() {
+			// Check if goal was achieved (case-insensitive) in this natural end response
+			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
+				// Goal achieved - return the result
+				return &Result{
+					FinalOutput: assistantResponse,
+					Reasoning:   response.Reasoning,
+					Steps:       steps,
+					TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,
+				}, nil
+			}
+
+			// Goal not yet achieved - inject a goal check message as an automatically
+			// generated user prompt and continue the loop. The LLM will go through
+			// the full agentic loop: it can run tools to verify its work, continue
+			// working, or respond with "goal achieved".
+			a.injectGoalCheck()
+
+			continue // Continue the loop with the goal check message
+		}
+
+		// No tool calls and no goal active - this is the final response
 		return &Result{
-			FinalOutput: response.Content,
+			FinalOutput: assistantResponse,
 			Reasoning:   response.Reasoning,
 			Steps:       steps,
 			TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,

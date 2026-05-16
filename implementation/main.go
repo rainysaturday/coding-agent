@@ -148,6 +148,8 @@ func displayHelp() {
 	fmt.Println("  /clear-history - Clear input history")
 	fmt.Println("  /read-only   - Enable read-only mode")
 	fmt.Println("  /compress    - Manually trigger context compression")
+	fmt.Println("  /goal <prompt>    - Set a goal to guide the agent")
+	fmt.Println("  /goal-off         - Deactivate goal mode")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  coding-agent -p \"Create a REST API in Go\"")
@@ -341,7 +343,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only, /compress")
+	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off")
 	fmt.Println()
 
 	// Initialize TUI
@@ -503,7 +505,11 @@ func runInteractiveMode(cfg *config.Config) error {
 
 		// Handle commands (with / prefix)
 		if strings.HasPrefix(input, "/") {
-			command := strings.TrimPrefix(input, "/")
+			// Extract the full command string after "/"
+			fullCommand := strings.TrimPrefix(input, "/")
+			// Split to get the command name and arguments
+			parts := strings.SplitN(fullCommand, " ", 2)
+			command := parts[0]
 
 			switch command {
 			case "stats":
@@ -535,10 +541,27 @@ func runInteractiveMode(cfg *config.Config) error {
 					fmt.Println("\n[Context compressed successfully]")
 				}
 				continue
+			case "goal":
+				// Extract the goal prompt (everything after "/goal ")
+				var goalPrompt string
+				if len(parts) > 1 {
+					goalPrompt = strings.TrimSpace(parts[1])
+				}
+				if goalPrompt == "" {
+					fmt.Println("Usage: /goal <your goal here>")
+					continue
+				}
+				ag.SetGoal(goalPrompt)
+				fmt.Printf("\n[Goal mode activated: %q]\n", goalPrompt)
+				continue
+			case "goal-off":
+				ag.ClearGoal()
+				fmt.Println("\n[Goal mode deactivated]")
+				continue
 			default:
 				// Unknown command - show error
 				fmt.Printf("Unknown command: /%s\n", command)
-				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only, /compress")
+				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off")
 				continue
 			}
 		}
