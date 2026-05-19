@@ -28,8 +28,9 @@ import (
 // Version information injected at build time
 // Terminal color codes for one-shot mode output.
 const (
-	ColorReset = "\033[0m"
-	ColorDim   = "\033[90m"
+	ColorReset   = "\033[0m"
+	ColorDim     = "\033[90m"
+	ColorMagenta = "\033[35m" // Magenta for goal messages
 )
 
 var (
@@ -205,6 +206,9 @@ func runOneShotMode(cfg *config.Config) error {
 		switch chunk.ContentType {
 		case inference.StreamingContentTypeReasoning:
 			fmt.Printf("%s%s%s", ColorDim, chunk.Text, ColorReset)
+		case inference.StreamingContentTypeGoal:
+			// Goal messages are displayed in magenta to stand out
+			fmt.Printf("%s%s%s", ColorMagenta, chunk.Text, ColorReset)
 		default:
 			// Add separator when transitioning from reasoning to normal content
 			if !transitionedFromReasoning && chunk.Text != "" {
@@ -609,6 +613,8 @@ func runInteractiveMode(cfg *config.Config) error {
 					switch chunk.ContentType {
 					case inference.StreamingContentTypeReasoning:
 						tuiInstance.StreamReasoningChunk(chunk.Text)
+					case inference.StreamingContentTypeGoal:
+						tuiInstance.StreamGoalChunk(chunk.Text)
 					default:
 						tuiInstance.StreamNormalChunk(chunk.Text)
 					}

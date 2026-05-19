@@ -27,6 +27,7 @@ type StreamingContentType int
 const (
 	StreamingContentTypeNormal StreamingContentType = iota
 	StreamingContentTypeReasoning
+	StreamingContentTypeGoal
 )
 
 // StreamingChunk represents a streaming chunk with content type.

@@ -302,6 +302,7 @@ func (a *Agent) shouldCheckGoal() bool {
 // This is treated as an automatically injected user prompt that will go through
 // the full agentic loop on the next iteration. The LLM can run tools to verify
 // its work before responding with "goal achieved" or continuing.
+// It also streams a goal check notification to the TUI.
 func (a *Agent) injectGoalCheck() {
 	goalCheckPrompt := fmt.Sprintf(`Please review the current state of your work. Have you achieved the following goal?
 
@@ -310,13 +311,26 @@ Goal: %s
 If you have achieved the goal, respond with "goal achieved".
 If you have not achieved the goal, explain what remains to be done and continue working.`, a.goal)
 
-	// Create and add a user message for the goal check
+	// Create and add a user message for the goal check, capture goal and callback while holding lock
 	a.mu.Lock()
 	a.context = append(a.context, &inference.Message{
 		Role:    "user",
 		Content: goalCheckPrompt,
 	})
+	goal := a.goal
+	streamCallback := a.streamCallback
 	a.mu.Unlock()
+
+	// Stream goal check notification to TUI with magenta color
+	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", ColorMagenta, goal, ColorReset)
+	if streamCallback != nil {
+		streamCallback(inference.StreamingChunk{
+			Text:        goalCheckMsg,
+			ContentType: inference.StreamingContentTypeGoal,
+		})
+	} else {
+		fmt.Print(goalCheckMsg)
+	}
 }
 
 // Run runs the agent with the given prompt.
@@ -494,12 +508,24 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// First, save the assistant response
 		a.mu.Lock()
 		assistantResponse := response.Content
+		streamCallback := a.streamCallback
 		a.mu.Unlock()
 
 		// Check if goal mode is active
 		if a.shouldCheckGoal() {
 			// Check if goal was achieved (case-insensitive) in this natural end response
 			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
+				// Stream goal achieved confirmation to TUI with magenta color
+				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", ColorMagenta, ColorReset)
+				if streamCallback != nil {
+					streamCallback(inference.StreamingChunk{
+						Text:        goalAchievedMsg,
+						ContentType: inference.StreamingContentTypeGoal,
+					})
+				} else {
+					fmt.Print(goalAchievedMsg)
+				}
+
 				// Goal achieved - return the result
 				return &Result{
 					FinalOutput: assistantResponse,
@@ -938,6 +964,7 @@ const (
 	ColorRed    = "\033[31m"
 	ColorCyan   = "\033[36m"
 	ColorBlue   = "\033[34m"
+	ColorMagenta = "\033[35m" // Magenta for goal messages
 )
 
 // streamStatus streams a tool call status message with color.

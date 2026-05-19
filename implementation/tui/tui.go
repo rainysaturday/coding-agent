@@ -287,6 +287,10 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 	case inference.StreamingContentTypeReasoning:
 		t.reasoningBuffer.WriteString(text)
 		fmt.Printf("%s%s%s", ColorDim, text, ColorReset)
+	case inference.StreamingContentTypeGoal:
+		// Goal messages are displayed in magenta to stand out
+		t.streamBuffer.WriteString(text)
+		fmt.Printf("%s%s%s", ColorMagenta, text, ColorReset)
 	default:
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
@@ -326,6 +330,11 @@ func (t *TUI) StreamReasoningChunk(text string) {
 // StreamNormalChunk streams regular content with normal color.
 func (t *TUI) StreamNormalChunk(text string) {
 	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
+}
+
+// StreamGoalChunk streams goal-related content with magenta color.
+func (t *TUI) StreamGoalChunk(text string) {
+	t.StreamChunkWithType(text, inference.StreamingContentTypeGoal)
 }
 
 // StreamEnd finalizes a streaming session.
@@ -532,6 +541,7 @@ const (
 	ColorGreen  = "\033[32m"
 	ColorYellow = "\033[33m"
 	ColorBlue   = "\033[34m"
+	ColorMagenta = "\033[35m" // Magenta for goal messages
 	ColorCyan   = "\033[36m"
 	ColorDim    = "\033[90m" // Dim/bright black for reasoning content
 )
