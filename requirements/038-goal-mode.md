@@ -13,6 +13,9 @@ When a user sets a goal using the `/goal` command, the agent enters goal mode. I
 - [ ] If the LLM response does not contain "goal achieved", inject another goal check and continue
 - [ ] Goal can be deactivated with `/goal-off` command
 - [ ] Goal status is displayed in the TUI when active
+- [ ] Goal checking message is displayed in the TUI when a goal check is being performed
+- [ ] Goal checking message uses a distinctive color (magenta) to stand out from other messages
+- [ ] Goal achieved confirmation message is displayed in the TUI in the special color
 - [ ] Goal checking happens transparently without user intervention
 - [ ] Goal mode works with both streaming and non-streaming modes
 
@@ -141,6 +144,37 @@ The string "goal achieved" should be matched case-insensitively:
 | Goal mode active but inference fails | Return error, do not silently continue |
 | Empty goal prompt | Show error message, do not activate goal mode |
 | Goal check causes max iterations | Return error indicating iteration limit reached |
+
+## TUI Feedback
+
+### Goal Check Message
+When the goal check is being performed (i.e., when the goal check prompt is being sent to the LLM), display a message in the TUI:
+
+```
+[Goal Check] Checking if goal is achieved: "<goal_prompt>"
+```
+
+This message should be displayed in **magenta** (`\033[35m`) to distinguish it from other message types.
+
+### Goal Achieved Confirmation
+When the goal has been achieved (i.e., the LLM response contains "goal achieved"), display a confirmation message in the TUI:
+
+```
+[Goal Achieved] ✓ Goal has been achieved!
+```
+
+This message should also be displayed in **magenta** (`\033[35m`) for consistency.
+
+### Color Scheme
+- Goal messages use magenta color (`\033[35m`) to stand out from:
+  - Normal content (white/default)
+  - Reasoning content (dim/bright black)
+  - Tool calls (cyan)
+  - Success messages (green)
+  - Error messages (red)
+
+### Implementation
+The goal messages should be streamed through the existing stream callback mechanism using a new content type `StreamingContentTypeGoal`. The TUI should handle this content type by applying the magenta color.
 
 ## Testing Requirements
 
