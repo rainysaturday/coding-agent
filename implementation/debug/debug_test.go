@@ -496,28 +496,6 @@ func TestRedactSensitiveData_MultiplePatterns(t *testing.T) {
 	}
 }
 
-func TestDebugLogger_DisabledMethods(t *testing.T) {
-	// Test all logging methods on a disabled logger
-	logger, _ := NewDebugLogger("", "v1.0.0")
-
-	// None of these should panic or error
-	logger.LogSystemPrompt("prompt", 10)
-	logger.LogUserMessage("message", 5)
-	logger.LogAssistantMessage("response", 8)
-	logger.LogToolCall("call_1", "bash", map[string]interface{}{"command": "ls"})
-	logger.LogToolResult("call_1", "bash", true, "output")
-	logger.LogToolResult("call_2", "bash", false, "error")
-	logger.LogStreamingChunk("chunk", "text")
-	logger.LogStreamingComplete()
-	logger.LogSessionSummary()
-
-	// Session should not be updated for disabled logger
-	if logger.session != nil {
-		if logger.session.TotalMessages != 0 {
-			t.Errorf("Expected 0 messages on disabled logger, got %d", logger.session.TotalMessages)
-		}
-	}
-}
 
 func TestNewDebugLogger_SessionStartTime(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -634,4 +612,60 @@ func TestLogToolCall_WithComplexParams(t *testing.T) {
 	if !strings.Contains(string(content), "TOOL CALL: read_lines") {
 		t.Error("Expected tool call to be logged")
 	}
+}
+
+
+
+func TestDebugLogger_Disabled(t *testing.T) {
+	// Create a disabled logger
+	d := &DebugLogger{
+		enabled: false,
+	}
+
+	// These should all return early without doing anything
+	d.writeLog("test %s", "message")
+	d.LogSystemPrompt("system prompt", 100)
+	d.LogUserMessage("user message", 50)
+	d.LogAssistantMessage("assistant message", 50)
+}
+
+func TestDebugLogger_Close_NoFile(t *testing.T) {
+	d := &DebugLogger{
+		enabled: true,
+		session: &SessionSummary{
+			SessionID:     "test-session",
+			StartTime:     time.Now(),
+			EndTime:       time.Now(),
+			DurationSeconds: 0.0,
+			TotalMessages:  0,
+			TotalInputTokens: 0,
+			TotalOutputTokens: 0,
+			TotalToolCalls:  0,
+			FailedToolCalls: 0,
+		},
+	}
+
+	err := d.Close()
+	if err != nil {
+		t.Errorf("Expected no error when closing with nil file, got: %v", err)
+	}
+}
+
+func TestLogStreamingChunk_Disabled(t *testing.T) {
+	d := &DebugLogger{
+		enabled: false,
+	}
+
+	// These should all return early without doing anything
+	d.LogStreamingChunk("test", "text")
+	d.LogStreamingChunk("test2", "tool_call")
+}
+
+func TestLogStreamingComplete_Disabled(t *testing.T) {
+	d := &DebugLogger{
+		enabled: false,
+	}
+
+	// Should return early without doing anything
+	d.LogStreamingComplete()
 }

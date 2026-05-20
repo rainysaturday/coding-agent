@@ -3,7 +3,10 @@ package inference
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -772,21 +775,6 @@ data: [DONE]`
 	}
 }
 
-func TestHandleStreamResponse_EmptyStream(t *testing.T) {
-	sseStream := `data: [DONE]`
-
-	body := io.NopCloser(strings.NewReader(sseStream))
-	client := NewInferenceClient(config.DefaultConfig())
-
-	resp, err := client.handleStreamResponse(body, nil)
-	if err != nil {
-		t.Fatalf("handleStreamResponse() error: %v", err)
-	}
-
-	if resp.Content != "" {
-		t.Errorf("Expected empty content for empty stream, got '%s'", resp.Content)
-	}
-}
 
 func TestHandleStreamResponse_WithCallbacks(t *testing.T) {
 	var chunks []StreamingChunk
@@ -1124,5 +1112,909 @@ func TestBuildMessages_MultipleMessages(t *testing.T) {
 		if result[i].Role != expectedRole {
 			t.Errorf("Message %d: expected role '%s', got '%s'", i, expectedRole, result[i].Role)
 		}
+	}
+}
+
+// ===== Tests for helper functions =====
+
+func TestSetMaxDisplayWidth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	ic.SetMaxDisplayWidth(80)
+	if ic.maxDisplayWidth != 80 {
+		t.Errorf("Expected maxDisplayWidth to be 80, got %d", ic.maxDisplayWidth)
+	}
+}
+
+func TestFormatToolCallArgs(t *testing.T) {
+	args := map[string]interface{}{"key1": "value1", "key2": 123}
+	result := formatToolCallArgs(args, 80)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+	result = formatToolCallArgs(map[string]interface{}{}, 80)
+	if result == "" {
+		t.Error("Expected non-empty result for empty args")
+	}
+	result = formatToolCallArgs(nil, 80)
+	if result == "" {
+		t.Error("Expected non-empty result for nil args")
+	}
+}
+
+func TestFormatJSONValue(t *testing.T) {
+	if formatJSONValue("hello") != `"hello"` {
+		t.Error("Expected \"hello\"")
+	}
+	if formatJSONValue(42) != "42" {
+		t.Error("Expected 42")
+	}
+	if formatJSONValue(true) != "true" {
+		t.Error("Expected true")
+	}
+	if formatJSONValue(nil) != "null" {
+		t.Error("Expected null")
+	}
+}
+
+func TestFormatJSONMap(t *testing.T) {
+	result := formatJSONMap(map[string]interface{}{"key": "value"})
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+func TestFormatJSONArray(t *testing.T) {
+	result := formatJSONArray([]interface{}{"a", "b", "c"})
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+func TestTruncateJSON(t *testing.T) {
+	longStr := strings.Repeat("a", 200)
+	result := truncateJSON(longStr, 10)
+	if len(result) > 13 {
+		t.Error("Expected truncated result")
+	}
+	if !strings.HasSuffix(result, "...") {
+		t.Error("Expected result to end with ...")
+	}
+}
+
+func TestFormatJSONValueWithMaxWidth(t *testing.T) {
+	result := formatJSONValueWithMaxWidth("hello", 10)
+	if result != `"hello"` {
+		t.Errorf("Expected \"hello\", got %s", result)
+	}
+	result = formatJSONValueWithMaxWidth("hello world", 10)
+	if strings.Contains(result, "hello world") {
+		t.Error("Expected truncated result")
+	}
+}
+
+func TestTruncateJSON_ExactLength(t *testing.T) {
+	result := truncateJSON("12345", 5)
+	if result != "12345" {
+		t.Errorf("Expected exact string, got %s", result)
+	}
+}
+
+func TestBuildMessages_NormalizeToolCallType(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	idx := 0
+	messages := []*Message{
+		{
+			Role:    "assistant",
+			Content: "Let me check",
+			ToolCalls: []*APIToolCall{
+				{
+					ID:   "call_1",
+					Type: "",
+					Function: FunctionCall{Name: "bash"},
+					Index: &idx,
+				},
+			},
+		},
+	}
+	result := ic.buildMessages(messages, "")
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 message, got %d", len(result))
+	}
+	if result[0].ToolCalls[0].Type != "function" {
+		t.Errorf("Expected tool call type to be 'function', got %q", result[0].ToolCalls[0].Type)
+	}
+}
+
+// ===== Tests for InferenceRequestWithCallback error paths =====
+
+func TestInferenceRequestWithCallback_ContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	callback := func(chunk string) {}
+	_, err := ic.InferenceRequestWithCallback(ctx, nil, "", callback)
+	if err == nil {
+		t.Fatal("Expected error for cancelled context")
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_ContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	callback := func(chunk StreamingChunk) {}
+	_, err := ic.InferenceRequestWithCallbackTyped(ctx, nil, "", callback)
+	if err == nil {
+		t.Fatal("Expected error for cancelled context")
+	}
+}
+
+// ===== Tests for handleStreamResponse error paths =====
+
+func TestHandleStreamResponse_EmptyBody(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	result, err := ic.handleStreamResponse(strings.NewReader("data: [DONE]\n\n"), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+}
+
+func TestHandleStreamResponse_NoContent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	result, err := ic.handleStreamResponse(strings.NewReader("data: [DONE]\n\n"), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Content != "" {
+		t.Errorf("Expected empty content, got %q", result.Content)
+	}
+}
+
+// ===== Additional tests for handleStreamResponse =====
+
+func TestHandleStreamResponse_WithContent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	
+	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result.Content != "Hello world" {
+		t.Errorf("Expected 'Hello world', got %q", result.Content)
+	}
+}
+
+
+// ===== Tests for HTTP error handling =====
+
+func TestInferenceRequestWithCallback_HttpError(t *testing.T) {
+	// Create a test server that returns an error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL
+	ic := NewInferenceClient(cfg)
+
+	callback := func(chunk string) {}
+
+	_, err := ic.InferenceRequestWithCallback(context.Background(), nil, "", callback)
+	if err == nil {
+		t.Fatal("Expected error for HTTP 500")
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_HttpError(t *testing.T) {
+	// Create a test server that returns an error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL
+	ic := NewInferenceClient(cfg)
+
+	callback := func(chunk StreamingChunk) {}
+
+	_, err := ic.InferenceRequestWithCallbackTyped(context.Background(), nil, "", callback)
+	if err == nil {
+		t.Fatal("Expected error for HTTP 500")
+	}
+}
+
+// ===== Additional tests for formatToolCallArgs =====
+
+func TestFormatToolCallArgs_EmptyMap(t *testing.T) {
+	result := formatToolCallArgs(map[string]interface{}{}, 80)
+	if result != "{}" {
+		t.Errorf("Expected '{}', got %q", result)
+	}
+}
+
+func TestFormatToolCallArgs_NilParams(t *testing.T) {
+	result := formatToolCallArgs(nil, 80)
+	if result != "{}" {
+		t.Errorf("Expected '{}', got %q", result)
+	}
+}
+
+func TestFormatToolCallArgs_SingleParam(t *testing.T) {
+	result := formatToolCallArgs(map[string]interface{}{"key": "value"}, 80)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+func TestFormatToolCallArgs_MaxWidthTruncation(t *testing.T) {
+	// Use a very small max width to trigger truncation
+	result := formatToolCallArgs(map[string]interface{}{"key": "value"}, 10)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+	// Should be truncated
+	if len(result) > 15 {
+		t.Error("Expected truncated result")
+	}
+}
+
+func TestFormatToolCallArgs_ManualParams(t *testing.T) {
+	// Test with manually constructed params like bash tool would receive
+	params := map[string]interface{}{
+		"command": "echo hello",
+		"args":    []interface{}{"arg1", "arg2"},
+	}
+	result := formatToolCallArgs(params, 100)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+// ===== Tests for formatJSONMapWithMaxWidth =====
+
+func TestFormatJSONMapWithMaxWidth(t *testing.T) {
+	m := map[string]interface{}{"key": "value"}
+	result := formatJSONMapWithMaxWidth(m, 80)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+func TestFormatJSONArrayWithMaxWidth(t *testing.T) {
+	arr := []interface{}{"a", "b", "c"}
+	result := formatJSONArrayWithMaxWidth(arr, 80)
+	if result == "" {
+		t.Error("Expected non-empty result")
+	}
+}
+
+// ===== Tests for handleStreamResponse with callbacks =====
+
+func TestHandleStreamResponse_WithCallback(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+	
+	var chunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+	}
+	
+	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), callback)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Content != "Hello world" {
+		t.Errorf("Expected 'Hello world', got %q", result.Content)
+	}
+	if len(chunks) != 2 {
+		t.Errorf("Expected 2 chunks, got %d", len(chunks))
+	}
+}
+
+// ===== Additional tests for InferenceRequestWithCallback with mock server =====
+
+func TestInferenceRequestWithCallback_MockServer(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = "" // Will use httptest server
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":" world"}}]}`)
+		fmt.Fprintln(w, `data: {"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	var chunks []string
+	callback := func(chunk string) {
+		chunks = append(chunks, chunk)
+	}
+
+	resp, err := client.InferenceRequestWithCallback(context.Background(), nil, "test", callback)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallback() error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if resp.Content != "Hello world" {
+		t.Errorf("Expected 'Hello world', got %q", resp.Content)
+	}
+	// Callback should have been called for each chunk
+	if len(chunks) != 2 {
+		t.Errorf("Expected 2 callback invocations, got %d: %v", len(chunks), chunks)
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_MockServer(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":" world"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"\n"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Final"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":" answer"}}]}`)
+		fmt.Fprintln(w, `data: {"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	var chunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+	}
+
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", callback)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallbackTyped() error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if resp.Content != "Hello world\nFinal answer" {
+		t.Errorf("Expected 'Hello world\\nFinal answer', got %q", resp.Content)
+	}
+	if len(chunks) != 5 {
+		t.Errorf("Expected 5 callback invocations, got %d: %v", len(chunks), chunks)
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_WithReasoning(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server that returns reasoning content
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning":"I need to think about this"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"The answer is 42"}}]}`)
+		fmt.Fprintln(w, `data: {"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	var chunks []string
+	var reasoningChunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+		if chunk.ContentType == StreamingContentTypeReasoning {
+			reasoningChunks = append(reasoningChunks, chunk.Text)
+		}
+	}
+
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", callback)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallbackTyped() error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if resp.Reasoning != "I need to think about this" {
+		t.Errorf("Expected reasoning 'I need to think about this', got %q", resp.Reasoning)
+	}
+	if resp.Content != "The answer is 42" {
+		t.Errorf("Expected content 'The answer is 42', got %q", resp.Content)
+	}
+	if len(reasoningChunks) != 1 {
+		t.Errorf("Expected 1 reasoning chunk, got %d: %v", len(reasoningChunks), reasoningChunks)
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_WithReasoningContent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server that returns reasoning_content (not reasoning)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning_content":"Let me reason through this"}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"The answer is 42"}}]}`)
+		fmt.Fprintln(w, `data: {"usage":{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15}}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	var chunks []string
+	var reasoningChunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+		if chunk.ContentType == StreamingContentTypeReasoning {
+			reasoningChunks = append(reasoningChunks, chunk.Text)
+		}
+	}
+
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", callback)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallbackTyped() error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if resp.Reasoning != "Let me reason through this" {
+		t.Errorf("Expected reasoning 'Let me reason through this', got %q", resp.Reasoning)
+	}
+	if resp.ReasoningContentType != "reasoning_content" {
+		t.Errorf("Expected reasoningContentType 'reasoning_content', got %q", resp.ReasoningContentType)
+	}
+	if len(reasoningChunks) != 1 {
+		t.Errorf("Expected 1 reasoning chunk, got %d: %v", len(reasoningChunks), reasoningChunks)
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_WithToolCalls(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server that returns tool calls
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash"}}]}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls -la\"}"}}]}}]}`)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":""},"finish_reason":"tool_calls"}]}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	var chunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+	}
+
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", callback)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallbackTyped() error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].ID != "call_1" {
+		t.Errorf("Expected tool call ID 'call_1', got %q", resp.ToolCalls[0].ID)
+	}
+	if resp.ToolCalls[0].Name != "bash" {
+		t.Errorf("Expected tool name 'bash', got %q", resp.ToolCalls[0].Name)
+	}
+}
+
+func TestInferenceRequestWithCallbackTyped_NilCallback(t *testing.T) {
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	// Create a mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+		fmt.Fprintln(w, `data: [DONE]`)
+	}))
+	defer server.Close()
+	client.SetEndpoint(server.URL)
+
+	// Pass nil callback - should still work
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", nil)
+	if err != nil {
+		t.Fatalf("InferenceRequestWithCallbackTyped() error with nil callback: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if resp.Content != "Hello" {
+		t.Errorf("Expected 'Hello', got %q", resp.Content)
+	}
+}
+
+func TestInferenceRequestWithCallback_MarshalError(t *testing.T) {
+	// Test the marshal error path by creating a client
+	cfg := config.DefaultConfig()
+	client := NewInferenceClient(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// This will fail due to connection error, not marshal error
+	// But it tests that the function works when no server is available
+	_, err := client.InferenceRequestWithCallback(ctx, nil, "test", nil)
+	if err == nil {
+		t.Error("Expected error when no server is running")
+	}
+}
+
+func TestHandleStreamResponse_WithReasoningContent(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	var chunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+	}
+
+	stream := `data: {"choices":[{"delta":{"reasoning_content":"Let me think about this"}}]}
+data: {"choices":[{"delta":{"content":"The answer"}}]}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), callback)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Content != "The answer" {
+		t.Errorf("Expected 'The answer', got %q", result.Content)
+	}
+	if result.Reasoning != "Let me think about this" {
+		t.Errorf("Expected reasoning 'Let me think about this', got %q", result.Reasoning)
+	}
+	if result.ReasoningContentType != "reasoning_content" {
+		t.Errorf("Expected reasoningContentType 'reasoning_content', got %q", result.ReasoningContentType)
+	}
+	if len(chunks) != 2 {
+		t.Errorf("Expected 2 chunks, got %d", len(chunks))
+	}
+}
+
+func TestHandleStreamResponse_WithToolCalls(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	var chunks []string
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
+	}
+
+	stream := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"echo"}}]}}]}` + "\n" +
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"hello"}}]}}]}` + "\n" +
+		`data: {"choices":[{"finish_reason":"tool_calls"}]}` + "\n" +
+		`data: [DONE]`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), callback)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("Expected 1 tool call, got %d", len(result.ToolCalls))
+	}
+	if result.ToolCalls[0].ID != "call_abc" {
+		t.Errorf("Expected tool call ID 'call_abc', got %q", result.ToolCalls[0].ID)
+	}
+	if result.ToolCalls[0].Name != "echo" {
+		t.Errorf("Expected tool name 'echo', got %q", result.ToolCalls[0].Name)
+	}
+}
+
+func TestHandleStreamResponse_WithTimings(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":50,"completion_tokens":100,"total_tokens":150}}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.InputTokens != 50 {
+		t.Errorf("Expected inputTokens 50, got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 100 {
+		t.Errorf("Expected outputTokens 100, got %d", result.OutputTokens)
+	}
+	if result.TokenUsage != 150 {
+		t.Errorf("Expected tokenUsage 150, got %d", result.TokenUsage)
+	}
+}
+
+func TestHandleStreamResponse_WithLlamaCppTimings(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: {"choices":[{"delta":{}}],"timings":{"prompt_n":50,"predicted_n":100,"cache_n":10}}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	// With llama.cpp timings: input = cache_n + prompt_n = 10 + 50 = 60, output = predicted_n = 100
+	if result.InputTokens != 60 {
+		t.Errorf("Expected inputTokens 60 (cache_n + prompt_n), got %d", result.InputTokens)
+	}
+	if result.OutputTokens != 100 {
+		t.Errorf("Expected outputTokens 100, got %d", result.OutputTokens)
+	}
+}
+
+func TestHandleStreamResponse_EmptyStream(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	stream := `data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Content != "" {
+		t.Errorf("Expected empty content, got %q", result.Content)
+	}
+}
+
+func TestHandleStreamResponse_MultiLineJSON(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	// Multi-line JSON response (common with tool calls with complex arguments)
+	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
+data: {"choices":[{"delta":{"content":" world"}}]}
+data: [DONE]
+`
+	result, err := ic.handleStreamResponse(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+	if result.Content != "Hello world" {
+		t.Errorf("Expected 'Hello world', got %q", result.Content)
+	}
+}
+
+func TestBuildMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there"},
+	}
+
+	result := ic.buildMessages(messages, "System prompt")
+
+	if len(result) != 3 {
+		t.Fatalf("Expected 3 messages, got %d", len(result))
+	}
+	if result[0].Role != "system" {
+		t.Errorf("Expected first message role 'system', got %q", result[0].Role)
+	}
+	if result[0].Content != "System prompt" {
+		t.Errorf("Expected first message content 'System prompt', got %q", result[0].Content)
+	}
+	if result[1].Content != "Hello" {
+		t.Errorf("Expected second message content 'Hello', got %q", result[1].Content)
+	}
+	if result[2].Content != "Hi there" {
+		t.Errorf("Expected third message content 'Hi there', got %q", result[2].Content)
+	}
+}
+
+func TestBuildMessages_WithSystemMessage(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	result := ic.buildMessages(messages, "")
+
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 message (no system prompt), got %d", len(result))
+	}
+	if result[0].Role != "user" {
+		t.Errorf("Expected first message role 'user', got %q", result[0].Role)
+	}
+}
+
+func TestBuildMessages_Empty(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	result := ic.buildMessages(nil, "")
+	if len(result) != 0 {
+		t.Errorf("Expected 0 messages, got %d", len(result))
+	}
+}
+
+func TestBuildMessages_EmptySystemPrompt(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	messages := []*Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	result := ic.buildMessages(messages, "")
+	if len(result) != 1 {
+		t.Errorf("Expected 1 message when system prompt is empty, got %d", len(result))
+	}
+}
+
+func TestInferenceClient_SetMaxDisplayWidth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	ic.SetMaxDisplayWidth(120)
+	if ic.maxDisplayWidth != 120 {
+		t.Errorf("Expected maxDisplayWidth 120, got %d", ic.maxDisplayWidth)
+	}
+}
+
+func TestInferenceClient_SetAPIKey(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	ic.SetAPIKey("test-key-123")
+	if ic.apiKey != "test-key-123" {
+		t.Errorf("Expected apiKey 'test-key-123', got %q", ic.apiKey)
+	}
+}
+
+func TestInferenceClient_GetTools(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	tools := []ToolDefinition{
+		{Type: "function", Function: FunctionDefinition{Name: "tool1", Description: "First tool", Parameters: ParameterSchema{Type: "object"}}},
+	}
+	ic.SetTools(tools)
+
+	result := ic.GetTools()
+	if len(result) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(result))
+	}
+	if result[0].Function.Name != "tool1" {
+		t.Errorf("Expected tool name 'tool1', got %q", result[0].Function.Name)
+	}
+}
+
+func TestIsCopilotEndpoint(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	// Default is not copilot
+	if ic.isCopilotEndpoint() {
+		t.Error("Expected isCopilotEndpoint to be false for default endpoint")
+	}
+
+	// Copilot endpoints
+	ic.SetEndpoint("https://copilot.githubcopilot.com/v1")
+	if !ic.isCopilotEndpoint() {
+		t.Error("Expected isCopilotEndpoint to be true for Copilot endpoint")
+	}
+
+	// Not a Copilot endpoint
+	ic.SetEndpoint("https://other-server.com/api")
+	if ic.isCopilotEndpoint() {
+		t.Error("Expected isCopilotEndpoint to be false for non-Copilot endpoint")
+	}
+}
+
+func TestIsGitHubModelsEndpoint(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	// GitHub Models endpoint (models.github.ai)
+	ic.SetEndpoint("https://models.github.ai")
+	if !ic.isGitHubModelsEndpoint() {
+		t.Error("Expected isGitHubModelsEndpoint to be true for GitHub Models endpoint")
+	}
+
+	// GitHub Models endpoint with path
+	ic.SetEndpoint("https://models.github.ai/v1")
+	if !ic.isGitHubModelsEndpoint() {
+		t.Error("Expected isGitHubModelsEndpoint to be true for GitHub Models endpoint with path")
+	}
+
+	// Not a GitHub Models endpoint
+	ic.SetEndpoint("https://other-server.com/api")
+	if ic.isGitHubModelsEndpoint() {
+		t.Error("Expected isGitHubModelsEndpoint to be false for non-GitHub Models endpoint")
+	}
+}
+
+func TestBuildURL(t *testing.T) {
+	cfg := config.DefaultConfig()
+	ic := NewInferenceClient(cfg)
+
+	// Default URL
+	url := ic.buildURL()
+	if url != "http://localhost:8080/v1/chat/completions" {
+		t.Errorf("Expected default URL, got %q", url)
+	}
+
+	// Custom endpoint without trailing slash
+	ic.SetEndpoint("https://custom-server.com")
+	url = ic.buildURL()
+	if url != "https://custom-server.com/v1/chat/completions" {
+		t.Errorf("Expected custom URL with path, got %q", url)
+	}
+
+	// Custom endpoint with trailing slash
+	ic.SetEndpoint("https://custom-server.com/")
+	url = ic.buildURL()
+	if url != "https://custom-server.com//v1/chat/completions" {
+		t.Errorf("Expected custom URL with double slash, got %q", url)
+	}
+
+	// Custom endpoint with path
+	ic.SetEndpoint("https://custom-server.com/api")
+	url = ic.buildURL()
+	if url != "https://custom-server.com/api/v1/chat/completions" {
+		t.Errorf("Expected custom URL with path, got %q", url)
 	}
 }

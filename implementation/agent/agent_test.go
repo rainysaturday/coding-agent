@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"fmt"
 	"os"
 	"strings"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -1258,3 +1262,1025 @@ func TestGoalCaseInsensitive_Matching(t *testing.T) {
 	}
 }
 
+
+// ===== Tests for Error types and utilities (previously 0% coverage) =====
+
+func TestAuthError_Error(t *testing.T) {
+	e := &AuthError{Message: "invalid API key"}
+	result := e.Error()
+	if result != "invalid API key" {
+		t.Errorf("Expected 'invalid API key', got '%s'", result)
+	}
+}
+
+func TestAuthError_Error_Default(t *testing.T) {
+	e := &AuthError{}
+	result := e.Error()
+	if result != "authentication failed" {
+		t.Errorf("Expected 'authentication failed', got '%s'", result)
+	}
+}
+
+func TestContextLimitError_Error(t *testing.T) {
+	e := &ContextLimitError{Message: "too many tokens"}
+	result := e.Error()
+	if result != "too many tokens" {
+		t.Errorf("Expected 'too many tokens', got '%s'", result)
+	}
+}
+
+func TestContextLimitError_Error_Default(t *testing.T) {
+	e := &ContextLimitError{}
+	result := e.Error()
+	if result != "context size limit exceeded" {
+		t.Errorf("Expected 'context size limit exceeded', got '%s'", result)
+	}
+}
+
+func TestIsAuthError(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		want    bool
+	}{
+		{"auth failed", fmt.Errorf("API authentication failed"), true},
+		{"401", fmt.Errorf("HTTP 401 Unauthorized"), true},
+		{"403", fmt.Errorf("HTTP 403 Forbidden"), true},
+		{"authorization", fmt.Errorf("Authorization required"), true},
+		{"API key", fmt.Errorf("Invalid API key"), true},
+		{"not auth", fmt.Errorf("some other error"), false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAuthError(tt.err)
+			if got != tt.want {
+				t.Errorf("isAuthError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsContextLimitError(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		want    bool
+	}{
+		{"context size limit", fmt.Errorf("context size limit exceeded"), true},
+		{"maximum context length", fmt.Errorf("maximum context length"), true},
+		{"maximum context length exceeded", fmt.Errorf("maximum context length exceeded"), true},
+		{"not context", fmt.Errorf("some other error"), false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isContextLimitError(tt.err)
+			if got != tt.want {
+				t.Errorf("isContextLimitError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWrapError_Nil(t *testing.T) {
+	result := wrapError(nil)
+	if result != nil {
+		t.Errorf("Expected nil, got %v", result)
+	}
+}
+
+func TestWrapError_AuthError(t *testing.T) {
+	err := fmt.Errorf("API authentication failed (HTTP 401)")
+	wrapped := wrapError(err)
+
+	_, ok := wrapped.(*AuthError)
+	if !ok {
+		t.Errorf("Expected *AuthError, got %T", wrapped)
+	}
+}
+
+func TestWrapError_ContextLimitError(t *testing.T) {
+	err := fmt.Errorf("maximum context length exceeded")
+	wrapped := wrapError(err)
+
+	_, ok := wrapped.(*ContextLimitError)
+	if !ok {
+		t.Errorf("Expected *ContextLimitError, got %T", wrapped)
+	}
+}
+
+func TestWrapError_OtherError(t *testing.T) {
+	err := fmt.Errorf("some other error")
+	wrapped := wrapError(err)
+
+	if wrapped != err {
+		t.Errorf("Expected same error, got %v", wrapped)
+	}
+}
+
+func TestSetMaxDisplayWidth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Should not panic
+	agent.SetMaxDisplayWidth(80)
+	agent.SetMaxDisplayWidth(120)
+	agent.SetMaxDisplayWidth(0)
+}
+
+func TestGetToolExecutor(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	executor := agent.GetToolExecutor()
+	if executor == nil {
+		t.Fatal("GetToolExecutor() returned nil")
+	}
+}
+
+func TestShouldCheckGoal(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Initially should not check goal
+	if agent.shouldCheckGoal() {
+		t.Error("shouldCheckGoal() should be false initially")
+	}
+
+	// Set goal - should check
+	agent.SetGoal("Test goal")
+	if !agent.shouldCheckGoal() {
+		t.Error("shouldCheckGoal() should be true after SetGoal")
+	}
+
+	// Clear goal - should not check
+	agent.ClearGoal()
+	if agent.shouldCheckGoal() {
+		t.Error("shouldCheckGoal() should be false after ClearGoal")
+	}
+}
+
+func TestExitCodes_Constants(t *testing.T) {
+	if ExitSuccess != 0 {
+		t.Errorf("Expected ExitSuccess = 0, got %d", ExitSuccess)
+	}
+	if ExitError != 1 {
+		t.Errorf("Expected ExitError = 1, got %d", ExitError)
+	}
+	if ExitUsageError != 2 {
+		t.Errorf("Expected ExitUsageError = 2, got %d", ExitUsageError)
+	}
+	if ExitAuthError != 3 {
+		t.Errorf("Expected ExitAuthError = 3, got %d", ExitAuthError)
+	}
+	if ExitContextLimit != 4 {
+		t.Errorf("Expected ExitContextLimit = 4, got %d", ExitContextLimit)
+	}
+}
+
+func TestColorConstants(t *testing.T) {
+	expected := map[string]string{
+		"ColorReset":   "\033[0m",
+		"ColorGreen":   "\033[32m",
+		"ColorYellow":  "\033[33m",
+		"ColorRed":     "\033[31m",
+		"ColorCyan":    "\033[36m",
+		"ColorBlue":    "\033[34m",
+		"ColorMagenta": "\033[35m",
+	}
+
+	if ColorReset != expected["ColorReset"] {
+		t.Errorf("ColorReset mismatch")
+	}
+	if ColorGreen != expected["ColorGreen"] {
+		t.Errorf("ColorGreen mismatch")
+	}
+	if ColorMagenta != expected["ColorMagenta"] {
+		t.Errorf("ColorMagenta mismatch")
+	}
+}
+
+func TestFormatToolStatus_ListFiles(t *testing.T) {
+	result := formatToolStatus("list_files", &tools.ToolResult{
+		Success: true,
+		Output:  "file1.txt\nfile2.txt",
+		Extra: map[string]interface{}{
+			"entriesListed": 2,
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+	if !strings.Contains(result, "2 entries") {
+		t.Error("Expected entry count")
+	}
+}
+
+func TestFormatToolStatus_Grep(t *testing.T) {
+	result := formatToolStatus("grep", &tools.ToolResult{
+		Success: true,
+		Output:  "file.txt:1:hello world",
+		Extra: map[string]interface{}{
+			"matchesFound": 1,
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+	if !strings.Contains(result, "grep") {
+		t.Error("Expected 'grep' in output")
+	}
+}
+
+func TestFormatToolStatus_GrepZeroMatches(t *testing.T) {
+	result := formatToolStatus("grep", &tools.ToolResult{
+		Success: true,
+		Output:  "",
+		Extra: map[string]interface{}{
+			"matchesFound": 0,
+		},
+	})
+
+	if !strings.Contains(result, "0 matches") {
+		t.Error("Expected '0 matches' in output")
+	}
+}
+
+func TestFormatToolStatus_GitLog(t *testing.T) {
+	result := formatToolStatus("git_log", &tools.ToolResult{
+		Success: true,
+		Output:  "commit abc123\n    Initial commit",
+		Extra: map[string]interface{}{
+			"count":     1,
+			"reference": "HEAD",
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+	if !strings.Contains(result, "git log") {
+		t.Error("Expected 'git log' in output")
+	}
+}
+
+func TestFormatToolStatus_GitShow(t *testing.T) {
+	result := formatToolStatus("git_show", &tools.ToolResult{
+		Success: true,
+		Output:  "commit abc123\n    Initial commit",
+		Extra: map[string]interface{}{
+			"commitReference": "HEAD",
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+	if !strings.Contains(result, "git show") {
+		t.Error("Expected 'git show' in output")
+	}
+}
+
+func TestFormatToolStatus_GitDiff(t *testing.T) {
+	result := formatToolStatus("git_diff", &tools.ToolResult{
+		Success: true,
+		Output:  "diff --git a/file.txt b/file.txt",
+		Extra: map[string]interface{}{
+			"reference1": "HEAD",
+			"reference2": "HEAD~1",
+		},
+	})
+
+	if !strings.Contains(result, "[Success]") {
+		t.Error("Expected success status")
+	}
+	if !strings.Contains(result, "git diff") {
+		t.Error("Expected 'git diff' in output")
+	}
+}
+
+func TestStreamToolCallWithFullParams_Bash(t *testing.T) {
+	var received []inference.StreamingChunk
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	tc := &tools.ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "ls -la /tmp",
+		},
+	}
+
+	streamToolCallWithFullParams(tc, cb)
+
+	if len(received) != 1 {
+		t.Fatalf("Expected 1 chunk, got %d", len(received))
+	}
+	if !strings.Contains(received[0].Text, "[Bash]") {
+		t.Errorf("Expected '[Bash]' in chunk, got '%s'", received[0].Text)
+	}
+	if !strings.Contains(received[0].Text, "ls -la") {
+		t.Errorf("Expected 'ls -la' in chunk, got '%s'", received[0].Text)
+	}
+}
+
+func TestStreamToolCallWithFullParams_ReadFile(t *testing.T) {
+	var received []inference.StreamingChunk
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	tc := &tools.ToolCall{
+		Name: "read_file",
+		Parameters: map[string]interface{}{
+			"path": "/tmp/test.txt",
+		},
+	}
+
+	streamToolCallWithFullParams(tc, cb)
+
+	if len(received) != 1 {
+		t.Fatalf("Expected 1 chunk, got %d", len(received))
+	}
+	if !strings.Contains(received[0].Text, "[Read]") {
+		t.Errorf("Expected '[Read]' in chunk, got '%s'", received[0].Text)
+	}
+}
+
+func TestStreamToolCallWithFullParams_WriteFile(t *testing.T) {
+	var received []inference.StreamingChunk
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	tc := &tools.ToolCall{
+		Name: "write_file",
+		Parameters: map[string]interface{}{
+			"path":    "/tmp/output.txt",
+			"content": "hello",
+		},
+	}
+
+	streamToolCallWithFullParams(tc, cb)
+
+	if len(received) != 1 {
+		t.Fatalf("Expected 1 chunk, got %d", len(received))
+	}
+	if !strings.Contains(received[0].Text, "[Write]") {
+		t.Errorf("Expected '[Write]' in chunk, got '%s'", received[0].Text)
+	}
+}
+
+func TestStreamToolCallWithFullParams_UnknownTool(t *testing.T) {
+	var received []inference.StreamingChunk
+	cb := func(chunk inference.StreamingChunk) {
+		received = append(received, chunk)
+	}
+
+	tc := &tools.ToolCall{
+		Name: "unknown_tool",
+		Parameters: map[string]interface{}{
+			"param1": "value1",
+		},
+	}
+
+	streamToolCallWithFullParams(tc, cb)
+
+	if len(received) != 1 {
+		t.Fatalf("Expected 1 chunk, got %d", len(received))
+	}
+	if !strings.Contains(received[0].Text, "[Tool: unknown_tool]") {
+		t.Errorf("Expected '[Tool: unknown_tool]' in chunk, got '%s'", received[0].Text)
+	}
+}
+
+func TestStreamToolCallWithFullParams_NilCallback(t *testing.T) {
+	tc := &tools.ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo test",
+		},
+	}
+
+	// Should not panic with nil callback
+	streamToolCallWithFullParams(tc, nil)
+}
+
+func TestFormatFullToolParams_Empty(t *testing.T) {
+	result := formatFullToolParams(map[string]interface{}{})
+	if result != "" {
+		t.Errorf("Expected empty string, got '%s'", result)
+	}
+}
+
+func TestFormatFullToolParams_Nil(t *testing.T) {
+	result := formatFullToolParams(nil)
+	if result != "" {
+		t.Errorf("Expected empty string, got '%s'", result)
+	}
+}
+
+func TestFormatFullToolParams_StringValue(t *testing.T) {
+	params := map[string]interface{}{
+		"command": "ls -la",
+	}
+	result := formatFullToolParams(params)
+	if !strings.Contains(result, "command") {
+		t.Errorf("Expected 'command' in result, got '%s'", result)
+	}
+}
+
+func TestFormatFullToolParams_MultipleValues(t *testing.T) {
+	params := map[string]interface{}{
+		"path":    "/tmp/test.txt",
+		"content": "hello",
+		"count":   float64(5),
+	}
+	result := formatFullToolParams(params)
+	if !strings.Contains(result, "path") {
+		t.Errorf("Expected 'path' in result, got '%s'", result)
+	}
+	if !strings.Contains(result, "content") {
+		t.Errorf("Expected 'content' in result, got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_String(t *testing.T) {
+	result := formatParamValue("hello")
+	if result != `"hello"` {
+		t.Errorf("Expected '\"hello\"', got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_Int(t *testing.T) {
+	result := formatParamValue(float64(42))
+	if result != "42" {
+		t.Errorf("Expected '42', got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_Float(t *testing.T) {
+	result := formatParamValue(float64(3.14))
+	if result != "3.1" {
+		t.Errorf("Expected '3.1', got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_Bool(t *testing.T) {
+	result := formatParamValue(true)
+	if result != "true" {
+		t.Errorf("Expected 'true', got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_Nil(t *testing.T) {
+	result := formatParamValue(nil)
+	if result != "null" {
+		t.Errorf("Expected 'null', got '%s'", result)
+	}
+}
+
+func TestFormatParamValue_Map(t *testing.T) {
+	result := formatParamValue(map[string]interface{}{"key": "value"})
+	if result == "" {
+		t.Error("Expected non-empty result for map")
+	}
+}
+
+func TestFormatParamValue_Array(t *testing.T) {
+	result := formatParamValue([]interface{}{"a", "b"})
+	if result == "" {
+		t.Error("Expected non-empty result for array")
+	}
+	if !strings.Contains(result, "a") {
+		t.Errorf("Expected 'a' in result, got '%s'", result)
+	}
+}
+
+func TestCompressContext_Public(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Add messages
+	agent.AddUserMessage("first")
+	agent.AddAssistantMessage("response 1")
+	agent.AddUserMessage("second")
+	agent.AddAssistantMessage("response 2")
+	agent.AddUserMessage("third")
+	agent.AddAssistantMessage("response 3")
+
+	// Use the public CompressContext method
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err := agent.CompressContext(ctx)
+	// Expected to fail without LLM
+	if err == nil {
+		t.Error("Expected error when no LLM is available for compression")
+	}
+}
+
+
+func TestRunStream_ContextCancellation(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := agent.RunStream(ctx, "test prompt", nil)
+	if err == nil {
+		t.Error("Expected error when context is cancelled")
+	}
+}
+
+func TestGetStats_TokensPerSecond(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	stats := agent.GetStats()
+
+	// TokensPerSecond should be 0 initially (no time elapsed or no tokens)
+	if stats.TokensPerSecond < 0 {
+		t.Errorf("Expected non-negative TokensPerSecond, got %f", stats.TokensPerSecond)
+	}
+}
+
+func TestCompressContext_FirstMessageNotUser(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Add assistant message first (unusual but should handle)
+	agent.AddAssistantMessage("assistant first")
+	agent.AddUserMessage("user message")
+	agent.AddAssistantMessage("assistant response")
+	agent.AddUserMessage("user message 2")
+	agent.AddAssistantMessage("assistant response 2")
+	agent.AddUserMessage("user message 3")
+	agent.AddAssistantMessage("assistant response 3")
+
+	// Should not panic even with non-standard message order
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_ = agent.compressContext(ctx) // Expected to fail without LLM
+}
+
+func TestGroupAssistantToolMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Test with empty messages
+	result := agent.groupAssistantToolMessages(nil)
+	if result != nil {
+		t.Errorf("Expected nil, got %v", result)
+	}
+
+	result = agent.groupAssistantToolMessages([]*inference.Message{})
+	if len(result) != 0 {
+		t.Errorf("Expected empty, got %d", len(result))
+	}
+}
+
+func TestGroupAssistantToolMessages_PreserveOrder(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	messages := []*inference.Message{
+		{Role: "user", Content: "prompt"},
+		{Role: "assistant", Content: "response", ToolCalls: []*inference.APIToolCall{{ID: "call_1", Type: "function", Function: inference.FunctionCall{Name: "bash"}}}},
+		{Role: "tool", Content: "result", ToolCallId: "call_1"},
+	}
+
+	result := agent.groupAssistantToolMessages(messages)
+	if len(result) != 3 {
+		t.Errorf("Expected 3 messages, got %d", len(result))
+	}
+}
+
+// ===== Additional Run() method tests =====
+
+
+
+// ===== Tests for getActualContextSizeUnlocked with lastTotalTokens set =====
+
+func TestGetActualContextSizeUnlocked_WithTotalTokens(t *testing.T) {
+	cfg := config.DefaultConfig()
+	a := NewAgent(cfg)
+
+	// Set lastTotalTokens to simulate having received an API response
+	a.mu.Lock()
+	a.lastTotalTokens = 1000
+	a.mu.Unlock()
+
+	// Get actual context size - should use lastTotalTokens
+	size := a.getActualContextSizeUnlocked()
+	if size != 1000 {
+		t.Errorf("Expected 1000 (lastTotalTokens), got %d", size)
+	}
+}
+
+func TestGetActualContextSizeUnlocked_WithTotalTokensAndToolMessages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	a := NewAgent(cfg)
+
+	// Set lastTotalTokens
+	a.mu.Lock()
+	a.lastTotalTokens = 1000
+	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+	a.context = append(a.context, &inference.Message{
+		Role:    "tool",
+		Content: "Tool result content",
+	})
+	a.toolResultMsgsSinceLastAPI[0] = true
+	a.mu.Unlock()
+
+	// Get actual context size - should include delta for tool message
+	size := a.getActualContextSizeUnlocked()
+	// lastTotalTokens + 3 + estimateTokens("Tool result content")
+	if size < 1003 {
+		t.Errorf("Expected > 1003 (lastTotalTokens + delta), got %d", size)
+	}
+}
+
+func TestGetActualContextSizeUnlocked_NoTotalTokens(t *testing.T) {
+	cfg := config.DefaultConfig()
+	a := NewAgent(cfg)
+
+	// Add some messages without setting lastTotalTokens
+	a.AddUserMessage("Test message")
+
+	// Get actual context size - should estimate from scratch
+	size := a.getActualContextSizeUnlocked()
+	if size <= 0 {
+		t.Errorf("Expected positive size, got %d", size)
+	}
+}
+
+// ===== Tests for Agent.Run() with mock server =====
+
+func TestRun_FinalResponse(t *testing.T) {
+	// Create a mock inference server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check that this is a chat completions request
+		if r.URL.Path != "/v1/chat/completions" && !strings.HasSuffix(r.URL.Path, "chat/completions") {
+			// Could also be the root path depending on the endpoint setup
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Return a response with no tool calls - final response
+		w.Write([]byte(`{
+			"id": "test-1",
+			"object": "chat.completion",
+			"created": 1234567890,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"content": "This is the final answer"
+				},
+				"finish_reason": "stop"
+			}],
+			"usage": {
+				"prompt_tokens": 10,
+				"completion_tokens": 20,
+				"total_tokens": 30
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+		cfg.Streaming = false
+	ag := NewAgent(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result, err := ag.Run(ctx, "test prompt")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	if result.FinalOutput != "This is the final answer" {
+		t.Errorf("Expected 'This is the final answer', got '%s'", result.FinalOutput)
+	}
+
+	if len(result.Steps) != 0 {
+		t.Errorf("Expected 0 steps (no tool calls), got %d", len(result.Steps))
+	}
+}
+
+func TestRun_ToolCalls(t *testing.T) {
+	// Track the number of API calls made
+	callCount := 0
+	var receivedMessages [][]inference.Message
+
+	// Create a mock inference server that returns tool calls on first call, then final response
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		// Read the request body to see what messages were sent
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			receivedMessages = append(receivedMessages, nil) // track calls
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if callCount == 1 {
+			// First call: return a tool call
+			w.Write([]byte(`{
+				"id": "test-1",
+				"object": "chat.completion",
+				"created": 1234567890,
+				"model": "test-model",
+				"choices": [{
+					"index": 0,
+					"message": {
+						"role": "assistant",
+						"content": "",
+						"tool_calls": [{
+							"id": "call-1",
+							"type": "function",
+							"function": {
+								"name": "read_file",
+								"arguments": "{\"path\": \"test.txt\"}"
+							}
+						}]
+					},
+					"finish_reason": "tool_calls"
+				}],
+				"usage": {
+					"prompt_tokens": 10,
+					"completion_tokens": 15,
+					"total_tokens": 25
+				}
+			}`))
+		} else {
+			// Subsequent calls: return final response (no tool calls)
+			w.Write([]byte(`{
+				"id": "test-2",
+				"object": "chat.completion",
+				"created": 1234567890,
+				"model": "test-model",
+				"choices": [{
+					"index": 0,
+					"message": {
+						"role": "assistant",
+						"content": "After reading the file, here is the answer"
+					},
+					"finish_reason": "stop"
+				}],
+				"usage": {
+					"prompt_tokens": 20,
+					"completion_tokens": 25,
+					"total_tokens": 45
+				}
+			}`))
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+		cfg.Streaming = false
+	cfg.MaxTokens = 10000
+	cfg.ContextSize = 32000
+	ag := NewAgent(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := ag.Run(ctx, "What is in test.txt?")
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	if !strings.Contains(result.FinalOutput, "After reading the file") {
+		t.Errorf("Expected 'After reading the file' in output, got '%s'", result.FinalOutput)
+	}
+
+	// Should have steps from tool calls
+	if len(result.Steps) == 0 {
+		t.Error("Expected at least one step from tool calls")
+	}
+}
+
+func TestRun_MaxIterationsExceeded(t *testing.T) {
+	// Create a mock server that always returns tool calls to force max iterations
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"id": "test-1",
+			"object": "chat.completion",
+			"created": 1234567890,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"content": "",
+					"tool_calls": [{
+						"id": "call-1",
+						"type": "function",
+						"function": {
+							"name": "bash",
+							"arguments": "{\"command\": \"echo test\"}"
+						}
+					}]
+				},
+				"finish_reason": "tool_calls"
+			}],
+			"usage": {
+				"prompt_tokens": 10,
+				"completion_tokens": 15,
+				"total_tokens": 25
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+		cfg.Streaming = false
+	cfg.MaxTokens = 10000
+	cfg.ContextSize = 32000
+	cfg.MaxIterations = 5 // Low max iterations to test the limit
+	ag := NewAgent(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := ag.Run(ctx, "test prompt")
+	if err == nil {
+		t.Error("Expected error for max iterations exceeded")
+	}
+	if !strings.Contains(err.Error(), "maximum iterations") {
+		t.Errorf("Expected 'maximum iterations' in error, got: %v", err)
+	}
+}
+
+func TestRun_ContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Block to simulate slow response
+		time.Sleep(2 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"id": "test-1",
+			"object": "chat.completion",
+			"created": 1234567890,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"message": {
+					"role": "assistant",
+					"content": "response"
+				},
+				"finish_reason": "stop"
+			}],
+			"usage": {
+				"prompt_tokens": 10,
+				"completion_tokens": 10,
+				"total_tokens": 20
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+		cfg.Streaming = false
+	ag := NewAgent(cfg)
+
+	// Create context that will be cancelled after 100ms
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := ag.Run(ctx, "test prompt")
+	if err == nil {
+		t.Error("Expected context cancellation error")
+	}
+	if err != context.DeadlineExceeded && !strings.Contains(err.Error(), "deadline") && !strings.Contains(err.Error(), "context") {
+		t.Errorf("Expected deadline/cancellation error, got: %v", err)
+	}
+}
+
+
+// ===== Tests for NewAgent with different config options =====
+
+func TestNewAgent_DebugMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "debug.log")
+
+	cfg := &config.Config{
+		Debug:          true,
+		DebugLog:       logPath,
+		APIEndpoint:    "http://localhost:8080",
+		Model:          "test-model",
+		MaxTokens:      1000,
+		ContextSize:    4096,
+		MaxIterations:  50,
+		ReadOnly:       false,
+		Streaming:      true,
+		ShowVersion:    false,
+		ShowHelp:       false,
+		Verbose:        false,
+		Quiet:          false,
+		Temperature:    nil,
+		
+		Prompt:         "",
+		PromptFile:     "",
+		UseStdin:       false,
+	}
+
+	ag := NewAgent(cfg)
+	if ag == nil {
+		t.Fatal("NewAgent returned nil")
+	}
+
+	if ag.debugLogger == nil {
+		t.Error("Expected debug logger to be non-nil when Debug is true")
+	}
+}
+
+func TestNewAgent_ReadOnlyMode(t *testing.T) {
+	cfg := &config.Config{
+		Debug:          false,
+		APIEndpoint:    "http://localhost:8080",
+		Model:          "test-model",
+		MaxTokens:      1000,
+		ContextSize:    4096,
+		MaxIterations:  50,
+		ReadOnly:       true,
+		Streaming:      true,
+		ShowVersion:    false,
+		ShowHelp:       false,
+		Verbose:        false,
+		Quiet:          false,
+	}
+
+	ag := NewAgent(cfg)
+	if ag == nil {
+		t.Fatal("NewAgent returned nil")
+	}
+
+	// In read-only mode, write tools should not be available
+	tools := ag.GetTools()
+	for _, tool := range tools {
+		if tool.Function.Name == "write_file" || tool.Function.Name == "insert_lines" || tool.Function.Name == "replace_text" {
+			t.Errorf("Tool '%s' should not be available in read-only mode", tool.Function.Name)
+		}
+	}
+}
+
+func TestNewAgent_VerboseConfig(t *testing.T) {
+	cfg := &config.Config{
+		Debug:          false,
+		APIEndpoint:    "http://localhost:8080",
+		Model:          "gpt-4",
+		MaxTokens:      32000,
+		ContextSize:    128000,
+		MaxIterations:  500,
+		ReadOnly:       false,
+		Streaming:      false,
+		ShowVersion:    false,
+		ShowHelp:       false,
+		Verbose:        true,
+		Quiet:          false,
+		Temperature:    floatPtr(0.7),
+	}
+
+	ag := NewAgent(cfg)
+	if ag == nil {
+		t.Fatal("NewAgent returned nil")
+	}
+
+	stats := ag.GetStats()
+	if stats == nil {
+		t.Fatal("GetStats returned nil")
+	}
+}
+
+// Helper to create *float64
+func floatPtr(f float64) *float64 {
+	return &f
+}

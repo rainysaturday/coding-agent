@@ -117,6 +117,9 @@ func (e *ContextLimitError) Error() string {
 
 // isAuthError checks if an error string indicates an authentication failure.
 func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "authentication failed") ||
 		strings.Contains(msg, "401") ||
@@ -127,6 +130,9 @@ func isAuthError(err error) bool {
 
 // isContextLimitError checks if an error string indicates a context size limit.
 func isContextLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "context size limit") ||
 		strings.Contains(msg, "maximum context length") ||

@@ -1474,3 +1474,109 @@ func TestTUI_IsStreaming_AfterShowContextSize(t *testing.T) {
 		t.Error("Expected IsStreaming to be false")
 	}
 }
+
+// ===== Additional tests for addToHistory =====
+
+func TestAddToHistory_MaxHistory(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	tui.maxHistory = 3
+	
+	for i := 0; i < 5; i++ {
+		tui.addToHistory(fmt.Sprintf("item%d", i))
+	}
+	
+	if len(tui.history) != 3 {
+		t.Errorf("Expected 3 history items, got %d", len(tui.history))
+	}
+	
+	expected := []string{"item4", "item3", "item2"}
+	for i, exp := range expected {
+		if tui.history[i] != exp {
+			t.Errorf("Expected %s at index %d, got %s", exp, i, tui.history[i])
+		}
+	}
+}
+
+func TestAddToHistory_NoMax(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	tui.maxHistory = 0
+	
+	for i := 0; i < 10; i++ {
+		tui.addToHistory(fmt.Sprintf("item%d", i))
+	}
+	
+	if len(tui.history) != 10 {
+		t.Errorf("Expected 10 history items, got %d", len(tui.history))
+	}
+}
+
+func TestHandleHistoryDown_FromStart_WithInput(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	tui.addToHistory("previous1")
+	tui.addToHistory("previous2")
+	
+	tui.mu.Lock()
+	tui.currentInput = "current text"
+	tui.inputLine = "current text"
+	tui.mu.Unlock()
+	
+	tui.handleHistoryUp()
+	tui.handleHistoryDown()
+	
+	if tui.historyIndex != -1 {
+		t.Errorf("Expected historyIndex to be -1, got %d", tui.historyIndex)
+	}
+}
+
+
+// ===== Tests for StreamGoalChunk =====
+
+func TestStreamGoalChunk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	
+	tui.StreamGoalChunk("Goal achieved!")
+	
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	
+	// StreamGoalChunk writes to streamBuffer, not output
+	if tui.streamBuffer.String() != "Goal achieved!" {
+		t.Errorf("Expected 'Goal achieved!' in streamBuffer, got %q", tui.streamBuffer.String())
+	}
+}
+
+// ===== Tests for StreamChunkWithType with Goal content type =====
+
+func TestStreamChunkWithType_Goal(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	
+	tui.StreamChunkWithType("Goal check", inference.StreamingContentTypeGoal)
+	
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	
+	if tui.streamBuffer.String() != "Goal check" {
+		t.Errorf("Expected 'Goal check' in streamBuffer, got %q", tui.streamBuffer.String())
+	}
+}
+
+// ===== Tests for StreamChunkWithType with Reasoning content type =====
+
+func TestStreamChunkWithType_Reasoning(t *testing.T) {
+	cfg := config.DefaultConfig()
+	tui := NewTUI(cfg)
+	
+	tui.StreamChunkWithType("Thinking...", inference.StreamingContentTypeReasoning)
+	
+	tui.mu.Lock()
+	defer tui.mu.Unlock()
+	
+	if tui.reasoningBuffer.String() != "Thinking..." {
+		t.Errorf("Expected 'Thinking...' in reasoningBuffer, got %q", tui.reasoningBuffer.String())
+	}
+}
