@@ -57,13 +57,14 @@ type Agent struct {
 
 // Stats represents agent statistics.
 type Stats struct {
-	InputTokens     int       `json:"input_tokens"`
-	OutputTokens    int       `json:"output_tokens"`
-	ToolCalls       int       `json:"tool_calls"`
-	FailedToolCalls int       `json:"failed_tool_calls"`
-	Iterations      int       `json:"iterations"`
-	StartTime       time.Time `json:"start_time"`
-	TokensPerSecond float64   `json:"tokens_per_second"`
+	InputTokens       int       `json:"input_tokens"`
+	OutputTokens      int       `json:"output_tokens"`
+	ToolCalls         int       `json:"tool_calls"`
+	FailedToolCalls   int       `json:"failed_tool_calls"`
+	Iterations        int       `json:"iterations"`
+	CompressionCount  int       `json:"compression_count"`
+	StartTime         time.Time `json:"start_time"`
+	TokensPerSecond   float64   `json:"tokens_per_second"`
 }
 
 // Step represents an execution step.
@@ -373,13 +374,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// Check if context compression is needed
 		if a.shouldCompress() {
 			if err := a.compressContext(ctx); err != nil {
-				// Log compression failure but continue
-				if a.streamCallback != nil {
-					a.streamCallback(inference.StreamingChunk{
-						Text:        fmt.Sprintf("\n[Warning] Context compression failed: %v\n", err),
-						ContentType: inference.StreamingContentTypeNormal,
-					})
-				}
+				// Failure is reported inside compressContext via streamCallback
 			}
 		}
 
@@ -629,13 +624,14 @@ func (a *Agent) GetStats() *Stats {
 	}
 
 	return &Stats{
-		InputTokens:     a.stats.InputTokens,
-		OutputTokens:    a.stats.OutputTokens,
-		ToolCalls:       toolStats.TotalCalls,
-		FailedToolCalls: toolStats.FailedCalls,
-		Iterations:      a.stats.Iterations,
-		StartTime:       a.stats.StartTime,
-		TokensPerSecond: tokensPerSecond,
+		InputTokens:      a.stats.InputTokens,
+		OutputTokens:     a.stats.OutputTokens,
+		ToolCalls:        toolStats.TotalCalls,
+		FailedToolCalls:  toolStats.FailedCalls,
+		Iterations:       a.stats.Iterations,
+		CompressionCount: a.compressionCount,
+		StartTime:        a.stats.StartTime,
+		TokensPerSecond:  tokensPerSecond,
 	}
 }
 
@@ -732,6 +728,9 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	copy(messages, a.context)
 	a.mu.Unlock()
 
+	// Track duration for display
+	startTime := time.Now()
+
 	// First user message is always preserved
 	firstUserMsg := messages[0]
 	// Ensure we actually have a user message as the first message.
@@ -760,6 +759,13 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	summaryMsg := &inference.Message{Role: "user", Content: summaryReq}
 	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{summaryMsg}, "You are a conversation summarizer.")
 	if err != nil {
+		// Log compression failure via stream callback
+		if a.streamCallback != nil {
+			a.streamCallback(inference.StreamingChunk{
+				Text:        fmt.Sprintf("\n[Warning] Context compression failed: %v\n", err),
+				ContentType: inference.StreamingContentTypeNormal,
+			})
+		}
 		return fmt.Errorf("failed to compress context: %w", err)
 	}
 
@@ -799,6 +805,15 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	// of the existing cumulative totals.
 	// (No change to a.stats.InputTokens / a.stats.OutputTokens)
 	a.mu.Unlock()
+
+	// Display compression success via stream callback with duration
+	if a.streamCallback != nil {
+		duration := time.Since(startTime)
+		a.streamCallback(inference.StreamingChunk{
+			Text:        fmt.Sprintf("[Context compressed in %.2fs]\n", duration.Seconds()),
+			ContentType: inference.StreamingContentTypeCompression,
+		})
+	}
 
 	return nil
 }

@@ -28,6 +28,7 @@ const (
 	StreamingContentTypeNormal StreamingContentType = iota
 	StreamingContentTypeReasoning
 	StreamingContentTypeGoal
+	StreamingContentTypeCompression
 )
 
 // StreamingChunk represents a streaming chunk with content type.

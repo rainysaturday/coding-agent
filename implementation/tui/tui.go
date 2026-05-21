@@ -291,6 +291,10 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 		// Goal messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
 		fmt.Printf("%s%s%s", ColorMagenta, text, ColorReset)
+	case inference.StreamingContentTypeCompression:
+		// Context compression messages are displayed in magenta to stand out
+		t.streamBuffer.WriteString(text)
+		fmt.Printf("%s%s%s", ColorMagenta, text, ColorReset)
 	default:
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
@@ -411,6 +415,9 @@ func (t *TUI) DisplayStats(stats *agent.Stats) {
 	fmt.Printf("Tool Calls:        %d\n", stats.ToolCalls)
 	fmt.Printf("Failed Calls:      %d\n", stats.FailedToolCalls)
 	fmt.Printf("Iterations:        %d\n", stats.Iterations)
+	if stats.CompressionCount > 0 {
+		fmt.Printf("Compressions:      %d\n", stats.CompressionCount)
+	}
 	if !stats.StartTime.IsZero() {
 		fmt.Printf("Uptime:            %s\n", time.Since(stats.StartTime).Round(time.Second))
 	}
