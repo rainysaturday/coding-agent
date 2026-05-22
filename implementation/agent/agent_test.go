@@ -216,7 +216,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_Sections(t *testing.T) {
-	prompt := buildSystemPrompt(false)
+	prompt := buildSystemPrompt(false, "", false)
 
 	sections := []string{
 		"AVAILABLE TOOLS:",
@@ -239,7 +239,7 @@ func TestBuildSystemPrompt_Sections(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
-	prompt := buildSystemPrompt(false)
+	prompt := buildSystemPrompt(false, "", false)
 
 	toolDescriptions := []struct {
 		name        string
@@ -261,7 +261,7 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_IncludesEnvInfo(t *testing.T) {
-	prompt := buildSystemPrompt(false)
+	prompt := buildSystemPrompt(false, "", false)
 
 	// Should include environment information
 	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
@@ -690,7 +690,7 @@ func TestGetContextSize_AfterClear(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
-	prompt := buildSystemPrompt(false)
+	prompt := buildSystemPrompt(false, "", false)
 
 	// Count occurrences of key phrases
 	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text"}
@@ -703,14 +703,14 @@ func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
 	}
 }
 
-func TestGetEnvironmentInfo_ContainsSubAgentInfo(t *testing.T) {
-	info := getEnvironmentInfo()
+func TestBuildSystemPrompt_ContainsSubAgentInfo(t *testing.T) {
+	prompt := buildSystemPrompt(false, "", false)
 
-	if !strings.Contains(info, "coding-agent -p") {
-		t.Error("getEnvironmentInfo() should contain sub-agent spawning instruction")
+	if !strings.Contains(prompt, "coding-agent") {
+		t.Error("buildSystemPrompt() should contain coding-agent reference")
 	}
-	if !strings.Contains(info, "parallel tasks") {
-		t.Error("getEnvironmentInfo() should mention parallel tasks")
+	if !strings.Contains(prompt, "parallel tasks") {
+		t.Error("buildSystemPrompt() should mention parallel tasks")
 	}
 }
 
@@ -780,6 +780,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"read_lines":   {"path", "start", "end"},
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
+		"subagent":     {"prompt"},
 	}
 
 	for _, tool := range toolDefs {
@@ -885,7 +886,7 @@ func TestBuildTools_ReadOnly(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
-	prompt := buildSystemPrompt(true)
+	prompt := buildSystemPrompt(true, "", false)
 
 	// Should mention read-only mode
 	if !strings.Contains(prompt, "READ-ONLY MODE") {
@@ -925,7 +926,7 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ReadOnlyNotices(t *testing.T) {
-	prompt := buildSystemPrompt(true)
+	prompt := buildSystemPrompt(true, "", false)
 
 	// Should warn about limitations
 	if !strings.Contains(prompt, "CANNOT modify") && !strings.Contains(prompt, "CANNOT write") {

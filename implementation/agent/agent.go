@@ -188,8 +188,8 @@ func NewAgent(cfg *config.Config) *Agent {
 		debugLogger:    debugLogger,
 	}
 
-	// Build system prompt and tools based on read-only mode
-	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly)
+	// Build system prompt, tools, and persona based on configuration
+	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly, cfg.Persona, cfg.SummaryOnly)
 
 	// Set read-only mode on tool executor
 	agent.toolExecutor.SetReadOnly(cfg.ReadOnly)
@@ -1210,11 +1210,18 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			}
 			msg += "\n" + output + ColorReset
 			return msg
+case "subagent":
+			// Show subagent success with clear visual separation
+			return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, result.Output, ColorReset)
 		default:
 			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
 		}
 	}
-	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", ColorRed, toolName, result.Error, ColorReset)
+	failureName := toolName
+	if toolName == "subagent" {
+		failureName = "Subagent"
+	}
+	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", ColorRed, failureName, result.Error, ColorReset)
 }
 
 // getEnvironmentInfo gathers runtime environment information.
@@ -1241,22 +1248,23 @@ func getEnvironmentInfo() string {
 - Operating System: %s
 - Architecture: %s
 
-You can use the agent executable to spawn sub-agents for parallel tasks using the -p parameter:
-  coding-agent -p "Your task here"
+You can use the coding-agent to spawn sub-agents for parallel tasks using the subagent tool.
+When you need to run a subagent, use the 'subagent' tool with a clear task description.
+The subagent will run independently and return its conclusion/summary.
 `, cwd, exePath, osInfo, archInfo)
 }
 
 // buildSystemPrompt builds the system prompt with tool definitions.
 // When readOnly is true, only read-only tools are included.
-func buildSystemPrompt(readOnly bool) string {
+func buildSystemPrompt(readOnly bool, persona string, summaryOnly bool) string {
 	// Get environment information
 	envInfo := getEnvironmentInfo()
 
 	if readOnly {
-		return buildReadOnlySystemPrompt(envInfo)
+		return buildReadOnlySystemPrompt(envInfo, persona, summaryOnly)
 	}
 
-	return fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
+	basePrompt := fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
 
 %s
 
@@ -1352,11 +1360,23 @@ Verification Checklist:
 4. Code formatting and linting (e.g., gofmt, black, prettier, rustfmt, etc.)
 5. Changes align with user requirements
 6. No unintended side effects or broken dependencies`, envInfo)
+
+	// Add persona section if provided
+	if persona != "" {
+		basePrompt += fmt.Sprintf("\n\nYOUR PERSONA:\n%s\n", persona)
+	}
+
+	// Add summary-only instruction if needed
+	if summaryOnly {
+		basePrompt += "\n\nIMPORTANT OUTPUT INSTRUCTION: You are running in summary-only mode. Your final output should be a concise summary/conclusion of the work completed. Do NOT include verbose explanations, step-by-step details, or code. Only provide the essential outcome and any critical findings."
+	}
+
+	return basePrompt
 }
 
 // buildReadOnlySystemPrompt builds a system prompt for read-only mode.
-func buildReadOnlySystemPrompt(envInfo string) string {
-	return fmt.Sprintf(`You are a helpful coding assistant operating in READ-ONLY MODE. You have access only to the following read-only tools.
+func buildReadOnlySystemPrompt(envInfo string, persona string, summaryOnly bool) string {
+	basePrompt := fmt.Sprintf(`You are a helpful coding assistant operating in READ-ONLY MODE. You have access only to the following read-only tools.
 
 %s
 
@@ -1441,6 +1461,18 @@ TOOL CALLING BEST PRACTICES:
 4. Remember: you cannot modify any files or execute commands
 
 NOTE: If the user asks you to write, modify, delete, or execute anything, explain that you are in read-only mode and cannot perform write operations.`, envInfo)
+
+	// Add persona section if provided
+	if persona != "" {
+		basePrompt += fmt.Sprintf("\n\nYOUR PERSONA:\n%s\n", persona)
+	}
+
+	// Add summary-only instruction if needed
+	if summaryOnly {
+		basePrompt += "\n\nIMPORTANT OUTPUT INSTRUCTION: You are running in summary-only mode. Your final output should be a concise summary/conclusion of the work completed. Do NOT include verbose explanations, step-by-step details, or code. Only provide the essential outcome and any critical findings."
+	}
+
+	return basePrompt
 }
 
 // buildTools builds the tool definitions for the OpenAI API.
@@ -1582,6 +1614,27 @@ func buildTools(readOnly bool) []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "subagent",
+				Description: "Spawn a sub-agent to work on a task independently. The sub-agent runs as a separate process and returns only its conclusion/summary.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"prompt": {
+							Type:        "string",
+							Description: "The task description for the sub-agent. Be specific and clear about what you want the sub-agent to accomplish.",
+						},
+						"persona": {
+							Type:        "string",
+							Description: "A persona to give the sub-agent. For example: \"Expert Go developer\", \"Code reviewer focused on security\", \"Documentation writer\".",
+						},
+					},
+					Required: []string{"prompt"},
 				},
 			},
 		},

@@ -157,6 +157,8 @@ func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResul
 		result = te.executeGitShowCtx(ctx, tc.Parameters)
 	case "git_diff":
 		result = te.executeGitDiffCtx(ctx, tc.Parameters)
+	case "subagent":
+		result = ExecuteSubagent(tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,

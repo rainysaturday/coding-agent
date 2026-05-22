@@ -45,6 +45,10 @@ type Config struct {
 	Quiet      bool
 	OutputFile string
 
+	// Persona settings
+	Persona       string
+	SummaryOnly   bool // When true, only output the final summary (used by subagents)
+
 	// Timeout settings (in seconds)
 	InitialTokenTimeout int
 	ConnectionTimeout   int
@@ -233,6 +237,14 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.APIKey = args[i]
+		case "--persona":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--persona requires an argument")
+			}
+			i++
+			cfg.Persona = args[i]
+		case "--summary-only":
+			cfg.SummaryOnly = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -398,6 +410,14 @@ func loadEnv(cfg *Config) {
 	// Read-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
 		cfg.ReadOnly = val == "true" || val == "1"
+	}
+	// Persona can be set via environment variable
+	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {
+		cfg.Persona = val
+	}
+	// Summary-only mode can be enabled via environment variable
+	if val := os.Getenv("CODING_AGENT_SUMMARY_ONLY"); val != "" {
+		cfg.SummaryOnly = val == "true" || val == "1"
 	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL

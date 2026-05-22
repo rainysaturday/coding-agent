@@ -138,6 +138,8 @@ func displayHelp() {
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
 	fmt.Println("      --read-only          Enable read-only mode (only read_file, read_lines, list_files, grep, git_log, git_show, git_diff available)")
+	fmt.Println("      --persona string     Set a persona for the agent (e.g., \"Expert Go developer\", \"Security code reviewer\")")
+	fmt.Println("      --summary-only       Only output the final summary (used by subagents)")
 	fmt.Println("      --output file        Write results to file")
 	fmt.Println("      --no-stream          Disable streaming output")
 	fmt.Println("  -h, --help               Show this help message")
@@ -261,6 +263,17 @@ func loadPrompt(cfg *config.Config) (string, error) {
 	}
 
 	if cfg.PromptFile != "" {
+		// Handle "-" as stdin
+		if cfg.PromptFile == "-" {
+			reader := bufio.NewReader(os.Stdin)
+			var prompt string
+			data, err := io.ReadAll(reader)
+			if err != nil {
+				return "", err
+			}
+			prompt = string(data)
+			return prompt, nil
+		}
 		content, err := os.ReadFile(cfg.PromptFile)
 		if err != nil {
 			return "", err
@@ -296,6 +309,12 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 		if result.Reasoning != "" {
 			fmt.Printf("%s[Reasoning]\n%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
 		}
+		fmt.Println(result.FinalOutput)
+		return nil
+	}
+
+	// Summary-only mode - only output the final answer, minimal formatting
+	if cfg.SummaryOnly {
 		fmt.Println(result.FinalOutput)
 		return nil
 	}
