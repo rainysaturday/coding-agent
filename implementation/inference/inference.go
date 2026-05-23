@@ -625,7 +625,7 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			existing.Arguments += deltaTC.Function.Arguments
 		}
 
-	// Notify about new tool call if callback is available
+		// Notify about new tool call if callback is available
 		if callback != nil && deltaTC.Function.Name != "" && !notifiedToolCalls[targetIndex] {
 			toolName := deltaTC.Function.Name
 			notification := fmt.Sprintf("\n[Tool Call] %s", toolName)
@@ -1108,7 +1108,7 @@ func formatJSONValueWithMaxWidth(value interface{}, maxWidth int) string {
 	case string:
 		// Truncate long strings for display
 		// Leave room for quotes and potential " (N chars)" suffix
-		quoteWidth := 2 // opening and closing quotes
+		quoteWidth := 2   // opening and closing quotes
 		suffixWidth := 10 // " (...) " minimum for suffix
 		availableWidth := maxWidth - quoteWidth - suffixWidth
 		if availableWidth < 10 {

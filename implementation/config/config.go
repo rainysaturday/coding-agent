@@ -27,7 +27,9 @@ type Config struct {
 	ConfigFile  string
 
 	// Read-only mode
-	ReadOnly bool
+	// Experimental mode
+	Experimental bool // When true, enables experimental features like subagent tool
+	ReadOnly     bool
 
 	// Inference settings
 	Model       string
@@ -46,8 +48,8 @@ type Config struct {
 	OutputFile string
 
 	// Persona settings
-	Persona       string
-	SummaryOnly   bool // When true, only output the final summary (used by subagents)
+	Persona     string
+	SummaryOnly bool // When true, only output the final summary (used by subagents)
 
 	// Timeout settings (in seconds)
 	InitialTokenTimeout int
@@ -58,10 +60,10 @@ type Config struct {
 	MaxIterations int
 
 	// Debug settings
-	Debug                 bool
-	DebugLog              string
-	DebugVerbose          bool
-	DebugVerboseVerbose   bool
+	Debug               bool
+	DebugLog            string
+	DebugVerbose        bool
+	DebugVerboseVerbose bool
 }
 
 // DefaultConfig returns a config with default values.
@@ -213,6 +215,8 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.Quiet = true
 		case "--read-only":
 			cfg.ReadOnly = true
+		case "--experimental":
+			cfg.Experimental = true
 		case "--output":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--output requires an argument")
@@ -410,6 +414,10 @@ func loadEnv(cfg *Config) {
 	// Read-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
 		cfg.ReadOnly = val == "true" || val == "1"
+		// Experimental mode can be enabled via environment variable
+		if val := os.Getenv("CODING_AGENT_EXPERIMENTAL"); val != "" {
+			cfg.Experimental = val == "true" || val == "1"
+		}
 	}
 	// Persona can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {

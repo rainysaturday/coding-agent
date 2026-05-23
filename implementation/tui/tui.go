@@ -18,22 +18,22 @@ import (
 
 // TUI represents the terminal user interface.
 type TUI struct {
-	config            *config.Config
-	output            []string
-	history           []string
-	historyIndex      int
-	maxHistory        int
-	cancelled         bool
-	mu                sync.Mutex
-	streaming         bool
-	streamBuffer      strings.Builder // Normal (non-reasoning) content
-	reasoningBuffer   strings.Builder // Reasoning/thinking content
-	contextSize       int
-	lastContentWasToolCall bool
-	maxContextSize        int
-	inputLine         string // Current input line buffer (shared with history navigation)
-	currentInput      string // Stores typed input when navigating to history
-	transitionedFromReasoning bool // Whether we've transitioned from reasoning to normal content
+	config                    *config.Config
+	output                    []string
+	history                   []string
+	historyIndex              int
+	maxHistory                int
+	cancelled                 bool
+	mu                        sync.Mutex
+	streaming                 bool
+	streamBuffer              strings.Builder // Normal (non-reasoning) content
+	reasoningBuffer           strings.Builder // Reasoning/thinking content
+	contextSize               int
+	lastContentWasToolCall    bool
+	maxContextSize            int
+	inputLine                 string // Current input line buffer (shared with history navigation)
+	currentInput              string // Stores typed input when navigating to history
+	transitionedFromReasoning bool   // Whether we've transitioned from reasoning to normal content
 }
 
 // NewTUI creates a new TUI instance.
@@ -303,7 +303,7 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 			t.transitionedFromReasoning = true
 		}
 		t.streamBuffer.WriteString(text)
-		
+
 		// Check if this is a tool call parameter update
 		// Tool call updates start with "[Tool Call] " prefix (e.g., "[Tool Call] bash (command: "value")")
 		// We want to update the previous [Tool Call] line in place using ANSI cursor positioning
@@ -543,14 +543,14 @@ func printColored(color, text string) {
 
 // ANSI color codes
 const (
-	ColorReset  = "\033[0m"
-	ColorRed    = "\033[31m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorBlue   = "\033[34m"
+	ColorReset   = "\033[0m"
+	ColorRed     = "\033[31m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorBlue    = "\033[34m"
 	ColorMagenta = "\033[35m" // Magenta for goal messages
-	ColorCyan   = "\033[36m"
-	ColorDim    = "\033[90m" // Dim/bright black for reasoning content
+	ColorCyan    = "\033[36m"
+	ColorDim     = "\033[90m" // Dim/bright black for reasoning content
 )
 
 // Clear screen ANSI code

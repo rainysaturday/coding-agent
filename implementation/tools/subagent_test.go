@@ -2,9 +2,9 @@ package tools
 
 import (
 	"context"
-	"time"
 	"os"
-	
+	"time"
+
 	"path/filepath"
 	"strings"
 	"testing"
@@ -353,7 +353,7 @@ Test output from fake binary"
 func TestExecuteSubagent_PassPersona(t *testing.T) {
 	// This test verifies that the persona is passed to the subprocess
 	// We'll use a mock binary that echoes the command line args
-	
+
 	tmpDir := t.TempDir()
 	fakeBinary := filepath.Join(tmpDir, "coding-agent")
 
@@ -404,7 +404,7 @@ echo "Processed with persona: $7"
 func TestSubagentToolDefinition(t *testing.T) {
 	// Import from agent package to test the tool definition
 	// We'll test that the subagent tool has the correct structure
-	
+
 	// Read the agent.go file to verify the tool definition exists
 	content, err := os.ReadFile("../agent/agent.go")
 	if err != nil {
@@ -443,7 +443,7 @@ Key findings:
 	}
 
 	formatted := formatSubagentResult(result)
-	
+
 	// Verify key sections are visible
 	if !strings.Contains(formatted, "[Subagent]") {
 		t.Error("Expected '[Subagent]' marker")
@@ -461,7 +461,7 @@ Key findings:
 func TestSubagentError_NoBinary(t *testing.T) {
 	// Test with non-existent binary
 	tmpDir := t.TempDir()
-	
+
 	// Clear PATH to ensure no binary is found
 	origPath := os.Getenv("PATH")
 	os.Setenv("PATH", tmpDir)

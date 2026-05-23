@@ -508,7 +508,7 @@ func TestToolDefinition_Structure(t *testing.T) {
 			Name:        "test_tool",
 			Description: "A test tool for testing",
 			Parameters: ParameterSchema{
-				Type: "object",
+				Type:     "object",
 				Required: []string{"required_param"},
 				Properties: map[string]Property{
 					"required_param": {Type: "string", Description: "A required parameter"},
@@ -774,7 +774,6 @@ data: [DONE]`
 		t.Errorf("Expected content 'Hello World', got '%s'", resp.Content)
 	}
 }
-
 
 func TestHandleStreamResponse_WithCallbacks(t *testing.T) {
 	var chunks []StreamingChunk
@@ -1210,10 +1209,10 @@ func TestBuildMessages_NormalizeToolCallType(t *testing.T) {
 			Content: "Let me check",
 			ToolCalls: []*APIToolCall{
 				{
-					ID:   "call_1",
-					Type: "",
+					ID:       "call_1",
+					Type:     "",
 					Function: FunctionCall{Name: "bash"},
-					Index: &idx,
+					Index:    &idx,
 				},
 			},
 		},
@@ -1287,7 +1286,7 @@ func TestHandleStreamResponse_NoContent(t *testing.T) {
 func TestHandleStreamResponse_WithContent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	ic := NewInferenceClient(cfg)
-	
+
 	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
 data: {"choices":[{"delta":{"content":" world"}}]}
 data: [DONE]
@@ -1300,7 +1299,6 @@ data: [DONE]
 		t.Errorf("Expected 'Hello world', got %q", result.Content)
 	}
 }
-
 
 // ===== Tests for HTTP error handling =====
 
@@ -1412,12 +1410,12 @@ func TestFormatJSONArrayWithMaxWidth(t *testing.T) {
 func TestHandleStreamResponse_WithCallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	ic := NewInferenceClient(cfg)
-	
+
 	var chunks []string
 	callback := func(chunk StreamingChunk) {
 		chunks = append(chunks, chunk.Text)
 	}
-	
+
 	stream := `data: {"choices":[{"delta":{"content":"Hello"}}]}
 data: {"choices":[{"delta":{"content":" world"}}]}
 data: [DONE]

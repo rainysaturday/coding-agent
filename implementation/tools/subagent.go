@@ -11,12 +11,12 @@ import (
 
 // ANSI color codes for tool feedback
 const (
-	ColorReset  = "\033[0m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorRed    = "\033[31m"
-	ColorCyan   = "\033[36m"
-	ColorBlue   = "\033[34m"
+	ColorReset   = "\033[0m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorRed     = "\033[31m"
+	ColorCyan    = "\033[36m"
+	ColorBlue    = "\033[34m"
 	ColorMagenta = "\033[35m"
 )
 
@@ -43,50 +43,50 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 
 	// Determine if we're in read-only mode by checking the environment
 	readOnly := os.Getenv("CODING_AGENT_READ_ONLY") == "true"
-	
+
 	// Build the command to run the subagent
 	// We use --summary-only to get just the conclusion
 	args := []string{
-		"--prompt-file", "-",  // Read prompt from stdin
-		"--summary-only",      // Only return the summary
-		"--no-stream",         // Disable streaming for cleaner output
-		"--quiet",             // Minimize noise
+		"--prompt-file", "-", // Read prompt from stdin
+		"--summary-only", // Only return the summary
+		"--no-stream",    // Disable streaming for cleaner output
+		"--quiet",        // Minimize noise
 	}
-	
+
 	// Add persona if specified
 	if persona != "" {
 		args = append(args, "--persona", persona)
 	}
-	
+
 	// Add read-only flag if needed
 	if readOnly {
 		args = append(args, "--read-only")
 	}
-	
+
 	// Build the command
 	cmd := exec.Command(binaryPath, args...)
-	
+
 	// Set working directory to current directory
 	cwd, err := os.Getwd()
 	if err == nil {
 		cmd.Dir = cwd
 	}
-	
+
 	// Write prompt to stdin
 	cmd.Stdin = strings.NewReader(prompt)
-	
+
 	// Capture output
 	var stdout strings.Builder
 	var stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	// Run the command
 	err = cmd.Run()
-	
+
 	// Extract the summary from the output
 	output := stdout.String()
-	
+
 	// If there's an error, include it
 	var errorMsg string
 	if err != nil {
@@ -95,17 +95,17 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 			errorMsg = err.Error()
 		}
 	}
-	
+
 	// Clean up the output - extract just the meaningful summary
 	summary := extractSummary(output)
-	
+
 	// Build extra info
 	extra := map[string]interface{}{
-		"prompt":       prompt,
-		"persona":      persona,
-		"summary":      summary,
+		"prompt":  prompt,
+		"persona": persona,
+		"summary": summary,
 	}
-	
+
 	// If there was an error, return failure
 	if err != nil {
 		return &ToolResult{
@@ -114,7 +114,7 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 			Extra:   extra,
 		}
 	}
-	
+
 	return &ToolResult{
 		Success: true,
 		Output:  fmt.Sprintf("Subagent completed.\n\nSummary:\n%s", summary),
@@ -142,7 +142,7 @@ func extractSummary(output string) string {
 	if output == "" {
 		return "(No output from subagent)"
 	}
-	
+
 	// Try to extract the "Final Output" section if present
 	if idx := strings.Index(output, "=== Final Output ==="); idx != -1 {
 		// Find the text after "=== Final Output ==="
@@ -152,7 +152,7 @@ func extractSummary(output string) string {
 			return summary
 		}
 	}
-	
+
 	// Try to extract text after "[Final Output]" or "[Result]" markers
 	for _, marker := range []string{"[Final Output]", "[Result]", "[Output]"} {
 		if idx := strings.Index(output, marker); idx != -1 {
@@ -162,11 +162,11 @@ func extractSummary(output string) string {
 			}
 		}
 	}
-	
+
 	// Look for the last substantial text block (after any tool output)
 	// This handles the case where the output has multiple sections
 	lines := strings.Split(output, "\n")
-	
+
 	// Find the last non-empty line that's not a separator or header
 	var lastSignificantLine string
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -185,7 +185,7 @@ func extractSummary(output string) string {
 		lastSignificantLine = line
 		break
 	}
-	
+
 	// If we found a significant line, return everything from that line backward
 	if lastSignificantLine != "" {
 		for i, line := range lines {
@@ -194,13 +194,13 @@ func extractSummary(output string) string {
 			}
 		}
 	}
-	
+
 	// Fall back to the raw output (trimmed)
 	// But limit the length to avoid overwhelming the main agent
 	if len(output) > 5000 {
 		return output[:5000] + "\n... [output truncated]"
 	}
-	
+
 	return output
 }
 
@@ -239,7 +239,7 @@ func streamSubagentResult(result *ToolResult, callback func(chunk interface{})) 
 func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 	// Try to find the coding-agent binary
 	binaryPath := getExecutablePath()
-	
+
 	// Also check for common locations
 	candidates := []string{
 		binaryPath,
@@ -247,7 +247,7 @@ func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 		filepath.Join(os.Getenv("HOME"), "go", "bin", "coding-agent"),
 		filepath.Join(os.Getenv("GOPATH"), "bin", "coding-agent"),
 	}
-	
+
 	for _, path := range candidates {
 		if path != "" {
 			// Check if the binary exists and is executable
@@ -262,7 +262,7 @@ func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 			}
 		}
 	}
-	
+
 	return executeSubagent(params, binaryPath)
 }
 

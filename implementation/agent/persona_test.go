@@ -234,10 +234,8 @@ func TestConfig_PersonaWithEnvironmentVariable(t *testing.T) {
 	// This test verifies that the Config struct has the Persona field
 	cfg := &config.Config{}
 	cfg.Persona = "Test persona"
-	
 
 	if cfg.Persona != "Test persona" {
 		t.Errorf("Expected 'Test persona', got '%s'", cfg.Persona)
 	}
 }
-

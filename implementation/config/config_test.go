@@ -10,58 +10,58 @@ import (
 
 func TestParseArgs_PersonaFlag(t *testing.T) {
 	tests := []struct {
-		name        string
-		args        []string
+		name          string
+		args          []string
 		expectPersona string
-		expectError bool
+		expectError   bool
 	}{
 		{
-			name:        "persona with value",
-			args:        []string{"--persona", "Expert Go developer"},
+			name:          "persona with value",
+			args:          []string{"--persona", "Expert Go developer"},
 			expectPersona: "Expert Go developer",
-			expectError: false,
+			expectError:   false,
 		},
 		{
-			name:        "persona empty string",
-			args:        []string{"--persona", ""},
+			name:          "persona empty string",
+			args:          []string{"--persona", ""},
 			expectPersona: "",
-			expectError: false,
+			expectError:   false,
 		},
 		{
-			name:        "persona without value",
-			args:        []string{"--persona"},
+			name:          "persona without value",
+			args:          []string{"--persona"},
 			expectPersona: "",
-			expectError: true,
+			expectError:   true,
 		},
 		{
-			name:        "persona with special chars",
-			args:        []string{"--persona", "Expert with \"quotes\""},
+			name:          "persona with special chars",
+			args:          []string{"--persona", "Expert with \"quotes\""},
 			expectPersona: "Expert with \"quotes\"",
-			expectError: false,
+			expectError:   false,
 		},
 		{
-			name:        "no persona",
-			args:        []string{"--prompt", "test"},
+			name:          "no persona",
+			args:          []string{"--prompt", "test"},
 			expectPersona: "",
-			expectError: false,
+			expectError:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := ParseArgs(tt.args)
-			
+
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			
+
 			if cfg.Persona != tt.expectPersona {
 				t.Errorf("Expected persona %q, got %q", tt.expectPersona, cfg.Persona)
 			}
@@ -71,23 +71,23 @@ func TestParseArgs_PersonaFlag(t *testing.T) {
 
 func TestParseArgs_SummaryOnlyFlag(t *testing.T) {
 	tests := []struct {
-		name         string
-		args         []string
+		name              string
+		args              []string
 		expectSummaryOnly bool
 	}{
 		{
-			name:         "summary-only flag present",
-			args:         []string{"--summary-only"},
+			name:              "summary-only flag present",
+			args:              []string{"--summary-only"},
 			expectSummaryOnly: true,
 		},
 		{
-			name:         "summary-only flag not present",
-			args:         []string{"--prompt", "test"},
+			name:              "summary-only flag not present",
+			args:              []string{"--prompt", "test"},
 			expectSummaryOnly: false,
 		},
 		{
-			name:         "summary-only with other flags",
-			args:         []string{"--summary-only", "--verbose"},
+			name:              "summary-only with other flags",
+			args:              []string{"--summary-only", "--verbose"},
 			expectSummaryOnly: true,
 		},
 	}
@@ -98,7 +98,7 @@ func TestParseArgs_SummaryOnlyFlag(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			
+
 			if cfg.SummaryOnly != tt.expectSummaryOnly {
 				t.Errorf("Expected SummaryOnly=%v, got %v", tt.expectSummaryOnly, cfg.SummaryOnly)
 			}
@@ -195,7 +195,7 @@ func TestParseArgs_SummaryOnlyFromEnv(t *testing.T) {
 
 func TestConfig_PersonaField(t *testing.T) {
 	cfg := &Config{}
-	
+
 	cfg.Persona = "Test persona"
 	if cfg.Persona != "Test persona" {
 		t.Errorf("Expected 'Test persona', got '%s'", cfg.Persona)
@@ -204,12 +204,12 @@ func TestConfig_PersonaField(t *testing.T) {
 
 func TestConfig_SummaryOnlyField(t *testing.T) {
 	cfg := &Config{}
-	
+
 	cfg.SummaryOnly = true
 	if !cfg.SummaryOnly {
 		t.Error("Expected SummaryOnly to be true")
 	}
-	
+
 	cfg.SummaryOnly = false
 	if cfg.SummaryOnly {
 		t.Error("Expected SummaryOnly to be false")
@@ -220,11 +220,11 @@ func TestConfig_SummaryOnlyField(t *testing.T) {
 
 func TestDefaultConfig_NoPersona(t *testing.T) {
 	cfg := DefaultConfig()
-	
+
 	if cfg.Persona != "" {
 		t.Errorf("Default config should have empty persona, got '%s'", cfg.Persona)
 	}
-	
+
 	if cfg.SummaryOnly {
 		t.Error("Default config should have SummaryOnly=false")
 	}
@@ -236,13 +236,13 @@ func TestParseArgs_HelpTextContainsPersona(t *testing.T) {
 	// This test verifies that the help text includes persona information
 	// We can't easily test the help text generation, but we can verify
 	// that the flag is parsed correctly which implies it's documented
-	
+
 	cfg, err := ParseArgs([]string{"--help"})
 	if err != nil {
 		// Help flag might return an error or exit, which is fine
 		t.Skip("Help flag handling skipped")
 	}
-	
+
 	// If we got here without error, verify persona field exists
 	if cfg.Persona == "" {
 		// No persona specified is fine for help
@@ -312,7 +312,7 @@ func TestParseArgs_MultiplePersonaFlags(t *testing.T) {
 
 func TestParseArgs_PersonaLongString(t *testing.T) {
 	longPersona := strings.Repeat("A", 1000)
-	
+
 	cfg, err := ParseArgs([]string{
 		"--persona", longPersona,
 		"--prompt", "test",
@@ -328,7 +328,7 @@ func TestParseArgs_PersonaLongString(t *testing.T) {
 
 func TestParseArgs_PersonaMultiline(t *testing.T) {
 	multilinePersona := "Line 1\nLine 2\nLine 3"
-	
+
 	cfg, err := ParseArgs([]string{
 		"--persona", multilinePersona,
 		"--prompt", "test",

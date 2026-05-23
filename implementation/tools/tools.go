@@ -173,7 +173,6 @@ func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResul
 	return result
 }
 
-
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, and git_show are safe read-only operations.
 func isReadOnlyTool(name string) bool { //nolint:funlen
@@ -918,6 +917,7 @@ func (te *ToolExecutor) executeListFilesCtx(ctx context.Context, params map[stri
 		},
 	}
 }
+
 // formatSimpleList returns a simple one-per-line listing (like `ls`).
 func formatSimpleList(entries []os.DirEntry) string {
 	var lines []string
@@ -1039,9 +1039,9 @@ func formatPermissionsRecursive(e walkEntry) string {
 	permStr.WriteByte(fileType)
 
 	for _, bit := range []struct {
-		set  string
+		set   string
 		clear string
-		mode os.FileMode
+		mode  os.FileMode
 	}{
 		{"r", "-", 0400},
 		{"w", "-", 0200},
@@ -1146,6 +1146,7 @@ func truncateOutput(text string, maxLines int) string {
 	}
 	return text
 }
+
 // truncateString truncates a string to a maximum length, adding "..." if truncated.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -1728,10 +1729,10 @@ func (te *ToolExecutor) executeGitLogCtx(ctx context.Context, params map[string]
 				Success: true,
 				Output:  "No commits found.",
 				Extra: map[string]interface{}{
-					"path":        path,
-					"count":       count,
-					"reference":   reference,
-					"flags":       flags,
+					"path":      path,
+					"count":     count,
+					"reference": reference,
+					"flags":     flags,
 				},
 			}
 		}
@@ -1755,10 +1756,10 @@ func (te *ToolExecutor) executeGitLogCtx(ctx context.Context, params map[string]
 		Success: true,
 		Output:  resultStr,
 		Extra: map[string]interface{}{
-			"path":        path,
-			"count":       count,
-			"reference":   reference,
-			"flags":       flags,
+			"path":      path,
+			"count":     count,
+			"reference": reference,
+			"flags":     flags,
 		},
 	}
 }
@@ -1891,9 +1892,9 @@ func (te *ToolExecutor) executeGitShowCtx(ctx context.Context, params map[string
 				Success: true,
 				Output:  "No commits found.",
 				Extra: map[string]interface{}{
-					"path":     path,
-					"commit":   commit,
-					"flags":    flags,
+					"path":   path,
+					"commit": commit,
+					"flags":  flags,
 				},
 			}
 		}
@@ -2109,10 +2110,10 @@ func (te *ToolExecutor) executeGitDiffCtx(ctx context.Context, params map[string
 		Success: true,
 		Output:  resultStr,
 		Extra: map[string]interface{}{
-			"path":        path,
-			"reference1":  reference1,
-			"reference2":  reference2,
-			"flags":       flags,
+			"path":       path,
+			"reference1": reference1,
+			"reference2": reference2,
+			"flags":      flags,
 		},
 	}
 }

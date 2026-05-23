@@ -496,7 +496,6 @@ func TestRedactSensitiveData_MultiplePatterns(t *testing.T) {
 	}
 }
 
-
 func TestNewDebugLogger_SessionStartTime(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "test.log")
@@ -601,7 +600,7 @@ func TestLogToolCall_WithComplexParams(t *testing.T) {
 		"start": float64(1),
 		"end":   float64(10),
 		"content": map[string]interface{}{
-			"text": "hello world",
+			"text":  "hello world",
 			"lines": []interface{}{"line1", "line2"},
 		},
 	}
@@ -613,8 +612,6 @@ func TestLogToolCall_WithComplexParams(t *testing.T) {
 		t.Error("Expected tool call to be logged")
 	}
 }
-
-
 
 func TestDebugLogger_Disabled(t *testing.T) {
 	// Create a disabled logger
@@ -633,15 +630,15 @@ func TestDebugLogger_Close_NoFile(t *testing.T) {
 	d := &DebugLogger{
 		enabled: true,
 		session: &SessionSummary{
-			SessionID:     "test-session",
-			StartTime:     time.Now(),
-			EndTime:       time.Now(),
-			DurationSeconds: 0.0,
-			TotalMessages:  0,
-			TotalInputTokens: 0,
+			SessionID:         "test-session",
+			StartTime:         time.Now(),
+			EndTime:           time.Now(),
+			DurationSeconds:   0.0,
+			TotalMessages:     0,
+			TotalInputTokens:  0,
 			TotalOutputTokens: 0,
-			TotalToolCalls:  0,
-			FailedToolCalls: 0,
+			TotalToolCalls:    0,
+			FailedToolCalls:   0,
 		},
 	}
 

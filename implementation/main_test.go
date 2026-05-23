@@ -20,14 +20,14 @@ func TestExitCodeForError(t *testing.T) {
 		input    error
 		expected int
 	}{
-		{"nil error", nil, 0},         // ExitSuccess
-		{"context limit", fmt.Errorf("context size limit exceeded"), 4}, // ExitContextLimit
+		{"nil error", nil, 0}, // ExitSuccess
+		{"context limit", fmt.Errorf("context size limit exceeded"), 4},          // ExitContextLimit
 		{"max context length", fmt.Errorf("maximum context length exceeded"), 4}, // ExitContextLimit
-		{"auth failed", fmt.Errorf("authentication failed"), 3}, // ExitAuthError
-		{"401", fmt.Errorf("401 Unauthorized"), 3}, // ExitAuthError
-		{"403", fmt.Errorf("403 Forbidden"), 3}, // ExitAuthError
-		{"API auth", fmt.Errorf("API authentication error"), 3}, // ExitAuthError
-		{"general", fmt.Errorf("some other error"), 1}, // ExitError
+		{"auth failed", fmt.Errorf("authentication failed"), 3},                  // ExitAuthError
+		{"401", fmt.Errorf("401 Unauthorized"), 3},                               // ExitAuthError
+		{"403", fmt.Errorf("403 Forbidden"), 3},                                  // ExitAuthError
+		{"API auth", fmt.Errorf("API authentication error"), 3},                  // ExitAuthError
+		{"general", fmt.Errorf("some other error"), 1},                           // ExitError
 	}
 
 	for _, tt := range tests {
@@ -172,8 +172,8 @@ func TestOutputResult_VerboseMode(t *testing.T) {
 		Reasoning:   "Some reasoning",
 		Steps: []agent.Step{
 			{
-				Action:   "Test action",
-				ToolCall: &tools.ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "echo test"}},
+				Action:     "Test action",
+				ToolCall:   &tools.ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "echo test"}},
 				ToolResult: &tools.ToolResult{Success: true, Output: "test output"},
 			},
 		},
@@ -591,4 +591,3 @@ func TestDisplayHelp(t *testing.T) {
 		t.Error("Expected '/stats' in help output")
 	}
 }
-

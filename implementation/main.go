@@ -138,6 +138,7 @@ func displayHelp() {
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
 	fmt.Println("      --read-only          Enable read-only mode (only read_file, read_lines, list_files, grep, git_log, git_show, git_diff available)")
+	fmt.Println("      --experimental       Enable experimental features (e.g., subagent tool)")
 	fmt.Println("      --persona string     Set a persona for the agent (e.g., \"Expert Go developer\", \"Security code reviewer\")")
 	fmt.Println("      --summary-only       Only output the final summary (used by subagents)")
 	fmt.Println("      --output file        Write results to file")

@@ -212,9 +212,9 @@ func TestDisplayStats_ZeroStartTime(t *testing.T) {
 	tui := NewTUI(cfg)
 
 	stats := &agent.Stats{
-		InputTokens:     1000,
-		OutputTokens:    500,
-		StartTime:       time.Time{}, // Zero time
+		InputTokens:  1000,
+		OutputTokens: 500,
+		StartTime:    time.Time{}, // Zero time
 	}
 
 	// Should not panic with zero start time
@@ -515,16 +515,16 @@ func TestContextSizePercentage_Calculations(t *testing.T) {
 func TestContextSizeIndicators(t *testing.T) {
 	// Test the indicator logic
 	tests := []struct {
-		size    int
-		max     int
-		wantOk  bool // should be valid (non-negative)
+		size   int
+		max    int
+		wantOk bool // should be valid (non-negative)
 	}{
-		{10000, 128000, true},    // <50% - checkmark
-		{70000, 128000, true},    // 50-75% - warning
-		{100000, 128000, true},   // 75-90% - warning warning
-		{125000, 128000, true},   // >90% - warning warning warning
-		{0, 128000, true},        // zero
-		{128000, 128000, true},   // exactly at max
+		{10000, 128000, true},  // <50% - checkmark
+		{70000, 128000, true},  // 50-75% - warning
+		{100000, 128000, true}, // 75-90% - warning warning
+		{125000, 128000, true}, // >90% - warning warning warning
+		{0, 128000, true},      // zero
+		{128000, 128000, true}, // exactly at max
 	}
 
 	for _, tt := range tests {
@@ -1481,15 +1481,15 @@ func TestAddToHistory_MaxHistory(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
 	tui.maxHistory = 3
-	
+
 	for i := 0; i < 5; i++ {
 		tui.addToHistory(fmt.Sprintf("item%d", i))
 	}
-	
+
 	if len(tui.history) != 3 {
 		t.Errorf("Expected 3 history items, got %d", len(tui.history))
 	}
-	
+
 	expected := []string{"item4", "item3", "item2"}
 	for i, exp := range expected {
 		if tui.history[i] != exp {
@@ -1502,11 +1502,11 @@ func TestAddToHistory_NoMax(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
 	tui.maxHistory = 0
-	
+
 	for i := 0; i < 10; i++ {
 		tui.addToHistory(fmt.Sprintf("item%d", i))
 	}
-	
+
 	if len(tui.history) != 10 {
 		t.Errorf("Expected 10 history items, got %d", len(tui.history))
 	}
@@ -1517,32 +1517,31 @@ func TestHandleHistoryDown_FromStart_WithInput(t *testing.T) {
 	tui := NewTUI(cfg)
 	tui.addToHistory("previous1")
 	tui.addToHistory("previous2")
-	
+
 	tui.mu.Lock()
 	tui.currentInput = "current text"
 	tui.inputLine = "current text"
 	tui.mu.Unlock()
-	
+
 	tui.handleHistoryUp()
 	tui.handleHistoryDown()
-	
+
 	if tui.historyIndex != -1 {
 		t.Errorf("Expected historyIndex to be -1, got %d", tui.historyIndex)
 	}
 }
-
 
 // ===== Tests for StreamGoalChunk =====
 
 func TestStreamGoalChunk(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
-	
+
 	tui.StreamGoalChunk("Goal achieved!")
-	
+
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	
+
 	// StreamGoalChunk writes to streamBuffer, not output
 	if tui.streamBuffer.String() != "Goal achieved!" {
 		t.Errorf("Expected 'Goal achieved!' in streamBuffer, got %q", tui.streamBuffer.String())
@@ -1554,12 +1553,12 @@ func TestStreamGoalChunk(t *testing.T) {
 func TestStreamChunkWithType_Goal(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
-	
+
 	tui.StreamChunkWithType("Goal check", inference.StreamingContentTypeGoal)
-	
+
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	
+
 	if tui.streamBuffer.String() != "Goal check" {
 		t.Errorf("Expected 'Goal check' in streamBuffer, got %q", tui.streamBuffer.String())
 	}
@@ -1570,12 +1569,12 @@ func TestStreamChunkWithType_Goal(t *testing.T) {
 func TestStreamChunkWithType_Reasoning(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
-	
+
 	tui.StreamChunkWithType("Thinking...", inference.StreamingContentTypeReasoning)
-	
+
 	tui.mu.Lock()
 	defer tui.mu.Unlock()
-	
+
 	if tui.reasoningBuffer.String() != "Thinking..." {
 		t.Errorf("Expected 'Thinking...' in reasoningBuffer, got %q", tui.reasoningBuffer.String())
 	}

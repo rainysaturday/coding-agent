@@ -1961,7 +1961,7 @@ func TestExecute_GitLog_ReferenceParameter(t *testing.T) {
 func TestExecute_GitLog_PathLimit(t *testing.T) {
 	tmpDir := t.TempDir()
 	setupGitRepo(t, tmpDir)
-	
+
 	// Create files in different subdirectories
 	os.Mkdir(filepath.Join(tmpDir, "subdir1"), 0755)
 	os.Mkdir(filepath.Join(tmpDir, "subdir2"), 0755)
@@ -1970,7 +1970,7 @@ func TestExecute_GitLog_PathLimit(t *testing.T) {
 	os.WriteFile(testFile1, []byte("hello world\n"), 0644)
 	exec.Command("git", "-C", tmpDir, "add", ".").Run()
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Add subdir1").Run()
-	
+
 	os.WriteFile(testFile2, []byte("foo bar\n"), 0644)
 	exec.Command("git", "-C", tmpDir, "add", ".").Run()
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Add subdir2").Run()
@@ -1991,7 +1991,7 @@ func TestExecute_GitLog_PathLimit(t *testing.T) {
 func TestExecute_GitLog_MergesFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 	setupGitRepo(t, tmpDir)
-	
+
 	// Create a simple commit (no merge in this simple test)
 	testFile := filepath.Join(tmpDir, "test.txt")
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
@@ -2053,8 +2053,8 @@ func TestExecute_GitShow_NotGitRepo(t *testing.T) {
 	result := te.Execute(&ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
-			"path":     tmpDir,
-			"commit":   "HEAD",
+			"path":   tmpDir,
+			"commit": "HEAD",
 		},
 	})
 	if result.Success {
@@ -2143,9 +2143,9 @@ func TestExecute_GitShow_StatFlag(t *testing.T) {
 	result := te.Execute(&ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
-			"path":    tmpDir,
-			"commit":  "HEAD",
-			"flags":   []interface{}{"stat"},
+			"path":   tmpDir,
+			"commit": "HEAD",
+			"flags":  []interface{}{"stat"},
 		},
 	})
 	if !result.Success {
@@ -2169,9 +2169,9 @@ func TestExecute_GitShow_NameStatusFlag(t *testing.T) {
 	result := te.Execute(&ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
-			"path":    tmpDir,
-			"commit":  "HEAD",
-			"flags":   []interface{}{"name-status"},
+			"path":   tmpDir,
+			"commit": "HEAD",
+			"flags":  []interface{}{"name-status"},
 		},
 	})
 	if !result.Success {
@@ -2195,9 +2195,9 @@ func TestExecute_GitShow_PathLimit(t *testing.T) {
 	result := te.Execute(&ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
-			"path":    tmpDir,
-			"commit":  "HEAD",
-			"flags":   []interface{}{"stat"},
+			"path":   tmpDir,
+			"commit": "HEAD",
+			"flags":  []interface{}{"stat"},
 		},
 	})
 	if !result.Success {
@@ -3025,7 +3025,6 @@ func TestFormatRecursiveLongList_WithFlags(t *testing.T) {
 
 // ===== Tests for executeGitDiff =====
 
-
 // ===== Tests for executeBashCtx via ToolExecutor =====
 
 func TestExecuteBashCtx_ContextCancelled(t *testing.T) {
@@ -3105,9 +3104,7 @@ func TestExecuteGitDiff_TwoArgs(t *testing.T) {
 	_ = result
 }
 
-
 // ===== Tests for executeGitLog via ToolExecutor =====
-
 
 func TestExecuteGitLog_NArgs(t *testing.T) {
 	te := NewToolExecutor()
@@ -3123,10 +3120,7 @@ func TestExecuteGitLog_NArgs(t *testing.T) {
 	_ = result
 }
 
-
 // ===== Tests for executeGitShow via ToolExecutor =====
-
-
 
 // ===== Tests for executeGrep via ToolExecutor =====
 
@@ -3537,8 +3531,8 @@ func TestExecuteGrep(t *testing.T) {
 
 	// Test grep on current directory
 	result := te.executeGrep(map[string]interface{}{
-		"path":      ".",
-		"pattern":   "package",
+		"path":        ".",
+		"pattern":     "package",
 		"max_results": 10,
 	})
 	if !result.Success {
@@ -3546,7 +3540,6 @@ func TestExecuteGrep(t *testing.T) {
 	}
 	// Grep should find some results
 }
-
 
 func TestExecuteGitDiff(t *testing.T) {
 	te := NewToolExecutor()
@@ -3557,7 +3550,6 @@ func TestExecuteGitDiff(t *testing.T) {
 		t.Logf("Git diff error (may be expected outside git repo): %s", result.Error)
 	}
 }
-
 
 // ===== Tests for non-ctx git methods =====
 

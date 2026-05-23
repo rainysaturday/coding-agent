@@ -3,12 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"fmt"
-	"os"
-	"strings"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,7 +190,7 @@ func TestAddAssistantMessage(t *testing.T) {
 }
 
 func TestBuildTools_AllToolsPresent(t *testing.T) {
-	tools := buildTools(false)
+	tools := buildTools(false, false)
 
 	expectedNames := []string{
 		"bash",
@@ -320,10 +320,10 @@ func TestSetBuildVersion(t *testing.T) {
 
 func TestFormatToolStatus_Success(t *testing.T) {
 	tests := []struct {
-		name     string
-		tool     string
-		result   *tools.ToolResult
-		check    func(string) bool
+		name   string
+		tool   string
+		result *tools.ToolResult
+		check  func(string) bool
 	}{
 		{
 			name: "bash success",
@@ -771,7 +771,7 @@ func TestFormatToolStatus_ReadLinesTruncation(t *testing.T) {
 }
 
 func TestBuildTools_Parameters(t *testing.T) {
-	toolDefs := buildTools(false)
+	toolDefs := buildTools(false, false)
 
 	expectedParams := map[string][]string{
 		"bash":         {"command"},
@@ -852,7 +852,7 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 }
 
 func TestBuildTools_ReadOnly(t *testing.T) {
-	tools := buildTools(true)
+	tools := buildTools(true, false)
 
 	// In read-only mode, should only have read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
 	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff"}
@@ -882,6 +882,29 @@ func TestBuildTools_ReadOnly(t *testing.T) {
 		if tool.Function.Name == "write_file" {
 			t.Error("write_file should not be in read-only mode")
 		}
+	}
+}
+
+func TestBuildTools_ExperimentalGating(t *testing.T) {
+	// Without experimental flag, subagent should NOT be present
+	toolsNoExp := buildTools(false, false)
+	for _, tool := range toolsNoExp {
+		if tool.Function.Name == "subagent" {
+			t.Error("subagent should NOT be present when experimental=false")
+		}
+	}
+
+	// With experimental flag, subagent SHOULD be present
+	toolsWithExp := buildTools(false, true)
+	found := false
+	for _, tool := range toolsWithExp {
+		if tool.Function.Name == "subagent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("subagent should be present when experimental=true")
 	}
 }
 
@@ -933,7 +956,6 @@ func TestBuildSystemPrompt_ReadOnlyNotices(t *testing.T) {
 		t.Error("Read-only system prompt should warn about not being able to modify/write")
 	}
 }
-
 
 // TestSetGoal_Activate tests that SetGoal correctly activates goal mode
 func TestSetGoal_Activate(t *testing.T) {
@@ -1241,7 +1263,7 @@ func TestGoalMode_GoalNotAchieved_InjectsCheck(t *testing.T) {
 // TestGoalCaseInsensitive_Matching verifies case-insensitive "goal achieved" matching
 func TestGoalCaseInsensitive_Matching(t *testing.T) {
 	testCases := []struct {
-		content   string
+		content     string
 		shouldMatch bool
 	}{
 		{"Goal achieved", true},
@@ -1262,7 +1284,6 @@ func TestGoalCaseInsensitive_Matching(t *testing.T) {
 		}
 	}
 }
-
 
 // ===== Tests for Error types and utilities (previously 0% coverage) =====
 
@@ -1300,9 +1321,9 @@ func TestContextLimitError_Error_Default(t *testing.T) {
 
 func TestIsAuthError(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     error
-		want    bool
+		name string
+		err  error
+		want bool
 	}{
 		{"auth failed", fmt.Errorf("API authentication failed"), true},
 		{"401", fmt.Errorf("HTTP 401 Unauthorized"), true},
@@ -1325,9 +1346,9 @@ func TestIsAuthError(t *testing.T) {
 
 func TestIsContextLimitError(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     error
-		want    bool
+		name string
+		err  error
+		want bool
 	}{
 		{"context size limit", fmt.Errorf("context size limit exceeded"), true},
 		{"maximum context length", fmt.Errorf("maximum context length"), true},
@@ -1786,7 +1807,6 @@ func TestCompressContext_Public(t *testing.T) {
 	}
 }
 
-
 func TestRunStream_ContextCancellation(t *testing.T) {
 	cfg := config.DefaultConfig()
 	agent := NewAgent(cfg)
@@ -1864,8 +1884,6 @@ func TestGroupAssistantToolMessages_PreserveOrder(t *testing.T) {
 }
 
 // ===== Additional Run() method tests =====
-
-
 
 // ===== Tests for getActualContextSizeUnlocked with lastTotalTokens set =====
 
@@ -1957,7 +1975,7 @@ func TestRun_FinalResponse(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.APIEndpoint = server.URL + "/v1"
-		cfg.Streaming = false
+	cfg.Streaming = false
 	ag := NewAgent(cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -2059,7 +2077,7 @@ func TestRun_ToolCalls(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.APIEndpoint = server.URL + "/v1"
-		cfg.Streaming = false
+	cfg.Streaming = false
 	cfg.MaxTokens = 10000
 	cfg.ContextSize = 32000
 	ag := NewAgent(cfg)
@@ -2122,7 +2140,7 @@ func TestRun_MaxIterationsExceeded(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.APIEndpoint = server.URL + "/v1"
-		cfg.Streaming = false
+	cfg.Streaming = false
 	cfg.MaxTokens = 10000
 	cfg.ContextSize = 32000
 	cfg.MaxIterations = 5 // Low max iterations to test the limit
@@ -2169,7 +2187,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.APIEndpoint = server.URL + "/v1"
-		cfg.Streaming = false
+	cfg.Streaming = false
 	ag := NewAgent(cfg)
 
 	// Create context that will be cancelled after 100ms
@@ -2185,7 +2203,6 @@ func TestRun_ContextCancellation(t *testing.T) {
 	}
 }
 
-
 // ===== Tests for NewAgent with different config options =====
 
 func TestNewAgent_DebugMode(t *testing.T) {
@@ -2193,24 +2210,24 @@ func TestNewAgent_DebugMode(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "debug.log")
 
 	cfg := &config.Config{
-		Debug:          true,
-		DebugLog:       logPath,
-		APIEndpoint:    "http://localhost:8080",
-		Model:          "test-model",
-		MaxTokens:      1000,
-		ContextSize:    4096,
-		MaxIterations:  50,
-		ReadOnly:       false,
-		Streaming:      true,
-		ShowVersion:    false,
-		ShowHelp:       false,
-		Verbose:        false,
-		Quiet:          false,
-		Temperature:    nil,
-		
-		Prompt:         "",
-		PromptFile:     "",
-		UseStdin:       false,
+		Debug:         true,
+		DebugLog:      logPath,
+		APIEndpoint:   "http://localhost:8080",
+		Model:         "test-model",
+		MaxTokens:     1000,
+		ContextSize:   4096,
+		MaxIterations: 50,
+		ReadOnly:      false,
+		Streaming:     true,
+		ShowVersion:   false,
+		ShowHelp:      false,
+		Verbose:       false,
+		Quiet:         false,
+		Temperature:   nil,
+
+		Prompt:     "",
+		PromptFile: "",
+		UseStdin:   false,
 	}
 
 	ag := NewAgent(cfg)
@@ -2225,18 +2242,18 @@ func TestNewAgent_DebugMode(t *testing.T) {
 
 func TestNewAgent_ReadOnlyMode(t *testing.T) {
 	cfg := &config.Config{
-		Debug:          false,
-		APIEndpoint:    "http://localhost:8080",
-		Model:          "test-model",
-		MaxTokens:      1000,
-		ContextSize:    4096,
-		MaxIterations:  50,
-		ReadOnly:       true,
-		Streaming:      true,
-		ShowVersion:    false,
-		ShowHelp:       false,
-		Verbose:        false,
-		Quiet:          false,
+		Debug:         false,
+		APIEndpoint:   "http://localhost:8080",
+		Model:         "test-model",
+		MaxTokens:     1000,
+		ContextSize:   4096,
+		MaxIterations: 50,
+		ReadOnly:      true,
+		Streaming:     true,
+		ShowVersion:   false,
+		ShowHelp:      false,
+		Verbose:       false,
+		Quiet:         false,
 	}
 
 	ag := NewAgent(cfg)
@@ -2255,19 +2272,19 @@ func TestNewAgent_ReadOnlyMode(t *testing.T) {
 
 func TestNewAgent_VerboseConfig(t *testing.T) {
 	cfg := &config.Config{
-		Debug:          false,
-		APIEndpoint:    "http://localhost:8080",
-		Model:          "gpt-4",
-		MaxTokens:      32000,
-		ContextSize:    128000,
-		MaxIterations:  500,
-		ReadOnly:       false,
-		Streaming:      false,
-		ShowVersion:    false,
-		ShowHelp:       false,
-		Verbose:        true,
-		Quiet:          false,
-		Temperature:    floatPtr(0.7),
+		Debug:         false,
+		APIEndpoint:   "http://localhost:8080",
+		Model:         "gpt-4",
+		MaxTokens:     32000,
+		ContextSize:   128000,
+		MaxIterations: 500,
+		ReadOnly:      false,
+		Streaming:     false,
+		ShowVersion:   false,
+		ShowHelp:      false,
+		Verbose:       true,
+		Quiet:         false,
+		Temperature:   floatPtr(0.7),
 	}
 
 	ag := NewAgent(cfg)

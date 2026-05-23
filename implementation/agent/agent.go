@@ -39,8 +39,8 @@ type Agent struct {
 	contextSizeCallback ContextSizeCallback
 	maxContextSize      int
 	compressionCount    int
-	goal                string        // Current goal prompt (empty string means goal mode is off)
-	goalActive          bool          // Whether goal mode is currently active
+	goal                string // Current goal prompt (empty string means goal mode is off)
+	goalActive          bool   // Whether goal mode is currently active
 	debugLogger         *debug.DebugLogger
 	mu                  sync.Mutex
 	// lastTotalTokens is the exact total_tokens from the last API response.
@@ -57,14 +57,14 @@ type Agent struct {
 
 // Stats represents agent statistics.
 type Stats struct {
-	InputTokens       int       `json:"input_tokens"`
-	OutputTokens      int       `json:"output_tokens"`
-	ToolCalls         int       `json:"tool_calls"`
-	FailedToolCalls   int       `json:"failed_tool_calls"`
-	Iterations        int       `json:"iterations"`
-	CompressionCount  int       `json:"compression_count"`
-	StartTime         time.Time `json:"start_time"`
-	TokensPerSecond   float64   `json:"tokens_per_second"`
+	InputTokens      int       `json:"input_tokens"`
+	OutputTokens     int       `json:"output_tokens"`
+	ToolCalls        int       `json:"tool_calls"`
+	FailedToolCalls  int       `json:"failed_tool_calls"`
+	Iterations       int       `json:"iterations"`
+	CompressionCount int       `json:"compression_count"`
+	StartTime        time.Time `json:"start_time"`
+	TokensPerSecond  float64   `json:"tokens_per_second"`
 }
 
 // Step represents an execution step.
@@ -85,11 +85,11 @@ type Result struct {
 
 // Exit code constants for agent execution.
 const (
-	ExitSuccess        = 0
-	ExitError          = 1
-	ExitUsageError     = 2
-	ExitAuthError      = 3
-	ExitContextLimit   = 4
+	ExitSuccess      = 0
+	ExitError        = 1
+	ExitUsageError   = 2
+	ExitAuthError    = 3
+	ExitContextLimit = 4
 )
 
 // AuthError represents an authentication error (exit code 3).
@@ -175,10 +175,10 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	agent := &Agent{
-		config:                   cfg,
-		inference:                inference.NewInferenceClient(cfg),
-		toolExecutor:             tools.NewToolExecutor(),
-		context:                  make([]*inference.Message, 0),
+		config:                     cfg,
+		inference:                  inference.NewInferenceClient(cfg),
+		toolExecutor:               tools.NewToolExecutor(),
+		context:                    make([]*inference.Message, 0),
 		toolResultMsgsSinceLastAPI: make(map[int]bool),
 		stats: &Stats{
 			StartTime: time.Now(),
@@ -200,7 +200,7 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	// Register tools with inference client
-	agent.inference.SetTools(buildTools(cfg.ReadOnly))
+	agent.inference.SetTools(buildTools(cfg.ReadOnly, cfg.Experimental))
 
 	// Display read-only mode warning
 	if cfg.ReadOnly {
@@ -416,7 +416,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			a.stats.InputTokens += response.TokenUsage / 2
 			a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
 		}
-		
+
 		// Store total_tokens as the authoritative baseline for context size.
 		// This is the exact count the API used: system prompt + messages + tools + completion.
 		// We only estimate deltas for new messages added after this response (e.g., tool results).
@@ -979,12 +979,12 @@ func formatParamValue(value interface{}) string {
 
 // ANSI color codes for tool feedback
 const (
-	ColorReset  = "\033[0m"
-	ColorGreen  = "\033[32m"
-	ColorYellow = "\033[33m"
-	ColorRed    = "\033[31m"
-	ColorCyan   = "\033[36m"
-	ColorBlue   = "\033[34m"
+	ColorReset   = "\033[0m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorRed     = "\033[31m"
+	ColorCyan    = "\033[36m"
+	ColorBlue    = "\033[34m"
 	ColorMagenta = "\033[35m" // Magenta for goal messages
 )
 
@@ -1210,7 +1210,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			}
 			msg += "\n" + output + ColorReset
 			return msg
-case "subagent":
+		case "subagent":
 			// Show subagent success with clear visual separation
 			return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, result.Output, ColorReset)
 		default:
@@ -1477,12 +1477,13 @@ NOTE: If the user asks you to write, modify, delete, or execute anything, explai
 
 // buildTools builds the tool definitions for the OpenAI API.
 // When readOnly is true, only read-only tools (read_file, read_lines, list_files, grep, git_log, git_show, git_diff) are returned.
-func buildTools(readOnly bool) []inference.ToolDefinition {
+// When experimental is false, the subagent tool is not included.
+func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 	if readOnly {
 		return buildReadOnlyTools()
 	}
 
-	return []inference.ToolDefinition{
+	baseTools := []inference.ToolDefinition{
 		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
@@ -1617,7 +1618,12 @@ func buildTools(readOnly bool) []inference.ToolDefinition {
 				},
 			},
 		},
-		{
+	}
+
+	tools := baseTools
+
+	if experimental {
+		tools = append(tools, inference.ToolDefinition{
 			Type: "function",
 			Function: inference.FunctionDefinition{
 				Name:        "subagent",
@@ -1637,8 +1643,10 @@ func buildTools(readOnly bool) []inference.ToolDefinition {
 					Required: []string{"prompt"},
 				},
 			},
-		},
+		})
 	}
+
+	return tools
 }
 
 // buildReadOnlyTools returns only the read-only tool definitions.
