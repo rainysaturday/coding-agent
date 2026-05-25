@@ -12,6 +12,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/coding-agent/harness/agent"
+	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/inference"
 )
@@ -286,20 +287,20 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 	switch contentType {
 	case inference.StreamingContentTypeReasoning:
 		t.reasoningBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", ColorDim, text, ColorReset)
+		fmt.Printf("%s%s%s", colors.ColorDim, text, colors.ColorReset)
 	case inference.StreamingContentTypeGoal:
 		// Goal messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", ColorMagenta, text, ColorReset)
+		fmt.Printf("%s%s%s", colors.ColorMagenta, text, colors.ColorReset)
 	case inference.StreamingContentTypeCompression:
 		// Context compression messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", ColorMagenta, text, ColorReset)
+		fmt.Printf("%s%s%s", colors.ColorMagenta, text, colors.ColorReset)
 	default:
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
 			fmt.Println()
-			fmt.Printf("%s--- Thinking Complete ---%s\n\n", ColorDim, ColorReset)
+			fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.ColorDim, colors.ColorReset)
 			t.transitionedFromReasoning = true
 		}
 		t.streamBuffer.WriteString(text)
@@ -518,19 +519,19 @@ func (t *TUI) printContextSizeInternal() {
 		switch {
 		case percentage < 50:
 			indicator = "✓"
-			color = ColorGreen
+			color = colors.ColorGreen
 		case percentage < 75:
 			indicator = "⚠"
-			color = ColorYellow
+			color = colors.ColorYellow
 		case percentage < 90:
 			indicator = "⚠⚠"
-			color = ColorYellow
+			color = colors.ColorYellow
 		default:
 			indicator = "⚠⚠⚠"
-			color = ColorRed
+			color = colors.ColorRed
 		}
 
-		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, ColorReset)
+		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, colors.ColorReset)
 	} else {
 		fmt.Printf("[Context: %d tokens] ", size)
 	}
@@ -538,19 +539,19 @@ func (t *TUI) printContextSizeInternal() {
 
 // printColored prints text with ANSI color.
 func printColored(color, text string) {
-	fmt.Printf("%s%s%s", color, text, ColorReset)
+	fmt.Printf("%s%s%s", color, text, colors.ColorReset)
 }
 
-// ANSI color codes
+// ANSI color codes (aliases to the colors package for backwards compatibility)
 const (
-	ColorReset   = "\033[0m"
-	ColorRed     = "\033[31m"
-	ColorGreen   = "\033[32m"
-	ColorYellow  = "\033[33m"
-	ColorBlue    = "\033[34m"
-	ColorMagenta = "\033[35m" // Magenta for goal messages
-	ColorCyan    = "\033[36m"
-	ColorDim     = "\033[90m" // Dim/bright black for reasoning content
+	ColorReset   = colors.ColorReset
+	ColorRed     = colors.ColorRed
+	ColorGreen   = colors.ColorGreen
+	ColorYellow  = colors.ColorYellow
+	ColorBlue    = colors.ColorBlue
+	ColorMagenta = colors.ColorMagenta
+	ColorCyan    = colors.ColorCyan
+	ColorDim     = colors.ColorDim
 )
 
 // Clear screen ANSI code

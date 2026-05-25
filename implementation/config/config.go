@@ -414,10 +414,10 @@ func loadEnv(cfg *Config) {
 	// Read-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
 		cfg.ReadOnly = val == "true" || val == "1"
-		// Experimental mode can be enabled via environment variable
-		if val := os.Getenv("CODING_AGENT_EXPERIMENTAL"); val != "" {
-			cfg.Experimental = val == "true" || val == "1"
-		}
+	}
+	// Experimental mode can be enabled via environment variable
+	if val := os.Getenv("CODING_AGENT_EXPERIMENTAL"); val != "" {
+		cfg.Experimental = val == "true" || val == "1"
 	}
 	// Persona can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {

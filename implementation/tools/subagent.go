@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +18,36 @@ const (
 	ColorBlue    = "\033[34m"
 	ColorMagenta = "\033[35m"
 )
+
+// formatSubagentResult formats the subagent result for display in the TUI.
+func formatSubagentResult(result *ToolResult) string {
+	if result.Success {
+		output := result.Output
+		if len(output) > 200 {
+			output = output[:200] + "\n... [subagent output truncated]"
+		}
+		return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, output, ColorReset)
+	}
+	return fmt.Sprintf("%s[Subagent] Failed: %s%s\n", ColorRed, result.Error, ColorReset)
+}
+
+// streamSubagentResult streams a subagent result status message.
+func streamSubagentResult(result *ToolResult, callback func(chunk interface{})) {
+	status := formatSubagentResult(result)
+	if callback != nil {
+		// Create a streaming chunk with the status
+		chunk := struct {
+			Text        string
+			ContentType int
+		}{
+			Text:        status,
+			ContentType: 0, // Normal content type
+		}
+		callback(chunk)
+	} else {
+		fmt.Print(status)
+	}
+}
 
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.
@@ -204,36 +233,6 @@ func extractSummary(output string) string {
 	return output
 }
 
-// formatSubagentResult formats the subagent result for display in the TUI.
-func formatSubagentResult(result *ToolResult) string {
-	if result.Success {
-		output := result.Output
-		if len(output) > 200 {
-			output = output[:200] + "\n... [subagent output truncated]"
-		}
-		return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, output, ColorReset)
-	}
-	return fmt.Sprintf("%s[Subagent] Failed: %s%s\n", ColorRed, result.Error, ColorReset)
-}
-
-// streamSubagentResult streams a subagent result status message.
-func streamSubagentResult(result *ToolResult, callback func(chunk interface{})) {
-	status := formatSubagentResult(result)
-	if callback != nil {
-		// Create a streaming chunk with the status
-		chunk := struct {
-			Text        string
-			ContentType int
-		}{
-			Text:        status,
-			ContentType: 0, // Normal content type
-		}
-		callback(chunk)
-	} else {
-		fmt.Print(status)
-	}
-}
-
 // executeSubagentFromTool is the main entry point for the subagent tool.
 // It's called by the tool executor and handles getting the binary path.
 func ExecuteSubagent(params map[string]interface{}) *ToolResult {
@@ -265,6 +264,3 @@ func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 
 	return executeSubagent(params, binaryPath)
 }
-
-// Ensure ToolResult is used
-var _ = json.Marshal
