@@ -6,17 +6,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/coding-agent/harness/colors"
 )
 
-// ANSI color codes for tool feedback
+// ANSI color codes for tool feedback (aliases to the colors package)
 const (
-	ColorReset   = "\033[0m"
-	ColorGreen   = "\033[32m"
-	ColorYellow  = "\033[33m"
-	ColorRed     = "\033[31m"
-	ColorCyan    = "\033[36m"
-	ColorBlue    = "\033[34m"
-	ColorMagenta = "\033[35m"
+	ColorReset   = colors.ColorReset
+	ColorGreen   = colors.ColorGreen
+	ColorYellow  = colors.ColorYellow
+	ColorRed     = colors.ColorRed
+	ColorCyan    = colors.ColorCyan
+	ColorBlue    = colors.ColorBlue
+	ColorMagenta = colors.ColorMagenta
 )
 
 // formatSubagentResult formats the subagent result for display in the TUI.

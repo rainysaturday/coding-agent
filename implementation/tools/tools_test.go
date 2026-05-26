@@ -79,9 +79,9 @@ func TestParseToolCall_EmptyArguments(t *testing.T) {
 func TestExecute_UnknownTool(t *testing.T) {
 	te := NewToolExecutor()
 	// First call bash (which may succeed or fail depending on env)
-	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "true"}})
+	te.Execute(context.Background(), &ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "true"}})
 	// Now call unknown tool (will always fail)
-	result := te.Execute(&ToolCall{Name: "nonexistent_tool", Parameters: map[string]interface{}{}})
+	result := te.Execute(context.Background(), &ToolCall{Name: "nonexistent_tool", Parameters: map[string]interface{}{}})
 	if result.Success {
 		t.Error("Expected failure for unknown tool")
 	}
@@ -96,7 +96,7 @@ func TestExecute_UnknownTool(t *testing.T) {
 
 func TestExecute_Bash_Failed(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "false", // always fails
@@ -112,7 +112,7 @@ func TestExecute_Bash_Failed(t *testing.T) {
 
 func TestExecute_ReadFile_MissingParameter(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name:       "read_file",
 		Parameters: map[string]interface{}{},
 	})
@@ -126,7 +126,7 @@ func TestExecute_ReadFile_MissingParameter(t *testing.T) {
 
 func TestExecute_WriteFile_MissingPath(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"content": "test",
@@ -140,7 +140,7 @@ func TestExecute_WriteFile_MissingPath(t *testing.T) {
 func TestExecute_WriteFile_MissingContent(t *testing.T) {
 	tmpDir := t.TempDir()
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"path": filepath.Join(tmpDir, "test.txt"),
@@ -153,7 +153,7 @@ func TestExecute_WriteFile_MissingContent(t *testing.T) {
 
 func TestExecute_ReadLines_MissingPath(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
 			"start": 1.0,
@@ -171,7 +171,7 @@ func TestExecute_ReadLines_MissingStart(t *testing.T) {
 	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -189,7 +189,7 @@ func TestExecute_ReadLines_MissingEnd(t *testing.T) {
 	os.WriteFile(testFile, []byte("line1\nline2\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -203,7 +203,7 @@ func TestExecute_ReadLines_MissingEnd(t *testing.T) {
 
 func TestExecute_InsertLines_MissingPath(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"line":  1.0,
@@ -221,7 +221,7 @@ func TestExecute_InsertLines_MissingLine(t *testing.T) {
 	os.WriteFile(testFile, []byte("content\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -239,7 +239,7 @@ func TestExecute_InsertLines_MissingLines(t *testing.T) {
 	os.WriteFile(testFile, []byte("content\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -253,7 +253,7 @@ func TestExecute_InsertLines_MissingLines(t *testing.T) {
 
 func TestExecute_ReplaceText_MissingPath(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"search":  "old",
@@ -271,7 +271,7 @@ func TestExecute_ReplaceText_MissingSearch(t *testing.T) {
 	os.WriteFile(testFile, []byte("content\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -289,7 +289,7 @@ func TestExecute_ReplaceText_MissingReplace(t *testing.T) {
 	os.WriteFile(testFile, []byte("content\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":   testFile,
@@ -308,7 +308,7 @@ func TestExecute_ReplaceText_CountAll(t *testing.T) {
 	os.WriteFile(testFile, []byte(content), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -339,7 +339,7 @@ func TestExecute_ReplaceText_CountLimited(t *testing.T) {
 	os.WriteFile(testFile, []byte(content), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -362,7 +362,7 @@ func TestExecute_ReplaceText_StringCount(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello hello\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -382,7 +382,7 @@ func TestExecute_ReplaceText_StringCountMinusOne(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello hello\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -402,7 +402,7 @@ func TestExecute_ReplaceText_IntCount(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello hello hello\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -422,7 +422,7 @@ func TestExecute_ReplaceText_SearchNotInFile(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -442,9 +442,9 @@ func TestToolExecutor_Stats(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Execute several calls
-	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "true"}})
-	te.Execute(&ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "false"}})
-	te.Execute(&ToolCall{Name: "unknown_tool", Parameters: map[string]interface{}{}})
+	te.Execute(context.Background(), &ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "true"}})
+	te.Execute(context.Background(), &ToolCall{Name: "bash", Parameters: map[string]interface{}{"command": "false"}})
+	te.Execute(context.Background(), &ToolCall{Name: "unknown_tool", Parameters: map[string]interface{}{}})
 
 	stats := te.Stats()
 	if stats.TotalCalls != 3 {
@@ -471,7 +471,7 @@ func TestExecute_WriteFile_CreateDirectories(t *testing.T) {
 	deepPath := filepath.Join(tmpDir, "a", "b", "c", "test.txt")
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"path":    deepPath,
@@ -493,7 +493,7 @@ func TestExecute_ReadFile_Empty(t *testing.T) {
 	os.WriteFile(testFile, []byte(""), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_file",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -513,7 +513,7 @@ func TestExecute_ReadFile_PermissionDenied(t *testing.T) {
 	os.WriteFile(testFile, []byte("content\n"), 0444)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_file",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -532,7 +532,7 @@ func TestExecute_WriteFile_PermissionDenied(t *testing.T) {
 	testFile := filepath.Join(readonlyDir, "test.txt")
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -555,7 +555,7 @@ func TestExecute_ReadLines_TooManyLines(t *testing.T) {
 	os.WriteFile(testFile, []byte(content), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -578,7 +578,7 @@ func TestExecute_InsertLines_ToEmptyFile(t *testing.T) {
 	os.WriteFile(testFile, []byte(""), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -601,7 +601,7 @@ func TestExecute_InsertLines_AtBeginning(t *testing.T) {
 	os.WriteFile(testFile, []byte("line 2\nline 3\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -624,7 +624,7 @@ func TestExecute_InsertLines_AtEnd(t *testing.T) {
 	os.WriteFile(testFile, []byte("existing\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -647,7 +647,7 @@ func TestExecute_ReplaceText_EmptySearch(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -670,7 +670,7 @@ func TestExecute_ReplaceText_EmptyReplace(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello\nhello\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -689,7 +689,7 @@ func TestExecute_ReplaceText_OverwriteCount(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello hello hello\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    testFile,
@@ -708,7 +708,7 @@ func TestExecute_ReplaceText_OverwriteCount(t *testing.T) {
 
 func TestExecute_Bash_WithEnvVars(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo $HOME",
@@ -722,7 +722,7 @@ func TestExecute_Bash_WithEnvVars(t *testing.T) {
 
 func TestExecute_Bash_WithPipes(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test | cat",
@@ -745,7 +745,7 @@ func TestExecute_ListFiles_Default(t *testing.T) {
 	os.Mkdir(filepath.Join(tmpDir, "dir1"), 0755)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -777,7 +777,7 @@ func TestExecute_ListFiles_HiddenFiles(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Without -a flag, hidden files should not appear
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -792,7 +792,7 @@ func TestExecute_ListFiles_HiddenFiles(t *testing.T) {
 	}
 
 	// With -a flag
-	result2 := te.Execute(&ToolCall{
+	result2 := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -811,7 +811,7 @@ func TestExecute_ListFiles_LongFormat(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("hello world"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -842,7 +842,7 @@ func TestExecute_ListFiles_HumanReadable(t *testing.T) {
 	te := NewToolExecutor()
 
 	// With -h flag, should show human-readable size
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -869,7 +869,7 @@ func TestExecute_ListFiles_ByTime(t *testing.T) {
 	os.WriteFile(f2, []byte("second"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -897,7 +897,7 @@ func TestExecute_ListFiles_BySize(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "large.txt"), []byte("this is a larger content"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -925,7 +925,7 @@ func TestExecute_ListFiles_ReverseSort(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Without reverse - alphabetical order
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -941,7 +941,7 @@ func TestExecute_ListFiles_ReverseSort(t *testing.T) {
 	}
 
 	// With reverse - reverse alphabetical
-	result2 := te.Execute(&ToolCall{
+	result2 := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -960,7 +960,7 @@ func TestExecute_ListFiles_ReverseSort(t *testing.T) {
 
 func TestExecute_ListFiles_FileNotExists(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": "/nonexistent/path/that/does/not/exist",
@@ -977,7 +977,7 @@ func TestExecute_ListFiles_FileNotExists(t *testing.T) {
 func TestExecute_ListFiles_DefaultPath(t *testing.T) {
 	// Test with default path (current directory)
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name:       "list_files",
 		Parameters: map[string]interface{}{},
 	})
@@ -995,7 +995,7 @@ func TestExecute_ListFiles_SingleFile(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Simple format for a single file
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -1009,7 +1009,7 @@ func TestExecute_ListFiles_SingleFile(t *testing.T) {
 	}
 
 	// Long format for a single file
-	result2 := te.Execute(&ToolCall{
+	result2 := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -1032,7 +1032,7 @@ func TestExecute_ListFiles_EntriesListedCount(t *testing.T) {
 	os.Mkdir(filepath.Join(tmpDir, "dir1"), 0755)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1052,7 +1052,7 @@ func TestToolExecutor_ReadOnly_BashBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -1074,7 +1074,7 @@ func TestToolExecutor_ReadOnly_WriteFileBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"path":    "/tmp/test.txt",
@@ -1095,7 +1095,7 @@ func TestToolExecutor_ReadOnly_ListFilesAllowed(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1115,7 +1115,7 @@ func TestToolExecutor_ReadOnly_ReadFileAllowed(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_file",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -1134,7 +1134,7 @@ func TestToolExecutor_ReadOnly_InsertLinesBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "insert_lines",
 		Parameters: map[string]interface{}{
 			"path":  "/tmp/test.txt",
@@ -1155,7 +1155,7 @@ func TestToolExecutor_ReadOnly_ReplaceTextBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "replace_text",
 		Parameters: map[string]interface{}{
 			"path":    "/tmp/test.txt",
@@ -1180,7 +1180,7 @@ func TestToolExecutor_ReadOnly_ReadLinesAllowed(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "read_lines",
 		Parameters: map[string]interface{}{
 			"path":  testFile,
@@ -1206,7 +1206,7 @@ func TestToolExecutor_ReadOnly_Statistics(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// Successful read operation
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "read_file",
 		Parameters: map[string]interface{}{
 			"path": testFile,
@@ -1214,7 +1214,7 @@ func TestToolExecutor_ReadOnly_Statistics(t *testing.T) {
 	})
 
 	// Blocked write operation
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -1222,7 +1222,7 @@ func TestToolExecutor_ReadOnly_Statistics(t *testing.T) {
 	})
 
 	// Another successful read operation
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1244,7 +1244,7 @@ func TestToolExecutor_ReadOnly_NotSet(t *testing.T) {
 	// Not setting SetReadOnly, so readOnly should be false by default
 
 	// Bash should work
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -1288,7 +1288,7 @@ func TestExecute_ListFiles_MultipleFlags(t *testing.T) {
 	os.Mkdir(filepath.Join(tmpDir, "dir1"), 0755)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -1320,7 +1320,7 @@ func TestExecute_ListFiles_DirectoriesFirst(t *testing.T) {
 	os.Mkdir(filepath.Join(tmpDir, "dir1"), 0755)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1345,7 +1345,7 @@ func TestToolExecutor_ListFiles_Statistics(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Execute list_files successfully
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1353,7 +1353,7 @@ func TestToolExecutor_ListFiles_Statistics(t *testing.T) {
 	})
 
 	// Execute with invalid path (will fail)
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": "/nonexistent",
@@ -1428,7 +1428,7 @@ func TestFormatPermissions(t *testing.T) {
 func TestExecute_Grep_MissingPattern(t *testing.T) {
 	tmpDir := t.TempDir()
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1444,7 +1444,7 @@ func TestExecute_Grep_MissingPattern(t *testing.T) {
 
 func TestExecute_Grep_EmptyPattern(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "",
@@ -1464,7 +1464,7 @@ func TestExecute_Grep_InvalidRegex(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "[invalid",
@@ -1485,7 +1485,7 @@ func TestExecute_Grep_Found(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1509,7 +1509,7 @@ func TestExecute_Grep_LineNumbers(t *testing.T) {
 	os.WriteFile(testFile, []byte("line one\nline two\nline three\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "line",
@@ -1532,7 +1532,7 @@ func TestExecute_Grep_NoLineNumbers(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\nfoo bar\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1555,7 +1555,7 @@ func TestExecute_Grep_CaseInsensitive(t *testing.T) {
 	os.WriteFile(testFile, []byte("Hello WORLD\nfoo bar\nHello again\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1580,7 +1580,7 @@ func TestExecute_Grep_CountOnly(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1603,7 +1603,7 @@ func TestExecute_Grep_InvertMatch(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\nfoo bar\nhello again\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1629,7 +1629,7 @@ func TestExecute_Grep_FilenamesOnly(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1656,7 +1656,7 @@ func TestExecute_Grep_Recursive(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "subdir", "file2.txt"), []byte("foo bar\nhello again\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1682,7 +1682,7 @@ func TestExecute_Grep_NotFound(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "notfound",
@@ -1700,7 +1700,7 @@ func TestExecute_Grep_NotFound(t *testing.T) {
 
 func TestExecute_Grep_PathNotFound(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "test",
@@ -1723,7 +1723,7 @@ func TestExecute_Grep_BinaryFileSkipped(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "text.txt"), []byte("hello world\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1750,7 +1750,7 @@ func TestExecute_Grep_BinaryFileSkipped(t *testing.T) {
 
 func TestExecute_Grep_DefaultPath(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "test",
@@ -1770,7 +1770,7 @@ func TestExecute_Grep_InReadOnlyMode(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -1798,7 +1798,7 @@ func TestExecute_GitLog_NotGitRepo(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1818,7 +1818,7 @@ func TestExecute_GitLog_NoCommits(t *testing.T) {
 	setupGitRepo(t, tmpDir)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1842,7 +1842,7 @@ func TestExecute_GitLog_WithCommits(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1868,7 +1868,7 @@ func TestExecute_GitLog_CountParameter(t *testing.T) {
 	}
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -1893,7 +1893,7 @@ func TestExecute_GitLog_OnelineFlag(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -1920,7 +1920,7 @@ func TestExecute_GitLog_InReadOnlyMode(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -1943,7 +1943,7 @@ func TestExecute_GitLog_ReferenceParameter(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":      tmpDir,
@@ -1976,7 +1976,7 @@ func TestExecute_GitLog_PathLimit(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Add subdir2").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":  filepath.Join(tmpDir, "subdir1"),
@@ -1999,7 +1999,7 @@ func TestExecute_GitLog_MergesFlag(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -2021,7 +2021,7 @@ func TestExecute_GitLog_ExtraInfo(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path":      tmpDir,
@@ -2050,7 +2050,7 @@ func TestExecute_GitShow_NotGitRepo(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2070,7 +2070,7 @@ func TestExecute_GitShow_NoCommits(t *testing.T) {
 	setupGitRepo(t, tmpDir)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2092,7 +2092,7 @@ func TestExecute_GitShow_WithCommit(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2117,7 +2117,7 @@ func TestExecute_GitShow_DefaultCommit(t *testing.T) {
 
 	te := NewToolExecutor()
 	// Don't specify commit parameter - should default to HEAD
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2140,7 +2140,7 @@ func TestExecute_GitShow_StatFlag(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2166,7 +2166,7 @@ func TestExecute_GitShow_NameStatusFlag(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2192,7 +2192,7 @@ func TestExecute_GitShow_PathLimit(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2219,7 +2219,7 @@ func TestExecute_GitShow_InReadOnlyMode(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2243,7 +2243,7 @@ func TestExecute_GitShow_CommitNotFound(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2265,7 +2265,7 @@ func TestExecute_GitShow_ExtraInfo(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2292,7 +2292,7 @@ func TestExecute_GitShow_EmptyOutput(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "--allow-empty", "-m", "Empty commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2333,7 +2333,7 @@ func TestExecute_Grep_InReadOnlyMode_Allowed(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// grep should work in read-only mode
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"pattern": "hello",
@@ -2357,7 +2357,7 @@ func TestExecute_GitLog_InReadOnlyMode_Allowed(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// git_log should work in read-only mode
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2380,7 +2380,7 @@ func TestExecute_GitShow_InReadOnlyMode_Allowed(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// git_show should work in read-only mode
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"path":   tmpDir,
@@ -2395,7 +2395,7 @@ func TestExecute_GitShow_InReadOnlyMode_Allowed(t *testing.T) {
 func TestExecute_Bash_Timeout(t *testing.T) {
 	te := NewToolExecutor()
 	// Use a very short timeout (10ms) to trigger the timeout quickly
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "sleep 10",
@@ -2422,7 +2422,7 @@ func TestExecute_Bash_Timeout(t *testing.T) {
 func TestExecute_Bash_DefaultTimeout(t *testing.T) {
 	te := NewToolExecutor()
 	// Command should succeed within default 30s timeout
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo hello",
@@ -2439,7 +2439,7 @@ func TestExecute_Bash_DefaultTimeout(t *testing.T) {
 func TestExecute_Bash_CustomTimeout(t *testing.T) {
 	te := NewToolExecutor()
 	// Use a custom timeout of 5000ms (5 seconds) for a quick command
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -2457,7 +2457,7 @@ func TestExecute_Bash_CustomTimeout(t *testing.T) {
 func TestExecute_Bash_ZeroTimeoutFallsBackToDefault(t *testing.T) {
 	te := NewToolExecutor()
 	// Zero timeout should fall back to default
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo fallback",
@@ -2510,7 +2510,7 @@ func TestIsCancelled_NilError(t *testing.T) {
 
 func TestExecute_Bash_MissingCommand(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name:       "bash",
 		Parameters: map[string]interface{}{},
 	})
@@ -2524,7 +2524,7 @@ func TestExecute_Bash_MissingCommand(t *testing.T) {
 
 func TestExecute_Bash_EmptyCommand(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "",
@@ -2538,7 +2538,7 @@ func TestExecute_Bash_EmptyCommand(t *testing.T) {
 
 func TestExecute_Bash_Success(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo hello",
@@ -2557,7 +2557,7 @@ func TestExecute_Bash_Success(t *testing.T) {
 
 func TestExecute_Bash_NonZeroExit(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "exit 42",
@@ -2581,7 +2581,7 @@ func TestExecute_Bash_Ctx_Cancelled(t *testing.T) {
 		cancel()
 	}()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "sleep 30",
@@ -2596,7 +2596,7 @@ func TestExecute_Bash_Ctx_Cancelled(t *testing.T) {
 
 func TestExecute_Bash_StringTimeout(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -2610,7 +2610,7 @@ func TestExecute_Bash_StringTimeout(t *testing.T) {
 
 func TestExecute_Bash_NegativeTimeout(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -2624,7 +2624,7 @@ func TestExecute_Bash_NegativeTimeout(t *testing.T) {
 
 func TestExecute_Bash_FloatTimeout(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -2647,7 +2647,7 @@ func TestExecute_ListFiles_Recursive(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "subdir1", "file2.txt"), []byte("content2"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -2671,7 +2671,7 @@ func TestExecute_ListFiles_RecursiveLong(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "subdir1", "file2.txt"), []byte("content2"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -2695,7 +2695,7 @@ func TestExecute_ListFiles_WithSpacesInPath(t *testing.T) {
 	os.WriteFile(filepath.Join(spaceDir, "file.txt"), []byte("content"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": spaceDir,
@@ -2715,7 +2715,7 @@ func TestExecute_GitDiff_NotGitRepo(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2738,7 +2738,7 @@ func TestExecute_GitDiff_NoChanges(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2761,7 +2761,7 @@ func TestExecute_GitDiff_WithChanges(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world modified\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2791,7 +2791,7 @@ func TestExecute_GitDiff_TwoReferences(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Second commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path":       tmpDir,
@@ -2819,7 +2819,7 @@ func TestExecute_GitDiff_StatFlag(t *testing.T) {
 	os.WriteFile(testFile, []byte("hello world modified\n"), 0644)
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path":  tmpDir,
@@ -2842,7 +2842,7 @@ func TestExecute_GitDiff_InReadOnlyMode(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path": tmpDir,
@@ -2862,7 +2862,7 @@ func TestExecute_GitDiff_ExtraInfo(t *testing.T) {
 	exec.Command("git", "-C", tmpDir, "commit", "-m", "Initial commit").Run()
 
 	te := NewToolExecutor()
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"path":       tmpDir,
@@ -2883,7 +2883,7 @@ func TestExecuteCtx_Cancelled(t *testing.T) {
 	// Cancel before execution
 	cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "sleep 10",
@@ -2904,7 +2904,7 @@ func TestExecuteCtx_Bash_Cancelled(t *testing.T) {
 		cancel()
 	}()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "sleep 30",
@@ -3025,14 +3025,14 @@ func TestFormatRecursiveLongList_WithFlags(t *testing.T) {
 
 // ===== Tests for executeGitDiff =====
 
-// ===== Tests for executeBashCtx via ToolExecutor =====
+// ===== Tests for executeBash via ToolExecutor =====
 
 func TestExecuteBashCtx_ContextCancelled(t *testing.T) {
 	te := NewToolExecutor()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo hello",
@@ -3049,7 +3049,7 @@ func TestExecuteBashCtx_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "sleep 10",
@@ -3067,7 +3067,7 @@ func TestExecuteBashCtx_Timeout(t *testing.T) {
 func TestExecuteGitDiff_NoArgs(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 	})
 
@@ -3078,7 +3078,7 @@ func TestExecuteGitDiff_NoArgs(t *testing.T) {
 func TestExecuteGitDiff_SingleArg(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"arg": "HEAD~1",
@@ -3092,7 +3092,7 @@ func TestExecuteGitDiff_SingleArg(t *testing.T) {
 func TestExecuteGitDiff_TwoArgs(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 		Parameters: map[string]interface{}{
 			"arg":  "HEAD~2",
@@ -3109,7 +3109,7 @@ func TestExecuteGitDiff_TwoArgs(t *testing.T) {
 func TestExecuteGitLog_NArgs(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 		Parameters: map[string]interface{}{
 			"n": 10,
@@ -3127,7 +3127,7 @@ func TestExecuteGitLog_NArgs(t *testing.T) {
 func TestExecuteGrep_NoMatch(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"path":      ".",
@@ -3145,7 +3145,7 @@ func TestExecuteGrep_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"path":    ".",
@@ -3164,7 +3164,7 @@ func TestExecuteGrep_ContextCancelled(t *testing.T) {
 func TestExecuteListFiles(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": ".",
@@ -3182,7 +3182,7 @@ func TestExecuteListFilesCtx_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": ".",
@@ -3200,7 +3200,7 @@ func TestExecuteListFilesCtx_ContextCancelled(t *testing.T) {
 func TestExecuteBash_SimpleCommand(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo hello",
@@ -3218,7 +3218,7 @@ func TestExecuteBash_SimpleCommand(t *testing.T) {
 func TestExecuteBash_MultilineCommand(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo line1\necho line2",
@@ -3233,7 +3233,7 @@ func TestExecuteBash_MultilineCommand(t *testing.T) {
 func TestExecuteBash_OutputCapture(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo 'test output'",
@@ -3253,7 +3253,7 @@ func TestExecuteBash_ContextWithTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo 'context test'",
@@ -3268,7 +3268,7 @@ func TestExecuteBash_ContextWithTimeout(t *testing.T) {
 func TestExecuteBash_BashScript(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "for i in 1 2 3; do echo $i; done",
@@ -3285,7 +3285,7 @@ func TestExecuteBash_BashScript(t *testing.T) {
 func TestExecuteListFiles_Root(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": ".",
@@ -3302,7 +3302,7 @@ func TestExecuteListFilesCtx_Root(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": ".",
@@ -3319,7 +3319,7 @@ func TestExecuteListFilesCtx_Root(t *testing.T) {
 func TestExecuteGrep_Simple(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"path":    ".",
@@ -3337,7 +3337,7 @@ func TestExecuteGrep_Context(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	result := te.ExecuteCtx(ctx, &ToolCall{
+	result := te.Execute(ctx, &ToolCall{
 		Name: "grep",
 		Parameters: map[string]interface{}{
 			"path":    ".",
@@ -3355,7 +3355,7 @@ func TestExecuteGrep_Context(t *testing.T) {
 func TestExecuteGitLog_Simple(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_log",
 	})
 
@@ -3368,7 +3368,7 @@ func TestExecuteGitLog_Simple(t *testing.T) {
 func TestExecuteGitShow_Simple(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_show",
 		Parameters: map[string]interface{}{
 			"commit": "HEAD",
@@ -3384,7 +3384,7 @@ func TestExecuteGitShow_Simple(t *testing.T) {
 func TestExecuteGitDiff_Simple(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "git_diff",
 	})
 
@@ -3400,7 +3400,7 @@ func TestToolExecutor_Stats2(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Execute some commands
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "echo test",
@@ -3417,7 +3417,7 @@ func TestToolExecutor_StatsFailure(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Execute a command that will fail
-	te.Execute(&ToolCall{
+	te.Execute(context.Background(), &ToolCall{
 		Name: "bash",
 		Parameters: map[string]interface{}{
 			"command": "nonexistent_command_xyz_123",
@@ -3438,7 +3438,7 @@ func TestSetReadOnly(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// Try to execute a write command - should fail
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "write_file",
 		Parameters: map[string]interface{}{
 			"path":    "/tmp/test.txt",
@@ -3457,7 +3457,7 @@ func TestSetReadOnly_ReadAllowed(t *testing.T) {
 	te.SetReadOnly(true)
 
 	// Read operations should still work
-	result := te.Execute(&ToolCall{
+	result := te.Execute(context.Background(), &ToolCall{
 		Name: "list_files",
 		Parameters: map[string]interface{}{
 			"path": ".",
@@ -3476,7 +3476,7 @@ func TestExecuteBash(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Test with a valid bash command
-	result := te.executeBash(map[string]interface{}{
+	result := te.executeBash(context.Background(), map[string]interface{}{
 		"command": "echo hello",
 	})
 	if !result.Success {
@@ -3491,7 +3491,7 @@ func TestExecuteBash_Error(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Test with a failing command
-	result := te.executeBash(map[string]interface{}{
+	result := te.executeBash(context.Background(), map[string]interface{}{
 		"command": "exit 42",
 	})
 	if result.Success {
@@ -3506,7 +3506,7 @@ func TestExecuteBash_MissingCommand(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Test with missing command parameter
-	result := te.executeBash(map[string]interface{}{})
+	result := te.executeBash(context.Background(), map[string]interface{}{})
 	if result.Success {
 		t.Error("Expected failure for missing command")
 	}
@@ -3518,7 +3518,7 @@ func TestExecuteBash_MissingCommand(t *testing.T) {
 func TestExecuteListFiles_NonExistent(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.executeListFiles(map[string]interface{}{
+	result := te.executeListFiles(context.Background(), map[string]interface{}{
 		"path": "/nonexistent/path/that/does/not/exist",
 	})
 	if result.Success {
@@ -3530,7 +3530,7 @@ func TestExecuteGrep(t *testing.T) {
 	te := NewToolExecutor()
 
 	// Test grep on current directory
-	result := te.executeGrep(map[string]interface{}{
+	result := te.executeGrep(context.Background(), map[string]interface{}{
 		"path":        ".",
 		"pattern":     "package",
 		"max_results": 10,
@@ -3544,7 +3544,7 @@ func TestExecuteGrep(t *testing.T) {
 func TestExecuteGitDiff(t *testing.T) {
 	te := NewToolExecutor()
 
-	result := te.executeGitDiff(map[string]interface{}{})
+	result := te.executeGitDiff(context.Background(), map[string]interface{}{})
 	// May succeed or fail depending on whether we're in a git repo
 	if result.Error != "" && !strings.Contains(result.Error, "not a git repository") && !strings.Contains(result.Error, "git: 'diff' is not a git") {
 		t.Logf("Git diff error (may be expected outside git repo): %s", result.Error)
@@ -3555,14 +3555,14 @@ func TestExecuteGitDiff(t *testing.T) {
 
 func TestExecuteGitLog_NonCtx(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.executeGitLog(map[string]interface{}{})
+	result := te.executeGitLog(context.Background(), map[string]interface{}{})
 	// May succeed or fail depending on git repo state
 	_ = result
 }
 
 func TestExecuteGitShow_NonCtx(t *testing.T) {
 	te := NewToolExecutor()
-	result := te.executeGitShow(map[string]interface{}{})
+	result := te.executeGitShow(context.Background(), map[string]interface{}{})
 	// May succeed or fail depending on git repo state
 	_ = result
 }

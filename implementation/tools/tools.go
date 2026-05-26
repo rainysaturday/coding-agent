@@ -108,16 +108,10 @@ func ParseToolCall(raw string) (*ToolCall, error) {
 	return tc, nil
 }
 
-// Execute executes a tool call and returns the result.
-// Deprecated: Use ExecuteCtx instead, which supports cancellation.
-func (te *ToolExecutor) Execute(tc *ToolCall) *ToolResult {
-	return te.ExecuteCtx(context.Background(), tc)
-}
-
-// ExecuteCtx executes a tool call with context support for cancellation.
+// Execute executes a tool call with context support for cancellation.
 // If the context is cancelled during execution, the tool will be interrupted
 // and a cancellation result will be returned.
-func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResult {
+func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 	te.stats.TotalCalls++
 
 	// Check if tool is allowed in read-only mode
@@ -136,7 +130,7 @@ func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResul
 
 	switch tc.Name {
 	case "bash":
-		result = te.executeBashCtx(ctx, tc.Parameters)
+		result = te.executeBash(ctx, tc.Parameters)
 	case "read_file":
 		result = te.executeReadFile(tc.Parameters)
 	case "write_file":
@@ -148,15 +142,15 @@ func (te *ToolExecutor) ExecuteCtx(ctx context.Context, tc *ToolCall) *ToolResul
 	case "replace_text":
 		result = te.executeReplaceText(tc.Parameters)
 	case "list_files":
-		result = te.executeListFilesCtx(ctx, tc.Parameters)
+		result = te.executeListFiles(ctx, tc.Parameters)
 	case "grep":
-		result = te.executeGrepCtx(ctx, tc.Parameters)
+		result = te.executeGrep(ctx, tc.Parameters)
 	case "git_log":
-		result = te.executeGitLogCtx(ctx, tc.Parameters)
+		result = te.executeGitLog(ctx, tc.Parameters)
 	case "git_show":
-		result = te.executeGitShowCtx(ctx, tc.Parameters)
+		result = te.executeGitShow(ctx, tc.Parameters)
 	case "git_diff":
-		result = te.executeGitDiffCtx(ctx, tc.Parameters)
+		result = te.executeGitDiff(ctx, tc.Parameters)
 	case "subagent":
 		result = ExecuteSubagent(tc.Parameters)
 	default:
@@ -187,14 +181,8 @@ func isCancelled(err error) bool {
 	return err == context.Canceled
 }
 
-// executeBash executes a bash command.
-// Deprecated: Use executeBashCtx instead.
-func (te *ToolExecutor) executeBash(params map[string]interface{}) *ToolResult {
-	return te.executeBashCtx(context.Background(), params)
-}
-
-// executeBashCtx executes a bash command with context support for cancellation.
-func (te *ToolExecutor) executeBashCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// executeBash executes a bash command with context support for cancellation.
+func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]interface{}) *ToolResult {
 	command, ok := params["command"].(string)
 	if !ok {
 		return &ToolResult{
@@ -678,13 +666,8 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 }
 
 // executeListFiles lists files and directories, formatted like ls.
-// Deprecated: Use executeListFilesCtx instead, which supports cancellation.
-func (te *ToolExecutor) executeListFiles(params map[string]interface{}) *ToolResult {
-	return te.executeListFilesCtx(context.Background(), params)
-}
-
-// executeListFilesCtx lists files and directories with context support for cancellation.
-func (te *ToolExecutor) executeListFilesCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// Supports context cancellation and various flags similar to ls.
+func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]interface{}) *ToolResult {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
@@ -1211,13 +1194,8 @@ type matchResult struct {
 }
 
 // executeGrep searches through file contents using grep-like pattern matching.
-// Deprecated: Use executeGrepCtx instead.
-func (te *ToolExecutor) executeGrep(params map[string]interface{}) *ToolResult {
-	return te.executeGrepCtx(context.Background(), params)
-}
-
-// executeGrepCtx searches through file contents using grep-like pattern matching.
-func (te *ToolExecutor) executeGrepCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// Supports context cancellation, recursive search, and various grep-like flags.
+func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]interface{}) *ToolResult {
 	pattern, ok := params["pattern"].(string)
 	if !ok {
 		return &ToolResult{
@@ -1554,14 +1532,8 @@ func hasFlag(flags []string, flag string) bool {
 	return false
 }
 
-// executeGitLog views the commit history of a git repository.
-// Deprecated: Use executeGitLogCtx instead.
-func (te *ToolExecutor) executeGitLog(params map[string]interface{}) *ToolResult {
-	return te.executeGitLogCtx(context.Background(), params)
-}
-
-// executeGitLogCtx views the commit history of a git repository with context support.
-func (te *ToolExecutor) executeGitLogCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// executeGitLog views the commit history of a git repository with context support.
+func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
@@ -1764,14 +1736,8 @@ func (te *ToolExecutor) executeGitLogCtx(ctx context.Context, params map[string]
 	}
 }
 
-// executeGitShow shows details of a specific commit.
-// Deprecated: Use executeGitShowCtx instead.
-func (te *ToolExecutor) executeGitShow(params map[string]interface{}) *ToolResult {
-	return te.executeGitShowCtx(context.Background(), params)
-}
-
-// executeGitShowCtx shows details of a specific commit with context support.
-func (te *ToolExecutor) executeGitShowCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// executeGitShow shows details of a specific commit with context support.
+func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
@@ -1923,14 +1889,8 @@ func (te *ToolExecutor) executeGitShowCtx(ctx context.Context, params map[string
 	}
 }
 
-// executeGitDiff shows the diff between two commits, branches, or the working tree.
-// Deprecated: Use executeGitDiffCtx instead.
-func (te *ToolExecutor) executeGitDiff(params map[string]interface{}) *ToolResult {
-	return te.executeGitDiffCtx(context.Background(), params)
-}
-
-// executeGitDiffCtx shows the diff between two commits, branches, or the working tree with context support.
-func (te *ToolExecutor) executeGitDiffCtx(ctx context.Context, params map[string]interface{}) *ToolResult {
+// executeGitDiff shows the diff between two commits, branches, or the working tree with context support.
+func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Parse parameters
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/coding-agent/harness/agent"
+	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tui"
@@ -28,9 +29,9 @@ import (
 // Version information injected at build time
 // Terminal color codes for one-shot mode output.
 const (
-	ColorReset   = "\033[0m"
-	ColorDim     = "\033[90m"
-	ColorMagenta = "\033[35m" // Magenta for goal messages
+	ColorReset   = colors.ColorReset
+	ColorDim     = colors.ColorDim
+	ColorMagenta = colors.ColorMagenta
 )
 
 var (

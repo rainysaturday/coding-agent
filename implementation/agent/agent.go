@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/debug"
 	"github.com/coding-agent/harness/inference"
@@ -22,9 +23,6 @@ type StreamCallback = inference.StreamingCallbackWithType
 
 // ContextSizeCallback is a function called when context size changes.
 type ContextSizeCallback func(size, max int)
-
-// StreamCallbackString is a legacy type for backwards compatibility with string callbacks.
-type StreamCallbackString func(chunk string)
 
 // Agent represents the coding agent.
 type Agent struct {
@@ -466,7 +464,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				}
 
 				// Execute the tool with context support for cancellation
-				result := a.toolExecutor.ExecuteCtx(ctx, tc)
+				result := a.toolExecutor.Execute(ctx, tc)
 				step.ToolResult = result
 
 				// Log tool result if debug is enabled
@@ -977,15 +975,15 @@ func formatParamValue(value interface{}) string {
 	}
 }
 
-// ANSI color codes for tool feedback
+// ANSI color codes (aliases to the colors package for backwards compatibility)
 const (
-	ColorReset   = "\033[0m"
-	ColorGreen   = "\033[32m"
-	ColorYellow  = "\033[33m"
-	ColorRed     = "\033[31m"
-	ColorCyan    = "\033[36m"
-	ColorBlue    = "\033[34m"
-	ColorMagenta = "\033[35m" // Magenta for goal messages
+	ColorReset   = colors.ColorReset
+	ColorGreen   = colors.ColorGreen
+	ColorYellow  = colors.ColorYellow
+	ColorRed     = colors.ColorRed
+	ColorCyan    = colors.ColorCyan
+	ColorBlue    = colors.ColorBlue
+	ColorMagenta = colors.ColorMagenta
 )
 
 // streamStatus streams a tool call status message with color.
