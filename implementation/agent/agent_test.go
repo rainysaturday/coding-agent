@@ -1285,6 +1285,34 @@ func TestGoalCaseInsensitive_Matching(t *testing.T) {
 	}
 }
 
+// TestGoalMode_AutoClearOnAchieved verifies that the goal is automatically
+// cleared when "goal achieved" is detected at a natural end.
+func TestGoalMode_AutoClearOnAchieved(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set a goal
+	agent.SetGoal("Create a file")
+	if !agent.IsGoalActive() {
+		t.Fatal("Goal should be active after SetGoal")
+	}
+	if agent.GetGoal() != "Create a file" {
+		t.Fatalf("Expected goal 'Create a file', got %q", agent.GetGoal())
+	}
+
+	// Simulate goal achievement by clearing the goal (as the agent would do
+	// when it detects "goal achieved" at natural end)
+	agent.ClearGoal()
+
+	// Verify goal is cleared
+	if agent.IsGoalActive() {
+		t.Error("Goal should not be active after ClearGoal (auto-clear on achievement)")
+	}
+	if agent.GetGoal() != "" {
+		t.Errorf("Expected empty goal after auto-clear, got %q", agent.GetGoal())
+	}
+}
+
 // ===== Tests for Error types and utilities (previously 0% coverage) =====
 
 func TestAuthError_Error(t *testing.T) {

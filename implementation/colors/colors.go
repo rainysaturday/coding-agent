@@ -12,3 +12,8 @@ const (
 	ColorCyan    = "\033[36m"
 	ColorDim     = "\033[90m" // Dim/bright black for reasoning content
 )
+
+// Semantic color aliases for specific use cases.
+const (
+	GoalColor = ColorMagenta // Goal-related messages use magenta
+)

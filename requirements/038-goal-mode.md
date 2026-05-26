@@ -1,23 +1,29 @@
 # Requirement 038: Goal Mode (/goal command)
 
 ## Description
-When a user sets a goal using the `/goal` command, the agent enters goal mode. In goal mode, whenever the inference naturally ends (i.e., the LLM returns a response without tool calls), the agent automatically injects a goal-check prompt as if it were a user prompt. This prompt goes through the full agentic loop: the LLM can run tools, make more progress, and continue working. Only when the agentic loop naturally ends again (no more tool calls) is the response checked for "goal achieved". This allows the LLM to properly verify its work before confirming completion.
+When a user sets a goal using the `/goal` command, the agent enters goal mode and **immediately begins working** on the goal. The goal prompt itself serves as the first user message, so the agent starts executing right away without requiring additional user input.
+
+In goal mode, whenever the inference naturally ends (i.e., the LLM returns a response without tool calls), the agent automatically injects a goal-check prompt as if it were a user prompt. This prompt goes through the full agentic loop: the LLM can run tools, make more progress, and continue working. Only when the agentic loop naturally ends again (no more tool calls) is the response checked for "goal achieved". This allows the LLM to properly verify its work before confirming completion.
+
+When the goal is achieved, **the goal is automatically reset and removed** so that the agent returns to normal mode and can accept new input without the goal-checking behavior interfering.
 
 ## Acceptance Criteria
-- [ ] `/goal <prompt>` command activates goal mode with the given prompt
-- [ ] Goal is checked after each inference response with no tool calls (natural end)
-- [ ] Goal check is injected as an automatically generated user message
-- [ ] The goal check goes through the full agentic loop (LLM can run tools, make progress)
-- [ ] After the goal-check agentic loop ends naturally (no tool calls), check for "goal achieved"
-- [ ] If the LLM response contains "goal achieved" (case-insensitive), the agent stops
-- [ ] If the LLM response does not contain "goal achieved", inject another goal check and continue
-- [ ] Goal can be deactivated with `/goal-off` command
-- [ ] Goal status is displayed in the TUI when active
-- [ ] Goal checking message is displayed in the TUI when a goal check is being performed
-- [ ] Goal checking message uses a distinctive color (magenta) to stand out from other messages
-- [ ] Goal achieved confirmation message is displayed in the TUI in the special color
-- [ ] Goal checking happens transparently without user intervention
-- [ ] Goal mode works with both streaming and non-streaming modes
+- [x] `/goal <prompt>` command activates goal mode with the given prompt
+- [x] **The goal prompt is also sent as the first user message**, so the agent starts working immediately without requiring additional input
+- [x] Goal is checked after each inference response with no tool calls (natural end)
+- [x] Goal check is injected as an automatically generated user message
+- [x] The goal check goes through the full agentic loop (LLM can run tools, make progress)
+- [x] After the goal-check agentic loop ends naturally (no tool calls), check for "goal achieved"
+- [x] If the LLM response contains "goal achieved" (case-insensitive), the agent stops
+- [x] **When the goal is achieved, the goal is automatically reset and removed** (goal mode is deactivated)
+- [x] If the LLM response does not contain "goal achieved", inject another goal check and continue
+- [x] Goal can be manually deactivated with `/goal-off` command
+- [x] Goal status is displayed in the TUI when active
+- [x] Goal checking message is displayed in the TUI when a goal check is being performed
+- [x] Goal checking message uses a distinctive color (magenta) to stand out from other messages
+- [x] Goal achieved confirmation message is displayed in the TUI in the special color
+- [x] Goal checking happens transparently without user intervention
+- [x] Goal mode works with both streaming and non-streaming modes
 
 ## Goal Checking Algorithm
 
@@ -31,7 +37,7 @@ The goal check is an **automatically injected user prompt** that goes through th
    - It can continue working on unfinished tasks
    - It can declare "goal achieved" if satisfied
 4. **Check Natural End Again**: When the LLM responds with no tool calls:
-   - If response contains "goal achieved" (case-insensitive) → stop and return
+   - If response contains "goal achieved" (case-insensitive) → **automatically clear the goal**, stop and return
    - Otherwise → inject another goal check (loop back to step 2)
 
 ### Key Design Principle
@@ -42,57 +48,72 @@ The goal check is NOT a separate/special API call. It is treated identically to 
 
 ### Example Flows
 
-#### Flow 1: Goal Already Achieved
+#### Flow 1: Goal Set and Immediate Execution
 ```
-User: "Write a Go web server"
+User: /goal Write a Go web server
+
+[Goal mode activated: "Write a Go web server"]
+[Agent starts working immediately with the goal as the first prompt]
+
 Agent: [runs tools, writes files, returns response]
 
 # Natural end - no tool calls
-[Goal Check Injected] -> User: "Have you achieved the goal: 'Write a Go web server'?"
+[Goal Check] Checking if goal is achieved: "Write a Go web server"
 LLM: "I have written the server code. Goal achieved."
 
-# Natural end - contains "goal achieved" - agent stops
+# Natural end - contains "goal achieved" - goal is auto-cleared, agent stops
+[Goal Achieved] ✓ Goal has been achieved!
 ```
 
 #### Flow 2: LLM Verifies Work Before Confirming
 ```
-User: "Create a REST API"
+User: /goal Create a REST API
+
+[Goal mode activated: "Create a REST API"]
+[Agent starts working immediately]
+
 Agent: [runs tools, writes code, returns response]
 
 # Natural end - no tool calls
-[Goal Check Injected] -> User: "Have you achieved the goal: 'Create a REST API'?"
+[Goal Check] Checking if goal is achieved: "Create a REST API"
 LLM: [Runs tools to verify: read_file, bash to test]
 LLM: [After verifying] "I have verified the code compiles and runs. Goal achieved."
 
-# Natural end - contains "goal achieved" - agent stops
+# Natural end - contains "goal achieved" - goal is auto-cleared, agent stops
 ```
 
 #### Flow 3: Goal Not Yet Achieved
 ```
-User: "Build a full-stack application"
+User: /goal Build a full-stack application
+
+[Goal mode activated: "Build a full-stack application"]
+[Agent starts working immediately]
+
 Agent: [does some work, returns response]
 
 # Natural end - no tool calls
-[Goal Check Injected] -> User: "Have you achieved the goal: 'Build a full-stack application'?"
+[Goal Check] Checking if goal is achieved: "Build a full-stack application"
 LLM: [Continues working, runs more tools]
 LLM: [Returns response about progress]
 
 # Natural end - no "goal achieved"
-[Goal Check Injected Again] -> User: "Have you achieved the goal: 'Build a full-stack application'?"
+[Goal Check] Checking if goal is achieved: "Build a full-stack application"
 ... (continues until goal is achieved or max iterations)
 ```
 
 ## Commands
 
 ### `/goal <prompt>`
-Activates goal mode with the given prompt.
+Activates goal mode with the given prompt. **The agent immediately starts working on the goal** — the goal prompt serves as the first user message.
 
 ```
 /goal Create a REST API with user authentication
 ```
 
+When the goal is achieved, the goal is **automatically cleared** and the agent returns to normal interactive mode.
+
 ### `/goal-off`
-Deactivates goal mode.
+Manually deactivates goal mode at any time (before or after the goal is achieved).
 
 ## Implementation Details
 
@@ -125,10 +146,18 @@ for each iteration:
         - Continue to next iteration
     4. If response has NO tool calls (natural end):
         - If goal mode is active:
-            - If "goal achieved" in response → STOP and return
+            - If "goal achieved" in response → auto-clear goal, STOP and return
             - Otherwise → inject goal check message, continue to next iteration
         - If goal mode is NOT active → STOP and return
 ```
+
+### Auto-Clear on Goal Achievement
+When "goal achieved" is detected at a natural end:
+1. Display the goal achieved confirmation message
+2. **Call `ClearGoal()`** to reset `goalActive = false` and `goal = ""`
+3. Return the result
+
+This ensures that subsequent interactions are not affected by the previous goal.
 
 ### Case-Insensitive Matching
 The string "goal achieved" should be matched case-insensitively:
@@ -146,6 +175,12 @@ The string "goal achieved" should be matched case-insensitively:
 | Goal check causes max iterations | Return error indicating iteration limit reached |
 
 ## TUI Feedback
+
+### Goal Activation Message
+When the goal is set, display:
+```
+[Goal mode activated: "Create a REST API"]
+```
 
 ### Goal Check Message
 When the goal check is being performed (i.e., when the goal check prompt is being sent to the LLM), display a message in the TUI:
@@ -165,6 +200,8 @@ When the goal has been achieved (i.e., the LLM response contains "goal achieved"
 
 This message should also be displayed in **magenta** (`\033[35m`) for consistency.
 
+After this message, the goal is automatically cleared and the TUI returns to the normal input prompt.
+
 ### Color Scheme
 - Goal messages use magenta color (`\033[35m`) to stand out from:
   - Normal content (white/default)
@@ -178,12 +215,14 @@ The goal messages should be streamed through the existing stream callback mechan
 
 ## Testing Requirements
 
-- [ ] Setting a goal activates goal mode
-- [ ] Goal check is injected as a user message (not a separate API call)
-- [ ] LLM can run tools during goal check agentic loop
-- [ ] "goal achieved" at natural end stops the agent
-- [ ] Non-"goal achieved" at natural end injects another goal check
-- [ ] Goal mode works in streaming mode
-- [ ] Goal mode works in non-streaming mode
-- [ ] Goal can be deactivated with /goal-off
-- [ ] Case-insensitive matching works correctly
+- [x] Setting a goal activates goal mode
+- [x] Goal prompt is sent as the first user message (agent starts immediately)
+- [x] Goal check is injected as a user message (not a separate API call)
+- [x] LLM can run tools during goal check agentic loop
+- [x] "goal achieved" at natural end stops the agent
+- [x] **Goal is automatically cleared when "goal achieved" is detected**
+- [x] Non-"goal achieved" at natural end injects another goal check
+- [x] Goal mode works in streaming mode
+- [x] Goal mode works in non-streaming mode
+- [x] Goal can be deactivated with /goal-off
+- [x] Case-insensitive matching works correctly

@@ -578,7 +578,9 @@ func runInteractiveMode(cfg *config.Config) error {
 				}
 				ag.SetGoal(goalPrompt)
 				fmt.Printf("\n[Goal mode activated: %q]\n", goalPrompt)
-				continue
+				// Set input to goalPrompt so the agent starts working immediately
+				// with the goal as the first user prompt
+				input = goalPrompt
 			case "goal-off":
 				ag.ClearGoal()
 				fmt.Println("\n[Goal mode deactivated]")

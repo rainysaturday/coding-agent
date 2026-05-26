@@ -327,7 +327,7 @@ If you have not achieved the goal, explain what remains to be done and continue 
 	a.mu.Unlock()
 
 	// Stream goal check notification to TUI with magenta color
-	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", ColorMagenta, goal, ColorReset)
+	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", colors.GoalColor, goal, colors.ColorReset)
 	if streamCallback != nil {
 		streamCallback(inference.StreamingChunk{
 			Text:        goalCheckMsg,
@@ -515,7 +515,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			// Check if goal was achieved (case-insensitive) in this natural end response
 			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
 				// Stream goal achieved confirmation to TUI with magenta color
-				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", ColorMagenta, ColorReset)
+				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", colors.GoalColor, colors.ColorReset)
 				if streamCallback != nil {
 					streamCallback(inference.StreamingChunk{
 						Text:        goalAchievedMsg,
@@ -525,7 +525,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					fmt.Print(goalAchievedMsg)
 				}
 
-				// Goal achieved - return the result
+				// Goal achieved - automatically clear the goal and return the result
+				a.ClearGoal()
 				return &Result{
 					FinalOutput: assistantResponse,
 					Reasoning:   response.Reasoning,
