@@ -18,9 +18,6 @@ import (
 	"github.com/coding-agent/harness/tools"
 )
 
-// StreamingCallback is a function type for handling streaming chunks.
-type StreamingCallback func(chunk string)
-
 // StreamingContentType represents the type of content being streamed.
 type StreamingContentType int
 
@@ -198,25 +195,14 @@ func (ic *InferenceClient) buildURL() string {
 	return ic.endpoint + "/v1/chat/completions"
 }
 
-// InferenceRequest sends a request to the inference backend.
+// InferenceRequest sends a request to the inference backend (non-streaming).
 func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
-	return ic.InferenceRequestWithCallback(ctx, messages, systemPrompt, nil)
+	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, nil)
 }
 
 // InferenceRequestStream sends a request with a streaming callback.
 func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
 	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, callback)
-}
-
-// InferenceRequestWithCallback sends a request with a streaming callback (legacy, converts to typed).
-func (ic *InferenceClient) InferenceRequestWithCallback(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallback) (*Response, error) {
-	// Convert old callback to typed callback for backwards compatibility
-	typedCallback := func(chunk StreamingChunk) {
-		if callback != nil {
-			callback(chunk.Text)
-		}
-	}
-	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, typedCallback)
 }
 
 // InferenceRequestWithCallbackTyped sends a request with a typed streaming callback that supports reasoning content.

@@ -921,18 +921,18 @@ func TestInferenceRequestStream_WithContext(t *testing.T) {
 	}
 }
 
-func TestInferenceRequestWithCallback(t *testing.T) {
+func TestInferenceRequestWithCallbackTyped(t *testing.T) {
 	cfg := config.DefaultConfig()
 	client := NewInferenceClient(cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	var callback = func(chunk string) {
+	var callback = func(chunk StreamingChunk) {
 		// noop
 	}
 
-	_, err := client.InferenceRequestWithCallback(ctx, nil, "test", callback)
+	_, err := client.InferenceRequestWithCallbackTyped(ctx, nil, "test", callback)
 	if err == nil {
 		t.Error("Expected error when no server is running")
 	}
@@ -1020,7 +1020,7 @@ func TestInferenceRequestWithCallback_NilCallback(t *testing.T) {
 	defer cancel()
 
 	// Should work with nil callback - no error, just fails to connect
-	_, err := client.InferenceRequestWithCallback(ctx, nil, "test", nil)
+	_, err := client.InferenceRequestWithCallbackTyped(ctx, nil, "test", nil)
 	if err == nil {
 		t.Error("Expected error when no server is running")
 	}
@@ -1233,8 +1233,8 @@ func TestInferenceRequestWithCallback_ContextCancelled(t *testing.T) {
 	cancel()
 	cfg := config.DefaultConfig()
 	ic := NewInferenceClient(cfg)
-	callback := func(chunk string) {}
-	_, err := ic.InferenceRequestWithCallback(ctx, nil, "", callback)
+	callback := func(chunk StreamingChunk) {}
+	_, err := ic.InferenceRequestWithCallbackTyped(ctx, nil, "", callback)
 	if err == nil {
 		t.Fatal("Expected error for cancelled context")
 	}
@@ -1313,9 +1313,9 @@ func TestInferenceRequestWithCallback_HttpError(t *testing.T) {
 	cfg.APIEndpoint = server.URL
 	ic := NewInferenceClient(cfg)
 
-	callback := func(chunk string) {}
+	callback := func(chunk StreamingChunk) {}
 
-	_, err := ic.InferenceRequestWithCallback(context.Background(), nil, "", callback)
+	_, err := ic.InferenceRequestWithCallbackTyped(context.Background(), nil, "", callback)
 	if err == nil {
 		t.Fatal("Expected error for HTTP 500")
 	}
@@ -1454,13 +1454,13 @@ func TestInferenceRequestWithCallback_MockServer(t *testing.T) {
 	client.SetEndpoint(server.URL)
 
 	var chunks []string
-	callback := func(chunk string) {
-		chunks = append(chunks, chunk)
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk.Text)
 	}
 
-	resp, err := client.InferenceRequestWithCallback(context.Background(), nil, "test", callback)
+	resp, err := client.InferenceRequestWithCallbackTyped(context.Background(), nil, "test", callback)
 	if err != nil {
-		t.Fatalf("InferenceRequestWithCallback() error: %v", err)
+		t.Fatalf("InferenceRequestWithCallbackTyped() error: %v", err)
 	}
 	if resp == nil {
 		t.Fatal("Expected non-nil response")
@@ -1670,7 +1670,7 @@ func TestInferenceRequestWithCallback_MarshalError(t *testing.T) {
 
 	// This will fail due to connection error, not marshal error
 	// But it tests that the function works when no server is available
-	_, err := client.InferenceRequestWithCallback(ctx, nil, "test", nil)
+	_, err := client.InferenceRequestWithCallbackTyped(ctx, nil, "test", nil)
 	if err == nil {
 		t.Error("Expected error when no server is running")
 	}
