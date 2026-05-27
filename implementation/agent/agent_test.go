@@ -780,6 +780,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"read_lines":   {"path", "start", "end"},
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
+		"view_image":   {"path"},
 		"subagent":     {"prompt"},
 	}
 
@@ -854,8 +855,8 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true, false)
 
-	// In read-only mode, should only have read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
-	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff"}
+	// In read-only mode, should only have read_file, read_lines, list_files, grep, git_log, git_show, git_diff, and view_image
+	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))

@@ -51,9 +51,26 @@ interface ChatCompletionRequest {
 
 interface Message {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | ContentPart[]; // Plain text or multi-modal parts (see Image/Vision Support)
   tool_call_id?: string; // For tool result messages
   tool_calls?: ToolCall[]; // For assistant messages with tool calls
+}
+
+interface ContentPart {
+  type: "text" | "image_url";
+}
+
+interface TextContentPart extends ContentPart {
+  type: "text";
+  text: string;
+}
+
+interface ImageContentPart extends ContentPart {
+  type: "image_url";
+  image_url: {
+    url: string; // Public URL or base64 data URI (data:[mime_type];base64,[base64_string])
+    detail?: "auto" | "low" | "high"; // Image detail level (affects token cost)
+  };
 }
 
 interface ToolCall {
@@ -1014,6 +1031,286 @@ The API supports tool calling. When the model wants to use a tool, it returns to
 
 ---
 
+## Image and Vision Support
+
+The inference API supports multi-modal interactions, enabling vision-capable models to **understand images** and provide textual descriptions. This is used by the coding agent's `view_image` tool to analyze screenshots, diagrams, and other visual content.
+
+Images are included as part of the message content using the multi-modal `ContentPart` array format.
+
+---
+
+### Image Understanding (Vision)
+
+Vision-capable models (e.g., LLaVA, Qwen2.5-VL, GLM-4V) can analyze and reason about images. Images are included as part of the message content using the multi-modal `ContentPart` array format.
+
+#### Type Definition
+
+When a message contains images, the `content` field is an array of `ContentPart` objects:
+
+```typescript
+interface Message {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string | ContentPart[]; // Can be a plain string OR an array of content parts
+  // ... other fields
+}
+
+interface ContentPart {
+  type: "text" | "image_url";
+}
+
+interface TextContentPart extends ContentPart {
+  type: "text";
+  text: string;
+}
+
+interface ImageContentPart extends ContentPart {
+  type: "image_url";
+  image_url: {
+    url: string; // Public URL or base64 data URI
+    detail?: "auto" | "low" | "high"; // Detail level (default: "auto")
+  };
+}
+```
+
+#### Supported Image Formats
+
+- **PNG** (`image/png`)
+- **JPEG** (`image/jpeg`)
+- **WEBP** (`image/webp`)
+- **GIF** (non-animated, `image/gif`)
+
+#### Image Input Methods
+
+**1. Public URL**
+
+Provide a publicly accessible image URL:
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "https://example.com/photos/cat.jpg",
+    "detail": "auto"
+  }
+}
+```
+
+**2. Base64 Data URI**
+
+Embed the image directly in the request as a base64-encoded data URI:
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ...",
+    "detail": "low"
+  }
+}
+```
+
+The format is: `data:[MIME_TYPE];base64,[BASE64_DATA]`
+
+#### Detail Level
+
+The `detail` parameter controls how the image is processed:
+
+| Value | Description | Token Impact |
+|-------|-------------|--------------|
+| `"auto"` | Model decides the optimal resolution | Variable |
+| `"low"` | Lower resolution (faster, fewer tokens) | Lower cost (~85 tokens) |
+| `"high"` | Higher resolution (more detail, more tokens) | Higher cost (varies by image size) |
+
+- `"low"`: Disables the "high res" mode. The model receives a low-res 512×512px version and produces ~85 tokens.
+- `"high"`: Enables "high res" mode. The model receives a high-res version scaled to fit 2048×2048 with a 768×768 crop, producing significantly more tokens.
+- `"auto"`: The model decides whether to treat the image as `"low"` or `"high"` based on input size.
+
+#### Example: Single Image with Text
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llava",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What is in this image?"},
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/photo.jpg",
+              "detail": "auto"
+            }
+          }
+        ]
+      }
+    ],
+    "max_tokens": 500
+  }'
+```
+
+#### Example: Multiple Images
+
+You can include multiple images in a single request:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llava",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Compare these two images and tell me the differences."},
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/image1.jpg",
+              "detail": "high"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "https://example.com/image2.jpg",
+              "detail": "high"
+            }
+          }
+        ]
+      }
+    ],
+    "max_tokens": 1000
+  }'
+```
+
+#### Example: Base64-Encoded Image
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"llava\",
+    \"messages\": [
+      {
+        \"role\": \"user\",
+        \"content\": [
+          {\"type\": \"text\", \"text\": \"Describe this image.\"},
+          {
+            \"type\": \"image_url\",
+            \"image_url\": {
+              \"url\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...\",
+              \"detail\": \"auto\"
+            }
+          }
+        ]
+      }
+    ],
+    \"max_tokens\": 500
+  }"
+```
+
+#### Example: Multi-turn Conversation with Images
+
+Images can be referenced across multiple turns:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llava",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "What is in this image?"},
+          {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/diagram.png"}
+          }
+        ]
+      },
+      {"role": "assistant", "content": "This is a flowchart showing a decision process."},
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Can you explain the third step in more detail?"}
+        ]
+      }
+    ],
+    "max_tokens": 500
+  }'
+```
+
+#### Vision in Streaming Mode
+
+Vision content works seamlessly with streaming. The content parts are sent in the request, and the response streams back as normal text:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llava",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Describe this image in detail."},
+          {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/photo.jpg"}
+          }
+        ]
+      }
+    ],
+    "max_tokens": 500,
+    "stream": true
+  }'
+```
+
+---
+
+### Vision Token Usage
+
+When using vision models, token usage includes both text and image tokens:
+
+- **Text tokens**: Counted as usual
+- **Image tokens**: Varies based on resolution and `detail` setting
+  - `"low"` detail: ~85 tokens per image (fixed)
+  - `"high"` detail: Varies by image dimensions (typically 1000-4000+ tokens)
+  - `"auto"` detail: Model decides; usage reflects actual tokens consumed
+
+The `usage` object in the response reflects the total:
+
+```json
+{
+  "usage": {
+    "prompt_tokens": 500,      // Text + image tokens combined
+    "completion_tokens": 150,
+    "total_tokens": 650
+  }
+}
+```
+
+---
+
+### Supported Vision Models
+
+The following vision-capable models support image understanding:
+
+| Model | Description |
+|---|---|
+| LLaVA | Large Language-and-Vision Assistant |
+| Qwen2.5-VL | Qwen Vision-Language model |
+| GLM-4V | GLM-4 with Vision support |
+| InternVL | InternVL vision-language model |
+
+> **Note**: Not all inference backends support all vision models. Check your backend's model documentation for specific feature availability.
+
+---
+
 ## Notes
 
 1. **Token Accuracy**: The `total_tokens` field is the authoritative count of everything the API processed. This includes system prompt, all messages, tools, and the completion. Caching does not reduce this count.
@@ -1035,3 +1332,9 @@ The API supports tool calling. When the model wants to use a tool, it returns to
    - `"length"`: Reached `max_tokens`
    - `"tool_calls"`: Model requested tool use
    - `null`: Still streaming
+
+6. **Image/Vision Support**: Messages can include images using the multi-modal `ContentPart[]` format. See the [Image and Vision Support](#image-and-vision-support) section for details on:
+   - Sending images via URL or base64 data URIs
+   - Image detail levels (`auto`, `low`, `high`)
+   - Vision token usage
+   - Supported vision models

@@ -59,11 +59,60 @@ type InferenceClient struct {
 // Message represents a chat message.
 type Message struct {
 	Role             string         `json:"role"`
-	Content          string         `json:"content"`
+	Content          string         `json:"content"`          // Plain text content
+	ContentParts     []ContentPart  `json:"-"`                // Multi-modal content parts (images + text)
 	Reasoning        string         `json:"reasoning,omitempty"`         // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
 	ReasoningContent string         `json:"reasoning_content,omitempty"` // llama.cpp
 	ToolCallId       string         `json:"tool_call_id,omitempty"`      // For tool call output messages
 	ToolCalls        []*APIToolCall `json:"tool_calls,omitempty"`        // For assistant messages with tool calls
+}
+
+// ContentPart represents a single part of multi-modal message content.
+type ContentPart struct {
+	Type     string        `json:"type"`     // "text" or "image_url"
+	Text     string        `json:"text"`     // Text content (when type is "text")
+	ImageURL *ImageURLPart `json:"image_url"` // Image content (when type is "image_url")
+}
+
+// ImageURLPart represents an image in a multi-modal message.
+type ImageURLPart struct {
+	URL    string `json:"url"`    // Public URL or base64 data URI (data:[mime_type];base64,[base64_string])
+	Detail string `json:"detail"` // "auto", "low", or "high" (default: "auto")
+}
+
+// HasContentParts returns true if the message has multi-modal content parts.
+func (m *Message) HasContentParts() bool {
+	return len(m.ContentParts) > 0
+}
+
+// SetImageContent creates a message with image content.
+func (m *Message) SetImageContent(text string, imageDataURI string, detail string) {
+	m.ContentParts = []ContentPart{
+		{Type: "text", Text: text},
+		{Type: "image_url", ImageURL: &ImageURLPart{URL: imageDataURI, Detail: detail}},
+	}
+}
+
+// MarshalJSON implements custom JSON marshaling for Message to support multi-modal content.
+// When ContentParts is set, content is serialized as an array; otherwise as a plain string.
+func (m *Message) MarshalJSON() ([]byte, error) {
+	// Build the JSON manually to handle the conditional content field
+	type Alias Message // Avoid infinite recursion
+	aux := &struct {
+		Content interface{} `json:"content,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+
+	// Set content based on whether we have multi-modal parts
+	if len(m.ContentParts) > 0 {
+		aux.Content = m.ContentParts
+	} else {
+		aux.Content = m.Content
+	}
+
+	return json.Marshal(aux)
 }
 
 // ToolDefinition represents a tool definition for the LLM (OpenAI format).

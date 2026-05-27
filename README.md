@@ -5,8 +5,8 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 ## Features
 
 - **Interactive TUI**: Terminal-based user interface with history navigation
-- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, and file search tools
-- **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and `git_diff`)
+- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, file search, and image viewing (vision) tools
+- **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, and `view_image`)
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
 - **Goal Mode**: Set a goal with `/goal` and the agent will automatically check if it's achieved

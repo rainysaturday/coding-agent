@@ -205,7 +205,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
 		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, git_show, and git_diff tools are available.")
+		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, git_show, git_diff, and view_image tools are available.")
 		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
 		fmt.Fprintln(os.Stderr, "============================================================")
 		fmt.Fprintln(os.Stderr)
@@ -482,8 +482,16 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Add tool result to context with tool_call_id (OpenAI format)
 				var resultMessage string
 				if result.Success {
-					// Use full output for LLM context (not truncated)
-					resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, result.Output)
+					// Special handling for view_image: send image to LLM for vision analysis
+					if tc.Name == "view_image" {
+						visionResult := a.handleViewImage(ctx, result)
+						resultMessage = visionResult
+						// Update step with vision result
+						step.ToolResult.Output = visionResult
+					} else {
+						// Use full output for LLM context (not truncated)
+						resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, result.Output)
+					}
 				} else {
 					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, result.Error)
 				}
@@ -594,6 +602,57 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	}
 
 	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
+}
+
+// handleViewImage processes the result of a view_image tool call by sending the image
+// to a vision-capable model for analysis. Returns the LLM's description of the image.
+func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) string {
+	// Extract the data URI from the tool result
+	viewExtra := tools.GetViewImageExtra(result)
+	if viewExtra == nil || viewExtra.DataURI == "" {
+		return fmt.Sprintf("Tool 'view_image' executed but no image data returned:\n%s", result.Output)
+	}
+
+	// Stream status to user
+	if a.streamCallback != nil {
+		a.streamCallback(inference.StreamingChunk{
+			Text:        fmt.Sprintf("\n[Viewing image: %s]", result.Path),
+			ContentType: inference.StreamingContentTypeNormal,
+		})
+	} else {
+		fmt.Printf("\n[Viewing image: %s]", result.Path)
+	}
+
+	// Create a vision message with the image
+	visionPrompt := "Describe this image in detail. Include any text visible in the image, objects, colors, layout, and any other relevant details."
+	msg := &inference.Message{
+		Role:    "user",
+		Content: visionPrompt,
+	}
+	msg.SetImageContent(visionPrompt, viewExtra.DataURI, "auto")
+
+	// Send to inference for vision analysis
+	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, "")
+	if err != nil {
+		return fmt.Sprintf("Tool 'view_image' loaded the image but vision analysis failed: %v", err)
+	}
+
+	description := response.Content
+	if description == "" {
+		description = "(The model did not provide a description of the image)"
+	}
+
+	// Stream the description to user
+	if a.streamCallback != nil {
+		a.streamCallback(inference.StreamingChunk{
+			Text:        fmt.Sprintf("\n\nImage description:\n%s", description),
+			ContentType: inference.StreamingContentTypeNormal,
+		})
+	} else {
+		fmt.Printf("\n\nImage description:\n%s", description)
+	}
+
+	return fmt.Sprintf("Tool 'view_image' executed successfully.\n\nImage description:\n%s", description)
 }
 
 // reportContextSize calculates and reports the current actual context size.
@@ -1333,6 +1392,14 @@ AVAILABLE TOOLS:
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
 
+7. view_image
+    Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
+    Parameters:
+      - path (string, required): Path to the image file to view
+    Supported formats: PNG, JPEG, WEBP, GIF
+    How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
+    Example use case: "What does this screenshot show?", "Read the text in this diagram"
+
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1450,6 +1517,14 @@ AVAILABLE TOOLS:
       - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
     How to call: Use git_diff to compare different versions of files, branches, or commits.
     Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree
+
+8. view_image
+    Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
+    Parameters:
+      - path (string, required): Path to the image file to view
+    Supported formats: PNG, JPEG, WEBP, GIF
+    How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
+    Example use case: "What does this screenshot show?", "Read the text in this diagram"
 
 
 
@@ -1620,6 +1695,25 @@ func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 	}
 
 	tools := baseTools
+
+	// Add view_image tool (always available, including read-only)
+	tools = append(tools, inference.ToolDefinition{
+		Type: "function",
+		Function: inference.FunctionDefinition{
+			Name:        "view_image",
+			Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
+			Parameters: inference.ParameterSchema{
+				Type: "object",
+				Properties: map[string]inference.Property{
+					"path": {
+						Type:        "string",
+						Description: "Path to the image file to view",
+					},
+				},
+				Required: []string{"path"},
+			},
+		},
+	})
 
 	if experimental {
 		tools = append(tools, inference.ToolDefinition{
@@ -1840,10 +1934,25 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "view_image",
+				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the image file to view",
+						},
+					},
+					Required: []string{"path"},
+				},
+			},
+		},
 	}
 }
-
-// CompressContext manually triggers context compression.
 // This is a public wrapper around the internal compressContext method,
 // allowing the TUI to trigger compression on demand via the /compress command.
 func (a *Agent) CompressContext(ctx context.Context) error {
