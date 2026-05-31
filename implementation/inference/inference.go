@@ -59,8 +59,8 @@ type InferenceClient struct {
 // Message represents a chat message.
 type Message struct {
 	Role             string         `json:"role"`
-	Content          string         `json:"content"`          // Plain text content
-	ContentParts     []ContentPart  `json:"-"`                // Multi-modal content parts (images + text)
+	Content          string         `json:"content"`                     // Plain text content
+	ContentParts     []ContentPart  `json:"-"`                           // Multi-modal content parts (images + text)
 	Reasoning        string         `json:"reasoning,omitempty"`         // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
 	ReasoningContent string         `json:"reasoning_content,omitempty"` // llama.cpp
 	ToolCallId       string         `json:"tool_call_id,omitempty"`      // For tool call output messages
@@ -69,8 +69,8 @@ type Message struct {
 
 // ContentPart represents a single part of multi-modal message content.
 type ContentPart struct {
-	Type     string        `json:"type"`     // "text" or "image_url"
-	Text     string        `json:"text"`     // Text content (when type is "text")
+	Type     string        `json:"type"`      // "text" or "image_url"
+	Text     string        `json:"text"`      // Text content (when type is "text")
 	ImageURL *ImageURLPart `json:"image_url"` // Image content (when type is "image_url")
 }
 

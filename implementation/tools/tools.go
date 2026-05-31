@@ -2093,6 +2093,14 @@ func (te *ToolExecutor) executeViewImage(params map[string]interface{}) *ToolRes
 		}
 	}
 
+	// Extract optional custom prompt for vision analysis
+	var customPrompt string
+	if p, hasPrompt := params["prompt"]; hasPrompt {
+		if str, ok := p.(string); ok {
+			customPrompt = str
+		}
+	}
+
 	// Read the file
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -2132,6 +2140,7 @@ func (te *ToolExecutor) executeViewImage(params map[string]interface{}) *ToolRes
 			"data_uri":  dataURI,
 			"mime_type": mimeType,
 			"size":      len(data),
+			"prompt":    customPrompt,
 		},
 	}
 }
@@ -2191,6 +2200,7 @@ type ViewImageExtra struct {
 	DataURI  string `json:"data_uri"`
 	MIMEType string `json:"mime_type"`
 	Size     int    `json:"size"`
+	Prompt   string `json:"prompt,omitempty"`
 }
 
 // GetViewImageExtra extracts the view_image extra data from a ToolResult.
@@ -2211,11 +2221,16 @@ func GetViewImageExtra(result *ToolResult) *ViewImageExtra {
 		case float64:
 			size = int(v)
 		}
+		var prompt string
+		if p, ok := result.Extra["prompt"].(string); ok {
+			prompt = p
+		}
 		if dataURI != "" {
 			return &ViewImageExtra{
 				DataURI:  dataURI,
 				MIMEType: mimeType,
 				Size:     size,
+				Prompt:   prompt,
 			}
 		}
 		return nil

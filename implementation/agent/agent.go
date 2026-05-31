@@ -623,8 +623,13 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 		fmt.Printf("\n[Viewing image: %s]", result.Path)
 	}
 
-	// Create a vision message with the image
+	// Use custom prompt if provided, otherwise use default description prompt
 	visionPrompt := "Describe this image in detail. Include any text visible in the image, objects, colors, layout, and any other relevant details."
+	if viewExtra.Prompt != "" {
+		visionPrompt = viewExtra.Prompt
+	}
+
+	// Create a vision message with the image
 	msg := &inference.Message{
 		Role:    "user",
 		Content: visionPrompt,
@@ -1395,6 +1400,7 @@ AVAILABLE TOOLS:
 7. view_image
     Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
     Parameters:
+      - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
       - path (string, required): Path to the image file to view
     Supported formats: PNG, JPEG, WEBP, GIF
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
@@ -1515,6 +1521,7 @@ AVAILABLE TOOLS:
       - reference1 (string, optional): First git reference for comparison (commit hash, branch, tag; omit for working tree)
       - reference2 (string, optional): Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)
       - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
+     - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
     How to call: Use git_diff to compare different versions of files, branches, or commits.
     Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree
 
@@ -1708,6 +1715,10 @@ func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 					"path": {
 						Type:        "string",
 						Description: "Path to the image file to view",
+					},
+					"prompt": {
+						Type:        "string",
+						Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
 					},
 				},
 				Required: []string{"path"},
@@ -1941,18 +1952,22 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
 				Parameters: inference.ParameterSchema{
 					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "Path to the image file to view",
+						Properties: map[string]inference.Property{
+							"path": {
+								Type:        "string",
+								Description: "Path to the image file to view",
+							},
+							"prompt": {
+								Type:        "string",
+								Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
+							},
 						},
-					},
-					Required: []string{"path"},
 				},
 			},
 		},
 	}
 }
+
 // This is a public wrapper around the internal compressContext method,
 // allowing the TUI to trigger compression on demand via the /compress command.
 func (a *Agent) CompressContext(ctx context.Context) error {

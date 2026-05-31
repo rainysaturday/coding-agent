@@ -810,6 +810,167 @@ func TestBuildTools_Parameters(t *testing.T) {
 		}
 	}
 }
+func TestBuildTools_ViewImage_OptionalPrompt(t *testing.T) {
+	toolDefs := buildTools(false, false)
+
+	var viewImageTool *inference.ToolDefinition
+	for _, tool := range toolDefs {
+		if tool.Function.Name == "view_image" {
+			viewImageTool = &tool
+			break
+		}
+	}
+
+	if viewImageTool == nil {
+		t.Fatal("view_image tool not found")
+	}
+
+	// prompt should be in properties but NOT in required
+	if _, ok := viewImageTool.Function.Parameters.Properties["prompt"]; !ok {
+		t.Errorf("Expected 'prompt' in view_image properties, got: %v", viewImageTool.Function.Parameters.Properties)
+	}
+
+	for _, req := range viewImageTool.Function.Parameters.Required {
+		if req == "prompt" {
+			t.Errorf("'prompt' should not be in required parameters, got: %v", viewImageTool.Function.Parameters.Required)
+		}
+	}
+
+	// path should still be required
+	if _, ok := viewImageTool.Function.Parameters.Properties["path"]; !ok {
+		t.Errorf("Expected 'path' in view_image properties, got: %v", viewImageTool.Function.Parameters.Properties)
+	}
+}
+
+func TestBuildTools_ReadOnly_ViewImage_OptionalPrompt(t *testing.T) {
+	toolDefs := buildTools(true, false)
+
+	var viewImageTool *inference.ToolDefinition
+	for _, tool := range toolDefs {
+		if tool.Function.Name == "view_image" {
+			viewImageTool = &tool
+			break
+		}
+	}
+
+	if viewImageTool == nil {
+		t.Fatal("view_image tool not found in read-only mode")
+	}
+
+	// prompt should be in properties but NOT in required
+	if _, ok := viewImageTool.Function.Parameters.Properties["prompt"]; !ok {
+		t.Errorf("Expected 'prompt' in view_image properties, got: %v", viewImageTool.Function.Parameters.Properties)
+	}
+
+	for _, req := range viewImageTool.Function.Parameters.Required {
+		if req == "prompt" {
+			t.Errorf("'prompt' should not be in required parameters, got: %v", viewImageTool.Function.Parameters.Required)
+		}
+	}
+}
+
+func TestHandleViewImage_CustomPrompt(t *testing.T) {
+	// Create a mock HTTP server to simulate vision model response
+	var receivedPrompt string
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err == nil {
+			if messages, ok := reqBody["messages"].([]interface{}); ok && len(messages) > 0 {
+				if msg, ok := messages[0].(map[string]interface{}); ok {
+					if content, ok := msg["content"].([]interface{}); ok && len(content) > 0 {
+						if textPart, ok := content[0].(map[string]interface{}); ok {
+							if text, ok := textPart["text"].(string); ok {
+								receivedPrompt = text
+							}
+						}
+					}
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"Custom analysis result"}}]}`)
+	}))
+	defer mockServer.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = mockServer.URL
+	cfg.Streaming = false
+	agent := NewAgent(cfg)
+
+	result := &tools.ToolResult{
+		Success: true,
+		Output:  "Image loaded: test.png (image/png, 100 bytes)",
+		Path:    "/tmp/test.png",
+		Extra: map[string]interface{}{
+			"data_uri":  "data:image/png;base64,iVBORw0KGgo=",
+			"mime_type": "image/png",
+			"size":      100,
+			"prompt":    "What is the total revenue shown in this chart?",
+		},
+	}
+
+	description := agent.handleViewImage(context.Background(), result)
+
+	expectedDescription := "Tool 'view_image' executed successfully.\n\nImage description:\nCustom analysis result"
+	if description != expectedDescription {
+		t.Errorf("Expected description with custom analysis, got: %s", description)
+	}
+	if receivedPrompt != "What is the total revenue shown in this chart?" {
+		t.Errorf("Expected custom prompt to be sent to vision model, got: %s", receivedPrompt)
+	}
+}
+
+func TestHandleViewImage_DefaultPrompt(t *testing.T) {
+	var receivedPrompt string
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var reqBody map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err == nil {
+			if messages, ok := reqBody["messages"].([]interface{}); ok && len(messages) > 0 {
+				if msg, ok := messages[0].(map[string]interface{}); ok {
+					if content, ok := msg["content"].([]interface{}); ok && len(content) > 0 {
+						if textPart, ok := content[0].(map[string]interface{}); ok {
+							if text, ok := textPart["text"].(string); ok {
+								receivedPrompt = text
+							}
+						}
+					}
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"Default analysis result"}}]}`)
+	}))
+	defer mockServer.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = mockServer.URL
+cfg.Streaming = false
+
+	agent := NewAgent(cfg)
+
+	result := &tools.ToolResult{
+		Success: true,
+		Output:  "Image loaded: test.png (image/png, 100 bytes)",
+		Path:    "/tmp/test.png",
+		Extra: map[string]interface{}{
+			"data_uri":  "data:image/png;base64,iVBORw0KGgo=",
+			"mime_type": "image/png",
+			"size":      100,
+			// No prompt - should use default
+		},
+	}
+
+	description := agent.handleViewImage(context.Background(), result)
+
+	expectedDescription := "Tool 'view_image' executed successfully.\n\nImage description:\nDefault analysis result"
+	if description != expectedDescription {
+		t.Errorf("Expected description with default analysis, got: %s", description)
+	}
+	if !strings.Contains(receivedPrompt, "Describe this image in detail") {
+		t.Errorf("Expected default prompt to be sent to vision model, got: %s", receivedPrompt)
+	}
+}
+
 
 func TestReportContextSize_CallbackCalled(t *testing.T) {
 	cfg := config.DefaultConfig()

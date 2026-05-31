@@ -8,21 +8,25 @@ This enables the coding agent to:
 - Analyze diagrams and flowcharts
 - Understand UI mockups and design assets
 - Inspect visual output for debugging
+- Ask custom questions about image contents using the optional `prompt` parameter
 
 ## Acceptance Criteria
-- [ ] `view_image` tool is available in the standard tool set
-- [ ] `view_image` tool accepts a `path` parameter (required, string)
-- [ ] Tool reads the image file from disk
-- [ ] Tool validates the file is a supported image format (PNG, JPEG, WEBP, GIF)
-- [ ] Tool enforces a maximum file size (20MB)
-- [ ] Tool detects MIME type from file extension, magic bytes, or HTTP content detection
-- [ ] Tool returns a base64 data URI in the tool result for vision processing
-- [ ] Agent automatically sends the image to a vision-capable model for analysis
-- [ ] Agent returns a textual description of the image to the LLM context
-- [ ] Clear TUI feedback shows when an image is being analyzed
-- [ ] Tool is available in read-only mode (it does not modify any files)
-- [ ] Tool call failures are tracked in statistics
-- [ ] Error handling for missing files, unsupported formats, and oversized images
+- [x] `view_image` tool is available in the standard tool set
+- [x] `view_image` tool accepts a `path` parameter (required, string)
+- [x] `view_image` tool accepts an optional `prompt` parameter (string) for custom vision analysis instructions
+- [x] When `prompt` is provided, the custom prompt is used for vision analysis instead of the default
+- [x] When `prompt` is omitted, the default description prompt is used
+- [x] Tool reads the image file from disk
+- [x] Tool validates the file is a supported image format (PNG, JPEG, WEBP, GIF)
+- [x] Tool enforces a maximum file size (20MB)
+- [x] Tool detects MIME type from file extension, magic bytes, or HTTP content detection
+- [x] Tool returns a base64 data URI in the tool result for vision processing
+- [x] Agent automatically sends the image to a vision-capable model for analysis
+- [x] Agent returns a textual description of the image to the LLM context
+- [x] Clear TUI feedback shows when an image is being analyzed
+- [x] Tool is available in read-only mode (it does not modify any files)
+- [x] Tool call failures are tracked in statistics
+- [x] Error handling for missing files, unsupported formats, and oversized images
 
 ## Tool Definition (OpenAI Format)
 
@@ -38,6 +42,10 @@ This enables the coding agent to:
         "path": {
           "type": "string",
           "description": "Path to the image file to view"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is sent to the vision model instead of the default description prompt."
         }
       },
       "required": ["path"]
@@ -63,6 +71,9 @@ This enables the coding agent to:
 - `path`: Path to the image file to view (required, string)
   - Can be an absolute or relative path
   - File must be accessible and readable
+- `prompt`: Custom prompt or question for vision analysis (optional, string)
+  - When provided, guides the vision model's analysis
+  - When omitted, the model is asked to describe the image in detail
 
 ## Supported Image Formats
 
@@ -133,11 +144,13 @@ Tool 'view_image' loaded the image but vision analysis failed: {error details}
 
 ## Processing Flow
 
-1. **Tool Call**: Agent invokes `view_image` with a file path
+1. **Tool Call**: Agent invokes `view_image` with a file path and optional prompt
 2. **File Read**: Tool executor reads the image file from disk
 3. **Validation**: File size and format are validated
 4. **Encoding**: Image is encoded as a base64 data URI
-5. **Vision Analysis**: Agent sends the image to a vision-capable LLM with a prompt asking for a detailed description
+5. **Vision Analysis**: Agent sends the image to a vision-capable LLM with either:
+   - The custom `prompt` if provided
+   - A default description prompt if `prompt` is omitted
 6. **Result**: Vision model returns a textual description of the image
 7. **Context Update**: Description is added to the agent's context for further reasoning
 
@@ -145,9 +158,12 @@ Tool 'view_image' loaded the image but vision analysis failed: {error details}
 
 When an image is analyzed, the agent sends the following prompt to the vision model:
 
-```
-Describe this image in detail. Include any text visible in the image, objects, colors, layout, and any other relevant details.
-```
+- **Default prompt** (when `prompt` is omitted):
+  ```
+  Describe this image in detail. Include any text visible in the image, objects, colors, layout, and any other relevant details.
+  ```
+
+- **Custom prompt** (when `prompt` is provided): The exact string provided by the user is sent as the prompt.
 
 The image is sent using the multi-modal `ContentPart` format with `detail` set to `"auto"`.
 
@@ -176,9 +192,10 @@ The system prompt includes the following tool description:
     Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
     Parameters:
       - path (string, required): Path to the image file to view
+      - prompt (string, optional): Custom prompt or question to guide the vision analysis
     Supported formats: PNG, JPEG, WEBP, GIF
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
-    Example use case: "What does this screenshot show?", "Read the text in this diagram"
+    Example use case: "What does this screenshot show?", "Read the text in this diagram", "What is the total revenue in this chart?"
 ```
 
 ## Read-Only Mode
@@ -219,10 +236,19 @@ Agent: Receives description revealing the issue (e.g., wrong labels, missing dat
 Agent: Fixes the chart generation code
 ```
 
+### Custom Vision Questions
+```
+Agent: "What is the total revenue shown in this chart?"
+Agent: Uses view_image with path to chart.png and prompt "What is the total revenue shown in this chart?"
+Agent: Receives specific answer about revenue instead of a general description
+Agent: Uses the specific information for further analysis
+```
+
 ## Testing Requirements
 
 ### Unit Tests
 - [ ] executeViewImage handles missing path parameter
+- [ ] executeViewImage handles missing prompt parameter (should use default prompt)
 - [ ] executeViewImage handles non-existent file
 - [ ] executeViewImage handles unsupported file format
 - [ ] executeViewImage handles oversized files (>20MB)
@@ -231,6 +257,7 @@ Agent: Fixes the chart generation code
 - [ ] executeViewImage correctly detects WEBP MIME type
 - [ ] executeViewImage correctly detects GIF MIME type
 - [ ] executeViewImage returns valid base64 data URI
+- [ ] executeViewImage passes custom prompt through to agent when provided
 - [ ] GetViewImageExtra correctly extracts data from tool result
 - [ ] detectImageMIMEType falls back to magic bytes detection
 - [ ] view_image is included in read-only tools
@@ -238,5 +265,7 @@ Agent: Fixes the chart generation code
 ### Integration Tests
 - [ ] view_image tool is present in buildTools output
 - [ ] view_image tool is present in buildReadOnlyTools output
-- [ ] Agent correctly processes view_image tool result
+- [ ] view_image tool definition includes optional `prompt` parameter
+- [ ] Agent correctly processes view_image tool result with custom prompt
+- [ ] Agent correctly processes view_image tool result without custom prompt (uses default)
 - [ ] Agent sends vision request with correct multi-modal format
