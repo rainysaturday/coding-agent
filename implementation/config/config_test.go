@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -339,5 +340,122 @@ func TestParseArgs_PersonaMultiline(t *testing.T) {
 
 	if cfg.Persona != multilinePersona {
 		t.Logf("Multiline persona: got '%s'", cfg.Persona)
+	}
+}
+
+// ===== Tests for theme configuration =====
+
+func TestParseArgs_ThemeFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected string
+	}{
+		{"theme dark", []string{"--theme", "dark", "-p", "test"}, "dark"},
+		{"theme light", []string{"--theme", "light", "-p", "test"}, "light"},
+		{"theme solarized", []string{"--theme", "solarized", "-p", "test"}, "solarized"},
+		{"theme gruvbox", []string{"--theme", "gruvbox", "-p", "test"}, "gruvbox"},
+		{"theme darkula", []string{"--theme", "darkula", "-p", "test"}, "darkula"},
+		{"no theme specified", []string{"-p", "test"}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseArgs(tt.args)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if cfg.Theme != tt.expected {
+				t.Errorf("Expected theme %q, got %q", tt.expected, cfg.Theme)
+			}
+		})
+	}
+}
+
+func TestParseArgs_ThemeFlagMissingValue(t *testing.T) {
+	_, err := ParseArgs([]string{"--theme"})
+	if err == nil {
+		t.Error("Expected error when --theme has no value")
+	}
+}
+
+func TestParseArgs_ThemeFlagOverridesEnv(t *testing.T) {
+	os.Setenv("CODING_AGENT_THEME", "light")
+	defer os.Unsetenv("CODING_AGENT_THEME")
+
+	cfg, err := ParseArgs([]string{"--theme", "gruvbox", "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "gruvbox" {
+		t.Errorf("Expected flag theme 'gruvbox' to override env 'light', got %q", cfg.Theme)
+	}
+}
+
+func TestParseArgs_ThemeFromEnv(t *testing.T) {
+	os.Setenv("CODING_AGENT_THEME", "solarized")
+	defer os.Unsetenv("CODING_AGENT_THEME")
+
+	cfg, err := ParseArgs([]string{"-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "solarized" {
+		t.Errorf("Expected theme from env 'solarized', got %q", cfg.Theme)
+	}
+}
+
+func TestParseArgs_ThemeFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.txt")
+	os.WriteFile(configFile, []byte("theme=gruvbox\n"), 0644)
+
+	cfg, err := ParseArgs([]string{"--config", configFile, "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "gruvbox" {
+		t.Errorf("Expected theme from config file 'gruvbox', got %q", cfg.Theme)
+	}
+}
+
+func TestParseArgs_ThemeCLIOverridesConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.txt")
+	os.WriteFile(configFile, []byte("theme=light\n"), 0644)
+
+	cfg, err := ParseArgs([]string{"--config", configFile, "--theme", "dark", "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "dark" {
+		t.Errorf("Expected CLI theme 'dark' to override config file 'light', got %q", cfg.Theme)
+	}
+}
+
+func TestParseArgs_ThemeDefaultEmpty(t *testing.T) {
+	cfg, err := ParseArgs([]string{"-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "" {
+		t.Errorf("Expected empty theme when not specified, got %q", cfg.Theme)
+	}
+}
+
+func TestParseArgs_ThemeWithPersonaAndPrompt(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"--theme", "gruvbox",
+		"--persona", "Go expert",
+		"-p", "write Go code",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Theme != "gruvbox" {
+		t.Errorf("Expected theme 'gruvbox', got %q", cfg.Theme)
+	}
+	if cfg.Persona != "Go expert" {
+		t.Errorf("Expected persona 'Go expert', got %q", cfg.Persona)
 	}
 }

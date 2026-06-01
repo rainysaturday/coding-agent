@@ -164,7 +164,7 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			t.mu.Lock()
 			t.cancelled = true
 			t.mu.Unlock()
-			fmt.Println("\n[Cancelled]")
+			fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
 			return "", fmt.Errorf("cancelled")
 		case 16: // Ctrl+P - Previous history
 			t.handleHistoryUp()
@@ -183,7 +183,7 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			continue
 		case 4: // Ctrl+D - End of input
 			if len(t.inputLine) == 0 {
-				fmt.Println("\nGoodbye!")
+				fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				return "", fmt.Errorf("EOF")
 			}
 			// If there's text, treat as Enter
@@ -287,20 +287,20 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 	switch contentType {
 	case inference.StreamingContentTypeReasoning:
 		t.reasoningBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.ColorDim, text, colors.ColorReset)
+		fmt.Printf("%s%s%s", colors.GetColor("dim"), text, colors.GetColor("reset"))
 	case inference.StreamingContentTypeGoal:
 		// Goal messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.ColorMagenta, text, colors.ColorReset)
+		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
 	case inference.StreamingContentTypeCompression:
 		// Context compression messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.ColorMagenta, text, colors.ColorReset)
+		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
 	default:
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
 			fmt.Println()
-			fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.ColorDim, colors.ColorReset)
+			fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
 			t.transitionedFromReasoning = true
 		}
 		t.streamBuffer.WriteString(text)
@@ -402,27 +402,27 @@ func (t *TUI) DisplayStats(stats *agent.Stats) {
 	max := t.maxContextSize
 	t.mu.Unlock()
 
-	fmt.Println("==================================================")
-	fmt.Println("Runtime Statistics")
-	fmt.Println("==================================================")
-	fmt.Printf("Input Tokens:      %d\n", stats.InputTokens)
-	fmt.Printf("Output Tokens:     %d\n", stats.OutputTokens)
-	fmt.Printf("Tokens/Second:     %.1f\n", stats.TokensPerSecond)
-	fmt.Printf("Context Size:      %d / %d", size, max)
+	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("%sRuntime Statistics%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("  %sInput Tokens:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.InputTokens)
+	fmt.Printf("  %sOutput Tokens:%s     %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.OutputTokens)
+	fmt.Printf("  %sTokens/Second:%s     %.1f\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.TokensPerSecond)
+	fmt.Printf("  %sContext Size:%s      %d / %d", colors.GetColor("cyan"), colors.GetColor("reset"), size, max)
 	if max > 0 {
 		fmt.Printf(" (%.1f%%)", float64(size)/float64(max)*100)
 	}
 	fmt.Println()
-	fmt.Printf("Tool Calls:        %d\n", stats.ToolCalls)
-	fmt.Printf("Failed Calls:      %d\n", stats.FailedToolCalls)
-	fmt.Printf("Iterations:        %d\n", stats.Iterations)
+	fmt.Printf("  %sTool Calls:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.ToolCalls)
+	fmt.Printf("  %sFailed Calls:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.FailedToolCalls)
+	fmt.Printf("  %sIterations:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Iterations)
 	if stats.CompressionCount > 0 {
-		fmt.Printf("Compressions:      %d\n", stats.CompressionCount)
+		fmt.Printf("  %sCompressions:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.CompressionCount)
 	}
 	if !stats.StartTime.IsZero() {
-		fmt.Printf("Uptime:            %s\n", time.Since(stats.StartTime).Round(time.Second))
+		fmt.Printf("  %sUptime:%s            %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), time.Since(stats.StartTime).Round(time.Second))
 	}
-	fmt.Println("==================================================")
+	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 }
 
 // AddToHistory adds a prompt to the history.
@@ -519,19 +519,19 @@ func (t *TUI) printContextSizeInternal() {
 		switch {
 		case percentage < 50:
 			indicator = "✓"
-			color = colors.ColorGreen
+			color = colors.GetColor("green")
 		case percentage < 75:
 			indicator = "⚠"
-			color = colors.ColorYellow
+			color = colors.GetColor("yellow")
 		case percentage < 90:
 			indicator = "⚠⚠"
-			color = colors.ColorYellow
+			color = colors.GetColor("yellow")
 		default:
 			indicator = "⚠⚠⚠"
-			color = colors.ColorRed
+			color = colors.GetColor("red")
 		}
 
-		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, colors.ColorReset)
+		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, colors.GetColor("reset"))
 	} else {
 		fmt.Printf("[Context: %d tokens] ", size)
 	}
@@ -539,7 +539,7 @@ func (t *TUI) printContextSizeInternal() {
 
 // printColored prints text with ANSI color.
 func printColored(color, text string) {
-	fmt.Printf("%s%s%s", color, text, colors.ColorReset)
+	fmt.Printf("%s%s%s", color, text, colors.GetColor("reset"))
 }
 
 // ANSI color codes (aliases to the colors package for backwards compatibility)

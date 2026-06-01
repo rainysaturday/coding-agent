@@ -327,7 +327,7 @@ If you have not achieved the goal, explain what remains to be done and continue 
 	a.mu.Unlock()
 
 	// Stream goal check notification to TUI with magenta color
-	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", colors.GoalColor, goal, colors.ColorReset)
+	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", colors.GetColor("magenta"), goal, colors.GetColor("reset"))
 	if streamCallback != nil {
 		streamCallback(inference.StreamingChunk{
 			Text:        goalCheckMsg,
@@ -523,7 +523,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			// Check if goal was achieved (case-insensitive) in this natural end response
 			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
 				// Stream goal achieved confirmation to TUI with magenta color
-				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", colors.GoalColor, colors.ColorReset)
+				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", colors.GetColor("magenta"), colors.GetColor("reset"))
 				if streamCallback != nil {
 					streamCallback(inference.StreamingChunk{
 						Text:        goalAchievedMsg,
@@ -620,7 +620,7 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 			ContentType: inference.StreamingContentTypeNormal,
 		})
 	} else {
-		fmt.Printf("\n[Viewing image: %s]", result.Path)
+		fmt.Printf("\n%s[Viewing image: %s]%s", colors.GetColor("cyan"), result.Path, colors.GetColor("reset"))
 	}
 
 	// Use custom prompt if provided, otherwise use default description prompt
@@ -654,7 +654,7 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 			ContentType: inference.StreamingContentTypeNormal,
 		})
 	} else {
-		fmt.Printf("\n\nImage description:\n%s", description)
+		fmt.Printf("\n\n%sImage description:\n%s%s", colors.GetColor("blue"), description, colors.GetColor("reset"))
 	}
 
 	return fmt.Sprintf("Tool 'view_image' executed successfully.\n\nImage description:\n%s", description)
@@ -946,47 +946,47 @@ func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
 			cmd = p
 		}
 		if cmd != "" && paramsStr != "" {
-			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", ColorCyan, cmd, ColorReset)
+			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
 		} else if cmd != "" {
-			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", ColorCyan, cmd, ColorReset)
+			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
 		} else if paramsStr != "" {
-			msg = fmt.Sprintf("\n%s[Bash] (%s)%s\n", ColorCyan, paramsStr, ColorReset)
+			msg = fmt.Sprintf("\n%s[Bash] (%s)%s\n", colors.GetColor("cyan"), paramsStr, colors.GetColor("reset"))
 		}
 	case "read_file":
 		path := ""
 		if p, ok := tc.Parameters["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Read] %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "read_lines":
 		path := ""
 		if p, ok := tc.Parameters["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Read] %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "write_file":
 		path := ""
 		if p, ok := tc.Parameters["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Write] %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Write] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "insert_lines":
 		path := ""
 		if p, ok := tc.Parameters["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "replace_text":
 		path := ""
 		if p, ok := tc.Parameters["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	default:
 		if paramsStr != "" {
-			msg = fmt.Sprintf("\n%s[Tool: %s] (%s)%s\n", ColorCyan, tc.Name, paramsStr, ColorReset)
+			msg = fmt.Sprintf("\n%s[Tool: %s] (%s)%s\n", colors.GetColor("cyan"), tc.Name, paramsStr, colors.GetColor("reset"))
 		} else {
-			msg = fmt.Sprintf("\n%s[Tool: %s]%s\n", ColorCyan, tc.Name, ColorReset)
+			msg = fmt.Sprintf("\n%s[Tool: %s]%s\n", colors.GetColor("cyan"), tc.Name, colors.GetColor("reset"))
 		}
 	}
 
@@ -1040,17 +1040,6 @@ func formatParamValue(value interface{}) string {
 	}
 }
 
-// ANSI color codes (aliases to the colors package for backwards compatibility)
-const (
-	ColorReset   = colors.ColorReset
-	ColorGreen   = colors.ColorGreen
-	ColorYellow  = colors.ColorYellow
-	ColorRed     = colors.ColorRed
-	ColorCyan    = colors.ColorCyan
-	ColorBlue    = colors.ColorBlue
-	ColorMagenta = colors.ColorMagenta
-)
-
 // streamStatus streams a tool call status message with color.
 // If callback is nil, prints to stdout instead.
 func streamStatus(toolName string, params map[string]interface{}, callback StreamCallback) {
@@ -1061,13 +1050,13 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		if p, ok := params["command"].(string); ok {
 			cmd = p
 		}
-		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", ColorCyan, cmd, ColorReset)
+		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
 	case "read_file":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Reading] file: %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Reading] file: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "read_lines":
 		path := ""
 		start, end := 0, 0
@@ -1080,13 +1069,13 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		if p, ok := params["end"].(float64); ok {
 			end = int(p)
 		}
-		msg = fmt.Sprintf("\n%s[Reading] lines %d-%d from: %s%s\n", ColorCyan, start, end, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Reading] lines %d-%d from: %s%s\n", colors.GetColor("cyan"), start, end, path, colors.GetColor("reset"))
 	case "write_file":
 		path := ""
 		if p, ok := params["path"].(string); ok {
 			path = p
 		}
-		msg = fmt.Sprintf("\n%s[Writing] file: %s%s\n", ColorCyan, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Writing] file: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
 	case "insert_lines":
 		path := ""
 		line := 0
@@ -1096,7 +1085,7 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		if p, ok := params["line"].(float64); ok {
 			line = int(p)
 		}
-		msg = fmt.Sprintf("\n%s[Inserting] at line %d in: %s%s\n", ColorCyan, line, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Inserting] at line %d in: %s%s\n", colors.GetColor("cyan"), line, path, colors.GetColor("reset"))
 	case "replace_text":
 		path := ""
 		search := ""
@@ -1109,9 +1098,9 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 				search = search[:30] + "..."
 			}
 		}
-		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", ColorCyan, search, path, ColorReset)
+		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
 	default:
-		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", ColorCyan, toolName, ColorReset)
+		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", colors.GetColor("cyan"), toolName, colors.GetColor("reset"))
 	}
 
 	if callback != nil {
@@ -1154,7 +1143,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if result.ExitCode != 0 {
 				exitCode = fmt.Sprintf(" (exit code: %d)", result.ExitCode)
 			}
-			return fmt.Sprintf("%s[Success] bash completed%s\nOutput:\n%s%s\n", ColorGreen, exitCode, output, ColorReset)
+			return fmt.Sprintf("%s[Success] bash completed%s\nOutput:\n%s%s\n", colors.GetColor("green"), exitCode, output, colors.GetColor("reset"))
 		case "read_file":
 			output := result.Output
 			lines := strings.Split(output, "\n")
@@ -1169,12 +1158,12 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 					linesRead = lr
 				}
 			}
-			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", colors.GetColor("green"), linesRead, output, colors.GetColor("reset"))
 		case "write_file":
 			// Show the file path, size, and truncated content preview
 			output := result.Output
 			// Parse the output to extract path and size info
-			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
+			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "read_lines":
 			// Show the lines that were read, truncated if too long
 			output := result.Output
@@ -1185,15 +1174,15 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				output = strings.Join(lines, "\n") + "\n... [output truncated]"
 				linesRead = len(lines)
 			}
-			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", ColorGreen, linesRead, output, ColorReset)
+			return fmt.Sprintf("%s[Success] read %d lines\nContent:\n%s%s\n", colors.GetColor("green"), linesRead, output, colors.GetColor("reset"))
 		case "insert_lines":
 			// Show the full output including path, line count, and content preview
 			output := result.Output
-			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
+			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "replace_text":
 			// Show the full output including search, replace, count, and preview
 			output := result.Output
-			return fmt.Sprintf("%s[Success] %s%s\n", ColorGreen, output, ColorReset)
+			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "list_files":
 			// Show the actual file listing with path and count
 			output := result.Output
@@ -1205,7 +1194,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if len(output) > 500 {
 				output = output[:500] + "\n... [listing truncated]"
 			}
-			return fmt.Sprintf("%s[Success] listed %d entries%s\n%s\n", ColorGreen, entries, ColorReset, output)
+			return fmt.Sprintf("%s[Success] listed %d entries%s\n%s\n", colors.GetColor("green"), entries, colors.GetColor("reset"), output)
 		case "grep":
 			// Show the actual grep results with match count
 			output := result.Output
@@ -1218,9 +1207,9 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				output = output[:1000] + "\n... [output truncated]"
 			}
 			if matches == 0 {
-				return fmt.Sprintf("%s[Success] grep: 0 matches found%s\n", ColorGreen, ColorReset)
+				return fmt.Sprintf("%s[Success] grep: 0 matches found%s\n", colors.GetColor("green"), colors.GetColor("reset"))
 			}
-			return fmt.Sprintf("%s[Success] grep: %d matches found\n%s%s\n", ColorGreen, matches, output, ColorReset)
+			return fmt.Sprintf("%s[Success] grep: %d matches found\n%s%s\n", colors.GetColor("green"), matches, output, colors.GetColor("reset"))
 		case "git_log":
 			// Show the git log output with summary info
 			output := result.Output
@@ -1236,7 +1225,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if len(output) > 1000 {
 				output = output[:1000] + "\n... [log truncated]"
 			}
-			return fmt.Sprintf("%s[Success] git log: %d commits from %s\n%s%s\n", ColorGreen, count, reference, output, ColorReset)
+			return fmt.Sprintf("%s[Success] git log: %d commits from %s\n%s%s\n", colors.GetColor("green"), count, reference, output, colors.GetColor("reset"))
 		case "git_show":
 			// Show the git show output with commit details
 			output := result.Output
@@ -1248,7 +1237,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if len(output) > 1000 {
 				output = output[:1000] + "\n... [output truncated]"
 			}
-			return fmt.Sprintf("%s[Success] git show %s\n%s%s\n", ColorGreen, commit, output, ColorReset)
+			return fmt.Sprintf("%s[Success] git show %s\n%s%s\n", colors.GetColor("green"), commit, output, colors.GetColor("reset"))
 		case "git_diff":
 			// Show the git diff output with summary info
 			output := result.Output
@@ -1264,27 +1253,27 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			if len(output) > 1000 {
 				output = output[:1000] + "\n... [diff truncated]"
 			}
-			msg := fmt.Sprintf("%s[Success] git diff", ColorGreen)
+			msg := fmt.Sprintf("%s[Success] git diff", colors.GetColor("green"))
 			if ref1 != "" {
 				msg += fmt.Sprintf(" %s", ref1)
 			}
 			if ref2 != "" {
 				msg += fmt.Sprintf(" %s", ref2)
 			}
-			msg += "\n" + output + ColorReset
+			msg += "\n" + output + colors.GetColor("reset")
 			return msg
 		case "subagent":
 			// Show subagent success with clear visual separation
-			return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, result.Output, ColorReset)
+			return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", colors.GetColor("cyan"), result.Output, colors.GetColor("reset"))
 		default:
-			return fmt.Sprintf("%s[Success] tool completed%s\n", ColorGreen, ColorReset)
+			return fmt.Sprintf("%s[Success] tool completed%s\n", colors.GetColor("green"), colors.GetColor("reset"))
 		}
 	}
 	failureName := toolName
 	if toolName == "subagent" {
 		failureName = "Subagent"
 	}
-	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", ColorRed, failureName, result.Error, ColorReset)
+	return fmt.Sprintf("%s[Failed] %s\nError: %s%s\n", colors.GetColor("red"), failureName, result.Error, colors.GetColor("reset"))
 }
 
 // getEnvironmentInfo gathers runtime environment information.
@@ -1952,16 +1941,16 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
 				Parameters: inference.ParameterSchema{
 					Type: "object",
-						Properties: map[string]inference.Property{
-							"path": {
-								Type:        "string",
-								Description: "Path to the image file to view",
-							},
-							"prompt": {
-								Type:        "string",
-								Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
-							},
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the image file to view",
 						},
+						"prompt": {
+							Type:        "string",
+							Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
+						},
+					},
 				},
 			},
 		},

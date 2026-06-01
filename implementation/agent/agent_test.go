@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tools"
@@ -944,7 +945,7 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.APIEndpoint = mockServer.URL
-cfg.Streaming = false
+	cfg.Streaming = false
 
 	agent := NewAgent(cfg)
 
@@ -970,7 +971,6 @@ cfg.Streaming = false
 		t.Errorf("Expected default prompt to be sent to vision model, got: %s", receivedPrompt)
 	}
 }
-
 
 func TestReportContextSize_CallbackCalled(t *testing.T) {
 	cfg := config.DefaultConfig()
@@ -1655,23 +1655,21 @@ func TestExitCodes_Constants(t *testing.T) {
 
 func TestColorConstants(t *testing.T) {
 	expected := map[string]string{
-		"ColorReset":   "\033[0m",
-		"ColorGreen":   "\033[32m",
-		"ColorYellow":  "\033[33m",
-		"ColorRed":     "\033[31m",
-		"ColorCyan":    "\033[36m",
-		"ColorBlue":    "\033[34m",
-		"ColorMagenta": "\033[35m",
+		"reset":   "\033[0m",
+		"green":   "\033[32m",
+		"yellow":  "\033[33m",
+		"red":     "\033[31m",
+		"cyan":    "\033[36m",
+		"blue":    "\033[34m",
+		"magenta": "\033[35m",
+		"dim":     "\033[90m",
 	}
 
-	if ColorReset != expected["ColorReset"] {
-		t.Errorf("ColorReset mismatch")
-	}
-	if ColorGreen != expected["ColorGreen"] {
-		t.Errorf("ColorGreen mismatch")
-	}
-	if ColorMagenta != expected["ColorMagenta"] {
-		t.Errorf("ColorMagenta mismatch")
+	for slot, want := range expected {
+		got := colors.GetColor(slot)
+		if got != want {
+			t.Errorf("GetColor(%q) = %q, want %q", slot, got, want)
+		}
 	}
 }
 

@@ -298,13 +298,13 @@ func TestDisplayVersion_Clean(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Version: abc123") {
+	if !strings.Contains(output, "Version:") || !strings.Contains(output, "abc123") {
 		t.Errorf("Expected 'Version: abc123' in output, got: %s", output)
 	}
 	if !strings.Contains(output, "[clean]") {
 		t.Errorf("Expected '[clean]' in output, got: %s", output)
 	}
-	if !strings.Contains(output, "Built: 2024-01-01T00:00:00Z") {
+	if !strings.Contains(output, "Built:") || !strings.Contains(output, "2024-01-01T00:00:00Z") {
 		t.Errorf("Expected 'Built: 2024-01-01T00:00:00Z' in output, got: %s", output)
 	}
 }
@@ -336,7 +336,7 @@ func TestDisplayVersion_Dirty(t *testing.T) {
 	io.Copy(&buf, r)
 	output := buf.String()
 
-	if !strings.Contains(output, "Version: def456") {
+	if !strings.Contains(output, "Version:") || !strings.Contains(output, "def456") {
 		t.Errorf("Expected 'Version: def456' in output, got: %s", output)
 	}
 	if !strings.Contains(output, "[dirty]") {
@@ -589,5 +589,11 @@ func TestDisplayHelp(t *testing.T) {
 	}
 	if !strings.Contains(output, "/stats") {
 		t.Error("Expected '/stats' in help output")
+	}
+	if !strings.Contains(output, "--theme") {
+		t.Error("Expected '--theme' in help output")
+	}
+	if !strings.Contains(output, "CODING_AGENT_THEME") {
+		t.Error("Expected 'CODING_AGENT_THEME' in help output")
 	}
 }

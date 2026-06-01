@@ -47,6 +47,9 @@ type Config struct {
 	Quiet      bool
 	OutputFile string
 
+	// Theme settings
+	Theme string
+
 	// Persona settings
 	Persona     string
 	SummaryOnly bool // When true, only output the final summary (used by subagents)
@@ -249,6 +252,12 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.Persona = args[i]
 		case "--summary-only":
 			cfg.SummaryOnly = true
+		case "--theme":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--theme requires an argument")
+			}
+			i++
+			cfg.Theme = args[i]
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -338,6 +347,8 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.DebugLog = value
 		case "read_only", "read-only":
 			cfg.ReadOnly = value == "true" || value == "1"
+		case "theme":
+			cfg.Theme = value
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
 		}
@@ -422,6 +433,10 @@ func loadEnv(cfg *Config) {
 	// Persona can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {
 		cfg.Persona = val
+	}
+	// Theme can be set via environment variable
+	if val := os.Getenv("CODING_AGENT_THEME"); val != "" {
+		cfg.Theme = val
 	}
 	// Summary-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_SUMMARY_ONLY"); val != "" {

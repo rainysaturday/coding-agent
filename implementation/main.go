@@ -28,11 +28,6 @@ import (
 
 // Version information injected at build time
 // Terminal color codes for one-shot mode output.
-const (
-	ColorReset   = colors.ColorReset
-	ColorDim     = colors.ColorDim
-	ColorMagenta = colors.ColorMagenta
-)
 
 var (
 	gitHash   string
@@ -53,8 +48,16 @@ func main() {
 	// Parse command-line arguments
 	cfg, err := config.ParseArgs(os.Args[1:])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 		os.Exit(2)
+	}
+
+	// Apply theme (CLI flag overrides env var; default is "dark")
+	if cfg.Theme != "" {
+		if err := colors.ApplyTheme(cfg.Theme); err != nil {
+			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+			os.Exit(2)
+		}
 	}
 
 	// Handle version flag
@@ -81,7 +84,7 @@ func main() {
 		// One-shot mode
 		err = runOneShotMode(cfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 			os.Exit(exitCodeForError(err))
 		}
 		os.Exit(0)
@@ -90,24 +93,24 @@ func main() {
 	// Interactive mode
 	err = runInteractiveMode(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 		os.Exit(1)
 	}
 }
 
 func displayVersion() {
-	fmt.Println("============================================================")
-	fmt.Println("  Minimal Coding Agent Harness")
-	fmt.Println("============================================================")
+	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("%s  Minimal Coding Agent Harness%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 	if gitDirty == "clean" {
-		fmt.Printf("  Version: %s [clean]\n", gitHash)
+		fmt.Printf("  %sVersion:%s %s [clean]\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
 	} else if gitDirty == "dirty" {
-		fmt.Printf("  \033[33mVersion: %s [dirty]\033[0m\n", gitHash)
+		fmt.Printf("  %sVersion:%s %s [dirty]%s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash, colors.GetColor("reset"))
 	} else {
-		fmt.Printf("  Version: %s\n", gitHash)
+		fmt.Printf("  %sVersion:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
 	}
 	if buildTime != "" {
-		fmt.Printf("  Built: %s\n", buildTime)
+		fmt.Printf("  %sBuilt:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), buildTime)
 	}
 	fmt.Println()
 }
@@ -141,6 +144,7 @@ func displayHelp() {
 	fmt.Println("      --read-only          Enable read-only mode (only read_file, read_lines, list_files, grep, git_log, git_show, git_diff available)")
 	fmt.Println("      --experimental       Enable experimental features (e.g., subagent tool)")
 	fmt.Println("      --persona string     Set a persona for the agent (e.g., \"Expert Go developer\", \"Security code reviewer\")")
+	fmt.Println("      --theme string       Color theme for the TUI (dark, light, solarized, gruvbox, darkula). Overrides CODING_AGENT_THEME env var (default: \"dark\")")
 	fmt.Println("      --summary-only       Only output the final summary (used by subagents)")
 	fmt.Println("      --output file        Write results to file")
 	fmt.Println("      --no-stream          Disable streaming output")
@@ -174,6 +178,11 @@ func displayHelp() {
 	fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://models.github.ai\"")
 	fmt.Println("  export CODING_AGENT_API_KEY=\"github_pat_xxxxxxxxxxxxxxxxxxxx\"")
 	fmt.Println("  coding-agent --model openai/gpt-4.1")
+	fmt.Println()
+	fmt.Println("Theme customization:")
+	fmt.Println("  coding-agent --theme gruvbox")
+	fmt.Println("  export CODING_AGENT_THEME=solarized")
+	fmt.Println("  coding-agent --theme light")
 }
 
 func runOneShotMode(cfg *config.Config) error {
@@ -209,15 +218,15 @@ func runOneShotMode(cfg *config.Config) error {
 		// Stream LLM responses to stdout with appropriate coloring
 		switch chunk.ContentType {
 		case inference.StreamingContentTypeReasoning:
-			fmt.Printf("%s%s%s", ColorDim, chunk.Text, ColorReset)
+			fmt.Printf("%s%s%s", colors.GetColor("dim"), chunk.Text, colors.GetColor("reset"))
 		case inference.StreamingContentTypeGoal:
 			// Goal messages are displayed in magenta to stand out
-			fmt.Printf("%s%s%s", ColorMagenta, chunk.Text, ColorReset)
+			fmt.Printf("%s%s%s", colors.GetColor("magenta"), chunk.Text, colors.GetColor("reset"))
 		default:
 			// Add separator when transitioning from reasoning to normal content
 			if !transitionedFromReasoning && chunk.Text != "" {
 				fmt.Println()
-				fmt.Printf("%s--- Thinking Complete ---%s\n\n", ColorDim, ColorReset)
+				fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				transitionedFromReasoning = true
 			}
 			fmt.Print(chunk.Text)
@@ -309,56 +318,56 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 	if cfg.Quiet {
 		// Minimal output - just the final answer
 		if result.Reasoning != "" {
-			fmt.Printf("%s[Reasoning]\n%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
+			fmt.Printf("%s[Reasoning]\n%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
 		}
-		fmt.Println(result.FinalOutput)
+		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
 		return nil
 	}
 
 	// Summary-only mode - only output the final answer, minimal formatting
 	if cfg.SummaryOnly {
-		fmt.Println(result.FinalOutput)
+		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
 		return nil
 	}
 
 	// Verbose output with tool calls
 	if cfg.Verbose {
-		fmt.Println("=== Agent Execution Log ===")
+		fmt.Printf("%s=== Agent Execution Log ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 		for _, step := range result.Steps {
-			fmt.Printf("\n[Step] %s\n", step.Action)
+			fmt.Printf("\n%s[Step]%s %s\n", colors.GetColor("blue"), colors.GetColor("reset"), step.Action)
 			if step.ToolCall != nil {
-				fmt.Printf("Tool: %s\n", step.ToolCall.Name)
-				fmt.Printf("Parameters: %s\n", step.ToolCall.Parameters)
+				fmt.Printf("  %sTool:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), step.ToolCall.Name)
+				fmt.Printf("  %sParameters:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), step.ToolCall.Parameters)
 			}
 			if step.ToolResult != nil {
-				fmt.Printf("Result: %s\n", step.ToolResult.Output)
+				fmt.Printf("  %sResult:%s %s\n", colors.GetColor("green"), colors.GetColor("reset"), step.ToolResult.Output)
 			}
 		}
-		fmt.Println("\n=== Reasoning ===")
+		fmt.Printf("\n%s=== Reasoning ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 		if result.Reasoning != "" {
-			fmt.Printf("%s%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
+			fmt.Printf("%s%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
 		} else {
-			fmt.Println("(No reasoning provided)")
+			fmt.Printf("%s(No reasoning provided)%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 		}
-		fmt.Println("\n=== Final Output ===")
+		fmt.Printf("\n%s=== Final Output ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 	}
 
 	// Display reasoning first if present
 	if result.Reasoning != "" {
-		fmt.Printf("%s[Reasoning]\n%s%s\n\n", ColorDim, result.Reasoning, ColorReset)
+		fmt.Printf("%s[Reasoning]\n%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
 	}
 
-	fmt.Println(result.FinalOutput)
+	fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
 
 	// Summary statistics
 	if cfg.Verbose {
-		fmt.Printf("\n=== Summary ===\n")
-		fmt.Printf("Steps executed: %d\n", len(result.Steps))
-		fmt.Printf("Tokens used: %d\n", result.TokenUsage)
+		fmt.Printf("\n%s=== Summary ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+		fmt.Printf("  %sSteps executed:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Steps))
+		fmt.Printf("  %sTokens used:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), result.TokenUsage)
 		if result.Reasoning != "" {
-			fmt.Printf("Reasoning: %d chars\n", len(result.Reasoning))
+			fmt.Printf("  %sReasoning:%s %d chars\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Reasoning))
 		}
-		fmt.Printf("Duration: %s\n", duration)
+		fmt.Printf("  %sDuration:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), duration)
 	}
 
 	return nil
@@ -367,8 +376,8 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
-	fmt.Println("Type your request below. Use Ctrl+C to exit.")
-	fmt.Println("Commands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off")
+	fmt.Printf("%sType your request below. Use Ctrl+C to exit.%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 	fmt.Println()
 
 	// Initialize TUI
@@ -513,7 +522,7 @@ func runInteractiveMode(cfg *config.Config) error {
 		if err != nil {
 			if err.Error() == "cancelled" || err.Error() == "EOF" {
 				if err.Error() == "EOF" {
-					fmt.Println("\nGoodbye!")
+					fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				}
 				signal.Stop(sigChan)
 				close(sigChan)
@@ -549,7 +558,7 @@ func runInteractiveMode(cfg *config.Config) error {
 				continue
 			case "read-only":
 				ag.GetToolExecutor().SetReadOnly(true)
-				fmt.Println("\n[Read-only mode enabled: write operations disabled]")
+				fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
 				continue
 			case "compress":
 				fmt.Print("\n[Compressing context...]")
@@ -561,9 +570,9 @@ func runInteractiveMode(cfg *config.Config) error {
 				err := ag.CompressContext(ctx)
 				cancel()
 				if err != nil {
-					fmt.Printf("\n[Compression failed: %v]\n", err)
+					fmt.Printf("%s[Compression failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 				} else {
-					fmt.Println("\n[Context compressed successfully]")
+					fmt.Printf("%s[Context compressed successfully]%s\n", colors.GetColor("green"), colors.GetColor("reset"))
 				}
 				continue
 			case "goal":
@@ -573,22 +582,22 @@ func runInteractiveMode(cfg *config.Config) error {
 					goalPrompt = strings.TrimSpace(parts[1])
 				}
 				if goalPrompt == "" {
-					fmt.Println("Usage: /goal <your goal here>")
+					fmt.Printf("%sUsage: /goal <your goal here>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
 					continue
 				}
 				ag.SetGoal(goalPrompt)
-				fmt.Printf("\n[Goal mode activated: %q]\n", goalPrompt)
+				fmt.Printf("%s[Goal mode activated: %q]%s\n", colors.GetColor("magenta"), goalPrompt, colors.GetColor("reset"))
 				// Set input to goalPrompt so the agent starts working immediately
 				// with the goal as the first user prompt
 				input = goalPrompt
 			case "goal-off":
 				ag.ClearGoal()
-				fmt.Println("\n[Goal mode deactivated]")
+				fmt.Printf("%s[Goal mode deactivated]%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				continue
 			default:
 				// Unknown command - show error
-				fmt.Printf("Unknown command: /%s\n", command)
-				fmt.Println("Available commands: /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off")
+				fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
+				fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				continue
 			}
 		}
@@ -616,7 +625,7 @@ func runInteractiveMode(cfg *config.Config) error {
 
 		// Show waiting indicator
 		fmt.Println()
-		fmt.Print("Thinking...")
+		fmt.Printf("%sThinking...%s", colors.GetColor("dim"), colors.GetColor("reset"))
 
 		// Add to wait group
 		wg.Add(1)
@@ -651,21 +660,21 @@ func runInteractiveMode(cfg *config.Config) error {
 
 			// Check if we were cancelled
 			if err == context.Canceled || err == context.DeadlineExceeded {
-				fmt.Println("\n[Cancelled]")
+				fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
 				return
 			}
 
 			if err != nil {
-				fmt.Printf("\nError: %v\n", err)
+				fmt.Printf("%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 				return
 			}
 
 			// Display final output if not already streamed
 			if !cfg.Streaming && result.FinalOutput != "" {
 				if result.Reasoning != "" {
-					tuiInstance.AddOutputf("\n[Assistant] %s[Reasoning]\n%s%s", ColorDim, result.Reasoning, ColorReset)
+					tuiInstance.AddOutputf("\n%s[Assistant]%s %s[Reasoning]\n%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
 				} else {
-					tuiInstance.AddOutputf("\n[Assistant] %s", result.FinalOutput)
+					tuiInstance.AddOutputf("\n%s[Assistant]%s %s%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
 				}
 			}
 

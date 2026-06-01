@@ -10,17 +10,6 @@ import (
 	"github.com/coding-agent/harness/colors"
 )
 
-// ANSI color codes for tool feedback (aliases to the colors package)
-const (
-	ColorReset   = colors.ColorReset
-	ColorGreen   = colors.ColorGreen
-	ColorYellow  = colors.ColorYellow
-	ColorRed     = colors.ColorRed
-	ColorCyan    = colors.ColorCyan
-	ColorBlue    = colors.ColorBlue
-	ColorMagenta = colors.ColorMagenta
-)
-
 // formatSubagentResult formats the subagent result for display in the TUI.
 func formatSubagentResult(result *ToolResult) string {
 	if result.Success {
@@ -28,9 +17,9 @@ func formatSubagentResult(result *ToolResult) string {
 		if len(output) > 200 {
 			output = output[:200] + "\n... [subagent output truncated]"
 		}
-		return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", ColorCyan, output, ColorReset)
+		return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", colors.GetColor("cyan"), output, colors.GetColor("reset"))
 	}
-	return fmt.Sprintf("%s[Subagent] Failed: %s%s\n", ColorRed, result.Error, ColorReset)
+	return fmt.Sprintf("%s[Subagent] Failed: %s%s\n", colors.GetColor("red"), result.Error, colors.GetColor("reset"))
 }
 
 // streamSubagentResult streams a subagent result status message.
