@@ -1395,6 +1395,15 @@ AVAILABLE TOOLS:
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
     Example use case: "What does this screenshot show?", "Read the text in this diagram"
 
+8. todo
+    Description: Manage a personal task list for tracking work-in-progress during development
+    Parameters:
+      - action (string, required): The action to perform (add, complete, remove, or list)
+      - id (integer, optional): Item ID (required for complete/remove)
+      - description (string, optional): Task description (required for add)
+    How to call: Use the todo tool to break down complex tasks into tracked sub-items. This helps you remember what to do between turns.
+    Example use case: Creating a checklist for a multi-step refactoring task
+
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -1522,6 +1531,14 @@ AVAILABLE TOOLS:
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
     Example use case: "What does this screenshot show?", "Read the text in this diagram"
 
+9. todo
+    Description: Manage a personal task list for tracking work-in-progress during development
+    Parameters:
+      - action (string, required): The action to perform (add, complete, remove, or list)
+      - id (integer, optional): Item ID (required for complete/remove)
+      - description (string, optional): Task description (required for add)
+    How to call: Use the todo tool to track tasks. In read-only mode, only list and remove actions are available.
+    Example use case: Listing current tasks or removing completed items
 
 
 TOOL CALLING BEST PRACTICES:
@@ -1685,6 +1702,31 @@ func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 						},
 					},
 					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "todo",
+				Description: "Manage a personal task list for tracking work-in-progress during development",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "The action to perform: add, complete, remove, or list",
+						},
+						"id": {
+							Type:        "integer",
+							Description: "The ID of the todo item (required for complete, remove; not for add or list)",
+						},
+						"description": {
+							Type:        "string",
+							Description: "The description of the todo item (required for add; not for complete, remove, or list)",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

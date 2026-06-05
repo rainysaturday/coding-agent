@@ -40,8 +40,9 @@ type ToolCall struct {
 
 // ToolExecutor handles tool execution.
 type ToolExecutor struct {
-	stats    *Stats
-	readOnly bool
+	stats     *Stats
+	readOnly  bool
+	todoStore *TodoStore
 }
 
 // Stats holds tool execution statistics.
@@ -53,7 +54,8 @@ type Stats struct {
 // NewToolExecutor creates a new tool executor.
 func NewToolExecutor() *ToolExecutor {
 	return &ToolExecutor{
-		stats: &Stats{},
+		stats:     &Stats{},
+		todoStore: NewTodoStore(),
 	}
 }
 
@@ -116,6 +118,23 @@ func ParseToolCall(raw string) (*ToolCall, error) {
 func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 	te.stats.TotalCalls++
 
+	// Special handling for todo tool in read-only mode:
+	// add and complete are write actions that are blocked, but list and remove are allowed
+	if te.readOnly && tc.Name == "todo" {
+		if action, ok := tc.Parameters["action"].(string); ok {
+			if action == "add" || action == "complete" {
+				te.stats.FailedCalls++
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("Tool 'todo' action '%s' is not available in read-only mode", action),
+					Extra: map[string]interface{}{
+						"tool_name": tc.Name,
+					},
+				}
+			}
+		}
+	}
+
 	// Check if tool is allowed in read-only mode
 	if te.readOnly && !isReadOnlyTool(tc.Name) {
 		te.stats.FailedCalls++
@@ -157,6 +176,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 		result = ExecuteSubagent(tc.Parameters)
 	case "view_image":
 		result = te.executeViewImage(tc.Parameters)
+	case "todo":
+		result = te.executeTodo(tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,
@@ -173,8 +194,9 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, git_show, and view_image are safe read-only operations.
+// todo is also allowed since add/complete are blocked by earlier per-action check.
 func isReadOnlyTool(name string) bool { //nolint:funlen
-	return name == "read_file" || name == "list_files" || name == "read_lines" || name == "grep" || name == "git_log" || name == "git_show" || name == "git_diff" || name == "view_image"
+	return name == "read_file" || name == "list_files" || name == "read_lines" || name == "grep" || name == "git_log" || name == "git_show" || name == "git_diff" || name == "view_image" || name == "todo"
 }
 
 // Default timeout for bash commands in milliseconds
@@ -2141,6 +2163,158 @@ func (te *ToolExecutor) executeViewImage(params map[string]interface{}) *ToolRes
 			"mime_type": mimeType,
 			"size":      len(data),
 			"prompt":    customPrompt,
+		},
+	}
+}
+
+// executeTodo manages a personal task list for tracking work-in-progress.
+func (te *ToolExecutor) executeTodo(params map[string]interface{}) *ToolResult {
+	action, ok := params["action"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	action = strings.ToLower(strings.TrimSpace(action))
+
+	switch action {
+	case "add":
+		return te.executeTodoAdd(params)
+	case "complete":
+		return te.executeTodoComplete(params)
+	case "remove":
+		return te.executeTodoRemove(params)
+	case "list":
+		return te.executeTodoList()
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid action: %s (must be one of: add, complete, remove, list)", action),
+		}
+	}
+}
+
+// executeTodoAdd creates a new todo item.
+func (te *ToolExecutor) executeTodoAdd(params map[string]interface{}) *ToolResult {
+	description, ok := params["description"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: description",
+		}
+	}
+
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "description cannot be empty",
+		}
+	}
+
+	id := te.todoStore.Add(description)
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Added todo item #%d: %s", id, description),
+		Extra: map[string]interface{}{
+			"id": id,
+		},
+	}
+}
+
+// executeTodoComplete marks a todo item as done.
+func (te *ToolExecutor) executeTodoComplete(params map[string]interface{}) *ToolResult {
+	idVal, ok := params["id"]
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: id",
+		}
+	}
+
+	var id int
+	switch v := idVal.(type) {
+	case float64:
+		id = int(v)
+	case int:
+		id = v
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   "id must be an integer",
+		}
+	}
+
+	item := te.todoStore.Complete(id)
+	if item == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("todo item #%d not found", id),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Completed todo item #%d: %s", item.ID, item.Description),
+	}
+}
+
+// executeTodoRemove deletes a todo item.
+func (te *ToolExecutor) executeTodoRemove(params map[string]interface{}) *ToolResult {
+	idVal, ok := params["id"]
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: id",
+		}
+	}
+
+	var id int
+	switch v := idVal.(type) {
+	case float64:
+		id = int(v)
+	case int:
+		id = v
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   "id must be an integer",
+		}
+	}
+
+	item := te.todoStore.Remove(id)
+	if item == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("todo item #%d not found", id),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Removed todo item #%d: %s", item.ID, item.Description),
+	}
+}
+
+// executeTodoList returns all todo items.
+func (te *ToolExecutor) executeTodoList() *ToolResult {
+	items := te.todoStore.List()
+	output := FormatList(items)
+
+	total := len(items)
+	completed := te.todoStore.CountCompleted()
+	pending := te.todoStore.CountPending()
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"totalItems":     total,
+			"completedItems": completed,
+			"pendingItems":   pending,
 		},
 	}
 }

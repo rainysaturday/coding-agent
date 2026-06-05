@@ -5,7 +5,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 ## Features
 
 - **Interactive TUI**: Terminal-based user interface with history navigation
-- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, file search, and image viewing (vision) tools
+- **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, file search, task tracking, and image viewing (vision) tools
 - **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, and `view_image`)
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
@@ -92,7 +92,7 @@ echo "List files in /tmp" | ./coding-agent --stdin
 ### Running Read-Only Mode
 
 ```bash
-# Read-only mode: only read_file, read_lines, list_files, grep, git_log, git_show, and git_diff are available
+# Read-only mode: only read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo are available
 ./coding-agent --read-only -p "What files are in this directory?"
 
 # Combine with other flags
@@ -108,7 +108,7 @@ In read-only mode, the agent cannot modify, write, delete, or execute any files 
 - `insert_lines` - Insert lines in files
 - `replace_text` - Replace text in files
 
-Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, and `git_diff` are available.
+Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, `view_image`, and `todo` (list/remove only) are available.
 
 ### Available Commands (Interactive Mode)
 
@@ -313,6 +313,7 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **031-github-copilot-backend.md**: GitHub Copilot backend support
 - **032-list-files-tool.md**: List files tool
 - **033-read-only-mode.md**: Read-only mode
+- **043-todo-tool.md**: Todo tool for task tracking
 
 ## Development
 
