@@ -221,6 +221,7 @@ func (t *TUI) handleHistoryUp() {
 
 	// Clear entire line and set input to history entry
 	t.inputLine = ""
+	fmt.Print("\033[2K\r")
 	t.printContextSizeInternal()
 	fmt.Printf("> ")
 	if t.historyIndex < len(t.history) {
@@ -240,12 +241,14 @@ func (t *TUI) handleHistoryDown() {
 
 	if t.historyIndex > 0 {
 		t.historyIndex--
+		fmt.Print("\033[2K\r")
 		t.printContextSizeInternal()
 		fmt.Printf("> ")
 		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
 	} else {
 		// Exiting history mode - restore the current typed input
+		fmt.Print("\033[2K\r")
 		t.printContextSizeInternal()
 		fmt.Printf("> ")
 		t.inputLine = t.currentInput
