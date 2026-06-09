@@ -783,6 +783,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"replace_text": {"path", "search", "replace"},
 		"view_image":   {"path"},
 		"subagent":     {"prompt"},
+		"todo":         {"action"},
 	}
 
 	for _, tool := range toolDefs {
