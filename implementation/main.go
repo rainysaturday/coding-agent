@@ -135,8 +135,8 @@ func displayHelp() {
 	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 64000)")
 	fmt.Println("      --context-size int   Context window size (default: 128000)")
 	fmt.Println("      --max-iterations int Maximum iterations for loop protection (default: 1000)")
-	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 7200)")
-	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 7200)")
+	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 24 hours)")
+	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 24 hours)")
 	fmt.Println("      --api-endpoint string  API endpoint URL (default: \"http://localhost:8080\")")
 	fmt.Println("      --api-key string       API key for authentication")
 	fmt.Println("      --verbose            Enable verbose output")
@@ -564,7 +564,7 @@ func runInteractiveMode(cfg *config.Config) error {
 				fmt.Print("\n[Compressing context...]")
 				timeout := time.Duration(cfg.ReadTimeout) * time.Second
 				if timeout == 0 {
-					timeout = 7200 * time.Second // Default to 2 hours if not set
+					timeout = 24 * 60 * 60 * time.Second // Default to 24 hours if not set
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				err := ag.CompressContext(ctx)

@@ -77,9 +77,9 @@ func DefaultConfig() *Config {
 		MaxTokens:           64000,
 		ContextSize:         128000,
 		Streaming:           true,
-		InitialTokenTimeout: 7200,                    // 2 hours default
-		ConnectionTimeout:   7200,                    // 2 hours default
-		ReadTimeout:         7200,                    // 2 hours default
+		InitialTokenTimeout: 24 * 60 * 60,            // 24 hours default
+		ConnectionTimeout:   24 * 60 * 60,            // 24 hours default
+		ReadTimeout:         24 * 60 * 60,            // 24 hours default
 		APIEndpoint:         "http://localhost:8080", // llama.cpp default
 		MaxIterations:       1000,                    // Default max iterations for loop protection
 		Debug:               false,

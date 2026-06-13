@@ -9,7 +9,7 @@ The inference engine must operate in streaming mode to display tokens as they ar
 - [ ] Initial token timeout is configurable via environment variable
 - [ ] Initial token timeout is configurable via command-line flag
 - [ ] Initial token timeout is configurable via config file
-- [ ] Default initial token timeout is 2 hours (7200 seconds)
+- [ ] Default initial token timeout is 24 hours (86400 seconds)
 - [ ] Timeout value must be a positive integer
 - [ ] Timeout validation ensures reasonable minimum (e.g., 10 seconds)
 - [ ] Timeout exceeded triggers appropriate error message

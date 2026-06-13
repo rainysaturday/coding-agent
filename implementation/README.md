@@ -186,8 +186,6 @@ All tool calls use a standardized JSON format:
 [TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"new line"}}]
 ```
 
-
-
 ## Runtime Statistics
 
 The agent tracks and displays:
@@ -215,7 +213,7 @@ Can be configured via:
 
 ### Initial Token Timeout
 
-Default: 7200 seconds (2 hours)
+Default: 86400 seconds (24 hours)
 
 Minimum: 10 seconds
 
