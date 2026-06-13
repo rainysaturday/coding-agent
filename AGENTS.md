@@ -32,6 +32,8 @@ All requirements are in the `requirements/` folder, numbered sequentially:
 - **001-010**: Core features (Go runtime, TUI, statistics, tools, inference)
 - **011-020**: Tool implementations (read_lines, insert_lines, etc.)
 - **021-029**: Advanced features (versioning, one-shot mode, debug, environment info)
+- **030-040**: Additional tools (patch, GitHub Copilot, git tools, goal mode, subagent)
+- **041-044**: Vision, todo, theme, and context dump/load features
 
 To find requirements for a feature:
 1. List requirements: `ls requirements/`
@@ -139,6 +141,14 @@ cat debug.log
 | TUI code | `implementation/tui/tui.go` |
 | User documentation | `README.md` |
 | Build commands | `Makefile` |
+
+## New Features (vNext)
+
+### Context Dump/Load
+The agent supports persisting conversation context to JSON files:
+- `/dump` command: Dump current context to `/tmp/coding-agent-context.json`
+- `--load` flag: Resume from a previous context file
+- `--no-dump-on-exit`: Disable automatic context dump on exit
 
 ## Environment Variables
 

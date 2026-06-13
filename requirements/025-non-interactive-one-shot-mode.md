@@ -31,6 +31,12 @@ coding-agent < prompt.txt
 
 # One-shot mode with file input
 coding-agent --prompt-file prompt.txt
+
+# One-shot mode with context loading (resumes from previous session)
+coding-agent --load /tmp/coding-agent-context.json -p "Continue working"
+
+# One-shot mode with context loading and new prompt appended
+coding-agent --load /tmp/coding-agent-context.json -p "What's next?"
 ```
 
 ### Exit Codes
@@ -86,6 +92,7 @@ type Config struct {
     Prompt      string
     PromptFile  string
     UseStdin    bool
+    ContextFile string  // Path to context file for loading (new)
     Verbose     bool
     Quiet       bool
     OutputFile  string
@@ -93,27 +100,37 @@ type Config struct {
 }
 
 func detectMode(cfg *Config) (RunMode, error) {
-    if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin {
+    if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin || cfg.ContextFile != "" {
         return OneShotMode, nil
     }
     return InteractiveMode, nil
 }
 ```
+```
 
 ### One-Shot Mode Execution Flow
 ```go
 func runOneShotMode(cfg *Config) error {
-    // 1. Load prompt
-    prompt, err := loadPrompt(cfg)
-    if err != nil {
-        return fmt.Errorf("failed to load prompt: %w", err)
+    // 0. Load context if specified (resumes from previous session)
+    var initialPrompt string
+    if cfg.ContextFile != "" {
+        agent := NewAgent(cfg)
+        if err := agent.LoadContext(cfg.ContextFile); err != nil {
+            return fmt.Errorf("failed to load context: %w", err)
+        }
+        // The last user message from the loaded context is used as context
+        // The new prompt is appended on top
+        initialPrompt = loadPrompt(cfg)
+    } else {
+        // 1. Load prompt
+        initialPrompt, _ = loadPrompt(cfg)
     }
     
     // 2. Initialize agent
     agent := NewAgent(cfg)
     
     // 3. Run agent with prompt
-    result, err := agent.Run(prompt)
+    result, err := agent.Run(initialPrompt)
     if err != nil {
         return fmt.Errorf("agent execution failed: %w", err)
     }
@@ -131,6 +148,7 @@ func runOneShotMode(cfg *Config) error {
     
     return nil
 }
+```
 ```
 
 ### Prompt Loading
@@ -358,8 +376,12 @@ done
 - [ ] One-shot mode handles tool calls correctly
 - [ ] One-shot mode exits when task is complete
 - [ ] One-shot mode handles errors gracefully
+- [ ] One-shot mode with --load resumes from previous context
+- [ ] One-shot mode with --load appends new prompt to loaded context
+- [ ] --load flag works alongside --prompt for continuation
 
 ## Related Requirements
 - **001-go-runtime.md**: Go runtime requirements
 - **015-tool-prefix-prompt.md**: System prompt requirements
 - **024-zero-external-dependencies.md**: No external dependencies
+- **044-context-dump-load.md**: Context dump and load feature

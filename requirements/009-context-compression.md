@@ -87,3 +87,6 @@ The compression request sent to the LLM should include:
 - [ ] Tool messages are properly grouped with assistant messages
 - [ ] Compression with minimal messages is handled gracefully
 - [ ] Failed compression does not crash the agent
+
+## Related Requirements
+- **044-context-dump-load.md**: Context dump includes compressed history
