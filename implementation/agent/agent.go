@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+	"path/filepath"
 	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/debug"
@@ -30,6 +32,7 @@ type Agent struct {
 	inference           *inference.InferenceClient
 	toolExecutor        *tools.ToolExecutor
 	context             []*inference.Message
+	iterationHistory    []Iteration // History of full contexts and stats after each turn
 	systemPrompt        string
 	stats               *Stats
 	maxIterations       int
@@ -80,6 +83,38 @@ type Result struct {
 	Steps       []Step
 	TokenUsage  int
 }
+
+// ContextDump represents a serializable conversation context.
+type ContextDump struct {
+	Version    int            `json:"version"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Session    SessionInfo    `json:"session"`
+	Iterations []Iteration    `json:"iterations"`
+}
+// StatsInfo holds runtime statistics.
+type StatsInfo struct {
+	InputTokens     int `json:"input_tokens"`
+	OutputTokens    int `json:"output_tokens"`
+	ToolCalls       int `json:"tool_calls"`
+	FailedToolCalls int `json:"failed_tool_calls"`
+}
+
+// Iteration represents a full snapshot of the context at a point in time.
+type Iteration struct {
+	Index    int                 `json:"index"`
+	Messages []*inference.Message `json:"messages"` // System prompt + conversation
+	Stats    StatsInfo           `json:"stats"`
+}
+
+// SessionInfo holds session metadata.
+type SessionInfo struct {
+	StartTime        time.Time `json:"start_time"`
+	Iterations       int       `json:"iterations"`
+	CompressionCount int       `json:"compression_count"`
+	Stats            StatsInfo `json:"stats"`
+}
+
 
 // Exit code constants for agent execution.
 const (
@@ -219,6 +254,42 @@ func (a *Agent) SetStreamCallback(callback StreamCallback) {
 	a.mu.Lock()
 	a.streamCallback = callback
 	a.mu.Unlock()
+}
+
+// recordIteration takes a snapshot of the current context (system prompt + messages)
+// and adds it to the iteration history.
+func (a *Agent) recordIteration() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.recordIterationUnlocked()
+}
+
+// recordIterationUnlocked is the internal, unlocked version.
+// Must be called while holding a.mu.
+func (a *Agent) recordIterationUnlocked() {
+	// Build the full context for this iteration: system prompt + current messages
+	fullContext := make([]*inference.Message, 0, 1+len(a.context))
+	fullContext = append(fullContext, &inference.Message{
+		Role:    "system",
+		Content: a.systemPrompt,
+	})
+
+	// Deep copy messages
+	for _, msg := range a.context {
+		cpy := *msg
+		fullContext = append(fullContext, &cpy)
+	}
+
+	a.iterationHistory = append(a.iterationHistory, Iteration{
+		Index: a.stats.Iterations,
+		Messages: fullContext,
+		Stats: StatsInfo{
+			InputTokens:     a.stats.InputTokens,
+			OutputTokens:    a.stats.OutputTokens,
+			ToolCalls:       a.stats.ToolCalls,
+			FailedToolCalls: a.stats.FailedToolCalls,
+		},
+	})
 }
 
 // SetContextSizeCallback sets the callback function for context size updates.
@@ -467,6 +538,13 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				result := a.toolExecutor.Execute(ctx, tc)
 				step.ToolResult = result
 
+				a.mu.Lock()
+				a.stats.ToolCalls++
+				if !result.Success {
+					a.stats.FailedToolCalls++
+				}
+				a.mu.Unlock()
+
 				// Log tool result if debug is enabled
 				if a.debugLogger != nil {
 					a.debugLogger.LogToolResult(tc.ID, tc.Name, result.Success, result.Output)
@@ -535,6 +613,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 
 				// Goal achieved - automatically clear the goal and return the result
 				a.ClearGoal()
+				a.recordIteration()
 				return &Result{
 					FinalOutput: assistantResponse,
 					Reasoning:   response.Reasoning,
@@ -553,6 +632,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		}
 
 		// No tool calls and no goal active - this is the final response
+		a.recordIteration()
 		return &Result{
 			FinalOutput: assistantResponse,
 			Reasoning:   response.Reasoning,
@@ -675,9 +755,6 @@ func (a *Agent) GetStats() *Stats {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Get tool executor stats
-	toolStats := a.toolExecutor.Stats()
-
 	// Calculate tokens per second
 	tokensPerSecond := 0.0
 	elapsed := time.Since(a.stats.StartTime).Seconds()
@@ -689,8 +766,8 @@ func (a *Agent) GetStats() *Stats {
 	return &Stats{
 		InputTokens:      a.stats.InputTokens,
 		OutputTokens:     a.stats.OutputTokens,
-		ToolCalls:        toolStats.TotalCalls,
-		FailedToolCalls:  toolStats.FailedCalls,
+		ToolCalls:        a.stats.ToolCalls,
+		FailedToolCalls:  a.stats.FailedToolCalls,
 		Iterations:       a.stats.Iterations,
 		CompressionCount: a.compressionCount,
 		StartTime:        a.stats.StartTime,
@@ -850,6 +927,10 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	preserved := messages[len(messages)-preserveCount:]
 	grouped := a.groupAssistantToolMessages(preserved)
 	newContext = append(newContext, grouped...)
+
+	// Record the pre-compression state so the full history is preserved before context is modified
+	a.recordIterationUnlocked()
+
 	a.context = newContext
 	a.compressionCount++
 
@@ -1186,6 +1267,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 		case "list_files":
 			// Show the actual file listing with path and count
 			output := result.Output
+
 			entries := 0
 			if e, ok := result.Extra["entriesListed"].(int); ok {
 				entries = e
@@ -1277,6 +1359,121 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 }
 
 // getEnvironmentInfo gathers runtime environment information.
+// DumpContext dumps the current conversation context to a JSON file in the system temp directory.
+// It returns the path to the created file or an error if dumping fails.
+func (a *Agent) DumpContext() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Create a dump object with current session state
+	dump := &ContextDump{
+		Version:    1,
+		CreatedAt:  a.stats.StartTime,
+		UpdatedAt:  time.Now(),
+		Session: SessionInfo{
+			StartTime:        a.stats.StartTime,
+			Iterations:       a.stats.Iterations,
+			CompressionCount: a.compressionCount,
+			Stats: StatsInfo{
+				InputTokens:     a.stats.InputTokens,
+				OutputTokens:    a.stats.OutputTokens,
+				ToolCalls:       a.stats.ToolCalls,
+				FailedToolCalls: a.stats.FailedToolCalls,
+			},
+		},
+		Iterations: a.iterationHistory,
+	}
+	// Determine filename in temp directory
+	basePath := filepath.Join(os.TempDir(), "coding-agent-context.json")
+	filePath := basePath
+
+	// Ensure unique filename if it already exists
+	counter := 2
+	for {
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			break
+		}
+		filePath = fmt.Sprintf("%s-%d.json", filepath.Join(os.TempDir(), "coding-agent-context"), counter)
+		counter++
+	}
+
+	// Marshal to JSON with indentation for readability
+	data, err := json.MarshalIndent(dump, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal context: %w", err)
+	}
+
+	// Write to file with read/write permissions for the owner
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		return "", fmt.Errorf("failed to write context file: %w", err)
+	}
+
+	return filePath, nil
+}
+
+// LoadContext loads a conversation context from the specified JSON file.
+// It restores the system prompt, messages, and session statistics.
+func (a *Agent) LoadContext(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to read context file: %w", err)
+	}
+
+	var dump ContextDump
+	if err := json.Unmarshal(data, &dump); err != nil {
+		return fmt.Errorf("failed to parse context file: %w", err)
+	}
+
+	if dump.Version != 1 {
+		return fmt.Errorf("unsupported context version: %d", dump.Version)
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(dump.Iterations) == 0 {
+		return fmt.Errorf("context file contains no iterations")
+	}
+
+	// Restore from the last iteration snapshot
+	lastSnapshot := dump.Iterations[len(dump.Iterations)-1]
+
+	// Restore system prompt from the first message of the last snapshot
+	if len(lastSnapshot.Messages) > 0 && lastSnapshot.Messages[0].Role == "system" {
+		a.systemPrompt = lastSnapshot.Messages[0].Content
+		// Restore messages excluding the system prompt
+		a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages)-1)
+		for _, msg := range lastSnapshot.Messages[1:] {
+			cpy := *msg
+			a.context = append(a.context, &cpy)
+		}
+	} else {
+		// Fallback: use messages as is and keep current system prompt
+		a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages))
+		for _, msg := range lastSnapshot.Messages {
+			cpy := *msg
+			a.context = append(a.context, &cpy)
+		}
+	}
+
+	// Restore session metadata
+	a.stats.StartTime = dump.Session.StartTime
+	a.stats.Iterations = dump.Session.Iterations
+	a.compressionCount = dump.Session.CompressionCount
+
+	// Restore token counts
+	a.stats.InputTokens = dump.Session.Stats.InputTokens
+	a.stats.OutputTokens = dump.Session.Stats.OutputTokens
+	a.stats.ToolCalls = dump.Session.Stats.ToolCalls
+	a.stats.FailedToolCalls = dump.Session.Stats.FailedToolCalls
+
+	// Reset token tracking baseline
+	a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
+	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+
+	return nil
+}
+
 func getEnvironmentInfo() string {
 	// Get current working directory
 	cwd, err := os.Getwd()

@@ -125,6 +125,7 @@ func displayHelp() {
 	fmt.Println("  -p, --prompt string      Prompt for one-shot mode (non-interactive)")
 	fmt.Println("      --stdin              Read prompt from stdin")
 	fmt.Println("      --prompt-file path   Read prompt from file")
+	fmt.Println("      --load path           Load conversation context from JSON file")
 	fmt.Println("      --config path        Load configuration from file")
 	fmt.Println("      --debug              Enable debug logging (saves conversation to file)")
 	fmt.Println("      --debug-log path     Path to debug log file (default: debug.log)")
@@ -147,6 +148,7 @@ func displayHelp() {
 	fmt.Println("      --theme string       Color theme for the TUI (dark, light, solarized, gruvbox, darkula). Overrides CODING_AGENT_THEME env var (default: \"dark\")")
 	fmt.Println("      --summary-only       Only output the final summary (used by subagents)")
 	fmt.Println("      --output file        Write results to file")
+	fmt.Println("      --no-dump-on-exit     Disable automatic context dump on exit")
 	fmt.Println("      --no-stream          Disable streaming output")
 	fmt.Println("  -h, --help               Show this help message")
 	fmt.Println("  -v, --version            Show version information")
@@ -156,6 +158,7 @@ func displayHelp() {
 	fmt.Println("  /clear       - Clear the output display")
 	fmt.Println("  /clear-history - Clear input history")
 	fmt.Println("  /read-only   - Enable read-only mode")
+	fmt.Println("  /dump         - Dump current context to JSON file")
 	fmt.Println("  /compress    - Manually trigger context compression")
 	fmt.Println("  /goal <prompt>    - Set a goal to guide the agent")
 	fmt.Println("  /goal-off         - Deactivate goal mode")
@@ -198,6 +201,13 @@ func runOneShotMode(cfg *config.Config) error {
 
 	// Initialize agent
 	ag := agent.NewAgent(cfg)
+
+	if cfg.ContextFile != "" {
+		if err := ag.LoadContext(cfg.ContextFile); err != nil {
+			return fmt.Errorf("failed to load context: %w", err)
+		}
+	}
+
 
 	// Create context with cancellation support
 	ctx, cancel := context.WithCancel(context.Background())
@@ -385,6 +395,12 @@ func runInteractiveMode(cfg *config.Config) error {
 
 	// Initialize agent
 	ag := agent.NewAgent(cfg)
+	if cfg.ContextFile != "" {
+		if err := ag.LoadContext(cfg.ContextFile); err != nil {
+			return fmt.Errorf("failed to load context: %w", err)
+		}
+	}
+
 
 	// Detect terminal width and set max display width for tool call arguments
 	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
@@ -397,6 +413,18 @@ func runInteractiveMode(cfg *config.Config) error {
 	}
 
 	// Ensure debug logger is closed on exit
+	// Automatic context dump on exit
+	defer func() {
+		if !cfg.NoDumpOnExit {
+			path, err := ag.DumpContext()
+			if err != nil {
+				fmt.Printf("%s[Automatic dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+			} else {
+				fmt.Printf("%s[Context automatically dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
+			}
+		}
+	}()
+
 	if cfg.Debug {
 		defer func() {
 			ag.CloseDebugLogger()
@@ -594,10 +622,19 @@ func runInteractiveMode(cfg *config.Config) error {
 				ag.ClearGoal()
 				fmt.Printf("%s[Goal mode deactivated]%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				continue
+			case "dump":
+				path, err := ag.DumpContext()
+				if err != nil {
+					fmt.Printf("%s[Dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+				} else {
+					fmt.Printf("%s[Context dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
+				}
+				continue
+
 			default:
 				// Unknown command - show error
 				fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-				fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+				fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				continue
 			}
 		}
@@ -622,6 +659,7 @@ func runInteractiveMode(cfg *config.Config) error {
 				// Context already cancelled (e.g., by root or completion)
 			}
 		}()
+
 
 		// Show waiting indicator
 		fmt.Println()

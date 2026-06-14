@@ -22,6 +22,7 @@ type Config struct {
 	Prompt      string
 	PromptFile  string
 	UseStdin    bool
+	ContextFile string // Path to context file for loading (new)
 	ShowHelp    bool
 	ShowVersion bool
 	ConfigFile  string
@@ -30,6 +31,7 @@ type Config struct {
 	// Experimental mode
 	Experimental bool // When true, enables experimental features like subagent tool
 	ReadOnly     bool
+	NoDumpOnExit bool // Disable automatic context dump on exit (new)
 
 	// Inference settings
 	Model       string
@@ -132,6 +134,14 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.PromptFile = args[i]
+		case "--load":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--load requires an argument")
+			}
+			i++
+			cfg.ContextFile = args[i]
+		case "--no-dump-on-exit":
+			cfg.NoDumpOnExit = true
 		case "--config":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--config requires an argument")

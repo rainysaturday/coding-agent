@@ -57,42 +57,73 @@ The dumped context file follows this structure:
       "failed_tool_calls": 2
     }
   },
-  "system_prompt": "You are a helpful coding assistant...",
-  "messages": [
+  "iterations": [
     {
-      "role": "user",
-      "content": "Original user prompt"
-    },
-    {
-      "role": "assistant",
-      "content": "Conversation summary: ..."
-    },
-    {
-      "role": "user",
-      "content": "Continue working on the task"
-    },
-    {
-      "role": "assistant",
-      "content": "I'll modify the file",
-      "tool_calls": [
+      "index": 1,
+      "messages": [
         {
-          "id": "call_123",
-          "type": "function",
-          "function": {
-            "name": "write_file",
-            "arguments": "{\"path\": \"main.go\", \"content\": \"...\"}"
-          }
+          "role": "system",
+          "content": "You are a helpful coding assistant..."
+        },
+        {
+          "role": "user",
+          "content": "Original user prompt"
+        },
+        {
+          "role": "assistant",
+          "content": "I'll help with that"
+        },
+        {
+          "role": "tool",
+          "content": "Tool result",
+          "tool_call_id": "call_123"
         }
-      ]
+      ],
+      "stats": {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "tool_calls": 1,
+        "failed_tool_calls": 0
+      }
     },
     {
-      "role": "tool",
-      "content": "Tool 'write_file' executed successfully:\nFile written",
-      "tool_call_id": "call_123"
+      "index": 3,
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a helpful coding assistant..."
+        },
+        {
+          "role": "user",
+          "content": "Original user prompt"
+        },
+        {
+          "role": "assistant",
+          "content": "Conversation summary: ..."
+        },
+        {
+          "role": "user",
+          "content": "Continue working on the task"
+        }
+      ],
+      "stats": {
+        "input_tokens": 1100,
+        "output_tokens": 600,
+        "tool_calls": 10,
+        "failed_tool_calls": 0
+      }
     }
   ]
 }
 ```
+
+#### Key Format Notes
+- **`iterations`**: An array of full context snapshots, recorded only on **agent exit** or **context compression** events. Each iteration contains:
+  - `index`: The iteration number at the time of the snapshot
+  - `messages`: The full conversation context including the system prompt as the first message, followed by all conversation messages (user, assistant, tool)
+  - `stats`: Cumulative token counts, tool call counts, etc. at the time of the snapshot
+- **`session`**: Top-level session metadata (start time, total iterations, total compression count, final stats)
+- When loading, only the **last iteration** is restored, providing the most recent conversation state
 
 ### Command-Line Interface
 
@@ -127,12 +158,19 @@ coding-agent --load /tmp/coding-agent-context.json -p "Continue from here"
 ```go
 // ContextDump represents a serializable conversation context.
 type ContextDump struct {
-    Version     int            `json:"version"`
-    CreatedAt   time.Time      `json:"created_at"`
-    UpdatedAt   time.Time      `json:"updated_at"`
-    Session     SessionInfo    `json:"session"`
-    SystemPrompt string        `json:"system_prompt"`
-    Messages    []*Message     `json:"messages"`
+    Version     int           `json:"version"`
+    CreatedAt   time.Time     `json:"created_at"`
+    UpdatedAt   time.Time     `json:"updated_at"`
+    Session     SessionInfo   `json:"session"`
+    Iterations  []Iteration   `json:"iterations"`
+}
+
+// Iteration represents a full snapshot of the context at a point in time.
+// Each iteration includes the system prompt as the first message.
+type Iteration struct {
+    Index    int                 `json:"index"`
+    Messages []*inference.Message `json:"messages"` // [system, user, assistant, tool, ...]
+    Stats    StatsInfo           `json:"stats"`
 }
 
 // SessionInfo holds session metadata.
@@ -157,19 +195,22 @@ type StatsInfo struct {
 func (a *Agent) DumpContext() (string, error) {
     a.mu.Lock()
     dump := &ContextDump{
-        Version:     1,
-        CreatedAt:   time.Now(),
-        UpdatedAt:   time.Now(),
+        Version:    1,
+        CreatedAt:  a.stats.StartTime,
+        UpdatedAt:  time.Now(),
         Session: SessionInfo{
-            StartTime:      a.stats.StartTime,
-            Iterations:     a.stats.Iterations,
+            StartTime:        a.stats.StartTime,
+            Iterations:       a.stats.Iterations,
             CompressionCount: a.compressionCount,
-            Stats:          a.dumpStats(),
+            Stats: StatsInfo{
+                InputTokens:     a.stats.InputTokens,
+                OutputTokens:    a.stats.OutputTokens,
+                ToolCalls:       a.stats.ToolCalls,
+                FailedToolCalls: a.stats.FailedToolCalls,
+            },
         },
-        SystemPrompt: a.systemPrompt,
-        Messages:     make([]*Message, len(a.context)),
+        Iterations: a.iterationHistory,
     }
-    copy(dump.Messages, a.context)
     a.mu.Unlock()
 
     // Determine filename with unique suffix
@@ -207,39 +248,57 @@ func (a *Agent) LoadContext(path string) error {
         return fmt.Errorf("unsupported context version: %d", dump.Version)
     }
 
-    // Update system prompt
-    a.systemPrompt = dump.SystemPrompt
+    if len(dump.Iterations) == 0 {
+        return fmt.Errorf("context file contains no iterations")
+    }
 
-    // Load messages from context
     a.mu.Lock()
-    a.context = dump.Messages
+    defer a.mu.Unlock()
+
+    // Restore from the last iteration snapshot
+    lastSnapshot := dump.Iterations[len(dump.Iterations)-1]
+
+    // Restore system prompt from the first message of the last snapshot
+    if len(lastSnapshot.Messages) > 0 && lastSnapshot.Messages[0].Role == "system" {
+        a.systemPrompt = lastSnapshot.Messages[0].Content
+        // Restore messages excluding the system prompt
+        a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages)-1)
+        for _, msg := range lastSnapshot.Messages[1:] {
+            cpy := *msg
+            a.context = append(a.context, &cpy)
+        }
+    } else {
+        // Fallback: use messages as is
+        a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages))
+        for _, msg := range lastSnapshot.Messages {
+            cpy := *msg
+            a.context = append(a.context, &cpy)
+        }
+    }
+
+    // Restore session metadata and stats
     a.stats.StartTime = dump.Session.StartTime
     a.stats.Iterations = dump.Session.Iterations
     a.compressionCount = dump.Session.CompressionCount
-    a.mu.Unlock()
+    a.stats.InputTokens = dump.Session.Stats.InputTokens
+    a.stats.OutputTokens = dump.Session.Stats.OutputTokens
+    a.stats.ToolCalls = dump.Session.Stats.ToolCalls
+    a.stats.FailedToolCalls = dump.Session.Stats.FailedToolCalls
+    a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
+    a.toolResultMsgsSinceLastAPI = make(map[int]bool)
 
     return nil
 }
 ```
 
-#### Auto-Dump on Exit (Interactive Mode)
-```go
-func runInteractiveMode(cfg *config.Config) error {
-    defer func() {
-        // Auto-dump on exit (unless --no-dump-on-exit)
-        if !cfg.NoDumpOnExit && ag != nil {
-            filePath, err := ag.DumpContext()
-            if err != nil {
-                fmt.Fprintf(os.Stderr, "Warning: failed to dump context: %v\n", err)
-            } else {
-                fmt.Printf("\n%s[Context saved to: %s]%s\n",
-                    colors.GetColor("green"), filePath, colors.GetColor("reset"))
-            }
-        }
-    }()
-    // ... rest of interactive mode
-}
-```
+#### Iteration Recording
+Iterations are recorded automatically at two points:
+1. **On Agent Exit**: Before `Run()` returns a result, `recordIteration()` captures the full context
+2. **On Context Compression**: Before `compressContext()` modifies the context, `recordIterationUnlocked()` captures the pre-compression state
+
+This ensures that the dump contains:
+- The final state of the conversation (when the agent finishes)
+- The full state of the conversation before each compression event (preserving history that would otherwise be lost)
 
 ### Error Handling
 
@@ -261,20 +320,17 @@ func runInteractiveMode(cfg *config.Config) error {
 ### Testing Requirements
 
 #### Unit Tests
-- [ ] Context dump creates valid JSON file
-- [ ] Context dump preserves all message fields
-- [ ] Context dump generates unique filenames when file exists
-- [ ] Context dump includes session metadata
-- [ ] Context load restores messages correctly
-- [ ] Context load rejects unsupported versions
-- [ ] Context load handles missing file gracefully
-- [ ] Context load handles malformed JSON gracefully
-- [ ] Auto-dump on exit is triggered in interactive mode
-- [ ] Auto-dump on exit is suppressed with `--no-dump-on-exit`
-- [ ] Auto-dump on exit is suppressed in one-shot mode
-- [ ] `/dump` command works in interactive mode
-- [ ] `--load` flag works in interactive mode
-- [ ] `--load` flag works in one-shot mode
+- [ ] `TestDumpAndLoadContext`: Full dump-load cycle preserves messages, system prompt, and session stats
+- [ ] `TestDumpContext_MultipleIterations`: Dump includes all recorded iterations (exit + compression snapshots)
+- [ ] `TestDumpContext_IterationContainsSystemPrompt`: Each iteration's first message is the system prompt
+- [ ] `TestDumpContext_GeneratesUniqueFilenames`: Multiple dumps generate unique filenames
+- [ ] `TestLoadContext_LastIterationOnly`: Only the last iteration is restored
+- [ ] `TestLoadContext_RejectsUnsupportedVersions`: Version mismatch returns error
+- [ ] `TestLoadContext_FileNotFound`: Missing file returns clear error
+- [ ] `TestLoadContext_InvalidJSON`: Malformed JSON returns clear error
+- [ ] `TestLoadContext_InvalidVersionEmptyIterations`: Version 1 with empty iterations returns error
+- [ ] `TestRecordIteration_AtExit`: Agent records iteration before returning from Run()
+- [ ] `TestRecordIteration_AtCompression`: Agent records iteration before modifying context during compression
 
 #### Integration Tests
 - [ ] Full dump-load cycle preserves conversation state
