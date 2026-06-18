@@ -1,4 +1,5 @@
 // Package tools implements the tool execution system for the coding agent.
+// This file contains the todo store and todo tool executor.
 package tools
 
 import (
@@ -108,4 +109,156 @@ func FormatList(items []*TodoItem) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// executeTodo manages a personal task list for tracking work-in-progress.
+func (te *ToolExecutor) executeTodo(params map[string]interface{}) *ToolResult {
+	action, ok := params["action"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: action",
+		}
+	}
+
+	action = strings.ToLower(strings.TrimSpace(action))
+
+	switch action {
+	case "add":
+		return te.executeTodoAdd(params)
+	case "complete":
+		return te.executeTodoComplete(params)
+	case "remove":
+		return te.executeTodoRemove(params)
+	case "list":
+		return te.executeTodoList()
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid action: %s (must be one of: add, complete, remove, list)", action),
+		}
+	}
+}
+
+// executeTodoAdd creates a new todo item.
+func (te *ToolExecutor) executeTodoAdd(params map[string]interface{}) *ToolResult {
+	description, ok := params["description"].(string)
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: description",
+		}
+	}
+
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return &ToolResult{
+			Success: false,
+			Error:   "description cannot be empty",
+		}
+	}
+
+	id := te.todoStore.Add(description)
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Added todo item #%d: %s", id, description),
+		Extra: map[string]interface{}{
+			"id": id,
+		},
+	}
+}
+
+// executeTodoComplete marks a todo item as done.
+func (te *ToolExecutor) executeTodoComplete(params map[string]interface{}) *ToolResult {
+	idVal, ok := params["id"]
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: id",
+		}
+	}
+
+	var id int
+	switch v := idVal.(type) {
+	case float64:
+		id = int(v)
+	case int:
+		id = v
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   "id must be an integer",
+		}
+	}
+
+	item := te.todoStore.Complete(id)
+	if item == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("todo item #%d not found", id),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Completed todo item #%d: %s", item.ID, item.Description),
+	}
+}
+
+// executeTodoRemove deletes a todo item.
+func (te *ToolExecutor) executeTodoRemove(params map[string]interface{}) *ToolResult {
+	idVal, ok := params["id"]
+	if !ok {
+		return &ToolResult{
+			Success: false,
+			Error:   "missing required parameter: id",
+		}
+	}
+
+	var id int
+	switch v := idVal.(type) {
+	case float64:
+		id = int(v)
+	case int:
+		id = v
+	default:
+		return &ToolResult{
+			Success: false,
+			Error:   "id must be an integer",
+		}
+	}
+
+	item := te.todoStore.Remove(id)
+	if item == nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("todo item #%d not found", id),
+		}
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  fmt.Sprintf("Removed todo item #%d: %s", item.ID, item.Description),
+	}
+}
+
+// executeTodoList returns all todo items.
+func (te *ToolExecutor) executeTodoList() *ToolResult {
+	items := te.todoStore.List()
+	output := FormatList(items)
+
+	total := len(items)
+	completed := te.todoStore.CountCompleted()
+	pending := te.todoStore.CountPending()
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra: map[string]interface{}{
+			"totalItems":     total,
+			"completedItems": completed,
+			"pendingItems":   pending,
+		},
+	}
 }
