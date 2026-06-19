@@ -9,6 +9,7 @@
 //	read_lines.go  - Line-range reading
 //	insert_lines.go - Line insertion
 //	replace_text.go - Text replacement
+//	move_text.go   - Move text blocks between files
 //	list_files.go  - Directory listing (ls-like)
 //	grep.go        - Text search (grep-like)
 //	git_log.go     - Git log
@@ -167,6 +168,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 		result = te.executeInsertLines(tc.Parameters)
 	case "replace_text":
 		result = te.executeReplaceText(tc.Parameters)
+	case "move_text":
+		result = te.executeMoveText(tc.Parameters)
 	case "list_files":
 		result = te.executeListFiles(ctx, tc.Parameters)
 	case "grep":
