@@ -1905,6 +1905,39 @@ func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
+				Name:        "move_text",
+				Description: "Move a block of text from one location to another. Extracts lines from a source file and inserts them at a target location (same file or different file). Automatically creates target file and directories if needed.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"source_path": {
+							Type:        "string",
+							Description: "Path to the source file to extract lines from",
+						},
+						"source_start": {
+							Type:        "integer",
+							Description: "Starting line number in source file (1-indexed)",
+						},
+						"source_end": {
+							Type:        "integer",
+							Description: "Ending line number in source file (1-indexed, inclusive)",
+						},
+						"target_path": {
+							Type:        "string",
+							Description: "Path to the target file to insert lines into",
+						},
+						"target_line": {
+							Type:        "integer",
+							Description: "Line number in target file to insert before (1-indexed)",
+						},
+					},
+					Required: []string{"source_path", "source_start", "source_end", "target_path", "target_line"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
 				Name:        "todo",
 				Description: "Manage a personal task list for tracking work-in-progress during development",
 				Parameters: inference.ParameterSchema{

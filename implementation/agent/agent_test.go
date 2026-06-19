@@ -781,6 +781,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"read_lines":   {"path", "start", "end"},
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
+		"move_text":    {"source_path", "source_start", "source_end", "target_path", "target_line"},
 		"view_image":   {"path"},
 		"subagent":     {"prompt"},
 		"todo":         {"action"},
