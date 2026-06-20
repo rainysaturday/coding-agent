@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"encoding/json"
-	"path/filepath"
 	"github.com/coding-agent/harness/colors"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/debug"
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tools"
+	"path/filepath"
 )
 
 // StreamCallback is a function type for handling streaming chunks.
@@ -40,8 +40,9 @@ type Agent struct {
 	contextSizeCallback ContextSizeCallback
 	maxContextSize      int
 	compressionCount    int
-	goal                string // Current goal prompt (empty string means goal mode is off)
-	goalActive          bool   // Whether goal mode is currently active
+	goal                string    // Current goal prompt (empty string means goal mode is off)
+	goalActive          bool      // Whether goal mode is currently active
+	goalStartTime       time.Time // When the current goal was started (for timing)
 	debugLogger         *debug.DebugLogger
 	mu                  sync.Mutex
 	// lastTotalTokens is the exact total_tokens from the last API response.
@@ -86,12 +87,13 @@ type Result struct {
 
 // ContextDump represents a serializable conversation context.
 type ContextDump struct {
-	Version    int            `json:"version"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	Session    SessionInfo    `json:"session"`
-	Iterations []Iteration    `json:"iterations"`
+	Version    int         `json:"version"`
+	CreatedAt  time.Time   `json:"created_at"`
+	UpdatedAt  time.Time   `json:"updated_at"`
+	Session    SessionInfo `json:"session"`
+	Iterations []Iteration `json:"iterations"`
 }
+
 // StatsInfo holds runtime statistics.
 type StatsInfo struct {
 	InputTokens     int `json:"input_tokens"`
@@ -102,9 +104,9 @@ type StatsInfo struct {
 
 // Iteration represents a full snapshot of the context at a point in time.
 type Iteration struct {
-	Index    int                 `json:"index"`
+	Index    int                  `json:"index"`
 	Messages []*inference.Message `json:"messages"` // System prompt + conversation
-	Stats    StatsInfo           `json:"stats"`
+	Stats    StatsInfo            `json:"stats"`
 }
 
 // SessionInfo holds session metadata.
@@ -114,7 +116,6 @@ type SessionInfo struct {
 	CompressionCount int       `json:"compression_count"`
 	Stats            StatsInfo `json:"stats"`
 }
-
 
 // Exit code constants for agent execution.
 const (
@@ -281,7 +282,7 @@ func (a *Agent) recordIterationUnlocked() {
 	}
 
 	a.iterationHistory = append(a.iterationHistory, Iteration{
-		Index: a.stats.Iterations,
+		Index:    a.stats.Iterations,
 		Messages: fullContext,
 		Stats: StatsInfo{
 			InputTokens:     a.stats.InputTokens,
@@ -339,10 +340,12 @@ func (a *Agent) SetGoal(goal string) {
 	if goal == "" {
 		a.goalActive = false
 		a.goal = ""
+		a.goalStartTime = time.Time{}
 		return
 	}
 	a.goal = goal
 	a.goalActive = true
+	a.goalStartTime = time.Now()
 }
 
 // ClearGoal deactivates goal mode.
@@ -351,6 +354,7 @@ func (a *Agent) ClearGoal() {
 	defer a.mu.Unlock()
 	a.goalActive = false
 	a.goal = ""
+	a.goalStartTime = time.Time{}
 }
 
 // IsGoalActive returns whether goal mode is currently active.
@@ -365,6 +369,30 @@ func (a *Agent) GetGoal() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.goal
+}
+
+// GetGoalStartTime returns when the current goal was started.
+func (a *Agent) GetGoalStartTime() time.Time {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.goalStartTime
+}
+
+// formatGoalDuration formats a duration for goal achievement reporting.
+// It shows the raw seconds as well as hours, minutes, and seconds.
+func formatGoalDuration(d time.Duration) string {
+	totalSeconds := int(d.Seconds())
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+
+	if hours > 0 {
+		return fmt.Sprintf("%ds (%dh %dm %ds)", totalSeconds, hours, minutes, seconds)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("%ds (%dm %ds)", totalSeconds, minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", totalSeconds)
 }
 
 // shouldCheckGoal returns true if goal mode is active and a goal is set.
@@ -600,8 +628,13 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		if a.shouldCheckGoal() {
 			// Check if goal was achieved (case-insensitive) in this natural end response
 			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
+				// Calculate elapsed time since goal was started
+				a.mu.Lock()
+				elapsed := time.Since(a.goalStartTime)
+				a.mu.Unlock()
+
 				// Stream goal achieved confirmation to TUI with magenta color
-				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved!%s\n", colors.GetColor("magenta"), colors.GetColor("reset"))
+				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved! Time: %s%s\n", colors.GetColor("magenta"), formatGoalDuration(elapsed), colors.GetColor("reset"))
 				if streamCallback != nil {
 					streamCallback(inference.StreamingChunk{
 						Text:        goalAchievedMsg,
@@ -1367,9 +1400,9 @@ func (a *Agent) DumpContext() (string, error) {
 
 	// Create a dump object with current session state
 	dump := &ContextDump{
-		Version:    1,
-		CreatedAt:  a.stats.StartTime,
-		UpdatedAt:  time.Now(),
+		Version:   1,
+		CreatedAt: a.stats.StartTime,
+		UpdatedAt: time.Now(),
 		Session: SessionInfo{
 			StartTime:        a.stats.StartTime,
 			Iterations:       a.stats.Iterations,

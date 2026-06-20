@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/inference"
@@ -126,7 +127,6 @@ func TestSetGoal_WhitespaceOnly(t *testing.T) {
 		t.Error("Goal should be deactivated after ClearGoal")
 	}
 }
-
 
 func TestGoalMode_IntegrationWithContext(t *testing.T) {
 	cfg := config.DefaultConfig()
@@ -319,3 +319,103 @@ func TestShouldCheckGoal(t *testing.T) {
 	}
 }
 
+// TestSetGoal_ResetsStartTime verifies that SetGoal resets the goal start time.
+func TestSetGoal_ResetsStartTime(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set initial goal
+	agent.SetGoal("First goal")
+	firstStart := agent.GetGoalStartTime()
+
+	// Wait a bit
+	time.Sleep(100 * time.Millisecond)
+
+	// Set a new goal - should reset start time
+	agent.SetGoal("Second goal")
+	secondStart := agent.GetGoalStartTime()
+
+	if firstStart.IsZero() {
+		t.Error("First goal start time should not be zero")
+	}
+	if secondStart.IsZero() {
+		t.Error("Second goal start time should not be zero")
+	}
+	if !secondStart.After(firstStart) {
+		t.Error("Second goal start time should be after first goal start time")
+	}
+}
+
+// TestClearGoal_ResetsStartTime verifies that ClearGoal resets the goal start time.
+func TestClearGoal_ResetsStartTime(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set a goal
+	agent.SetGoal("Test goal")
+	startTime := agent.GetGoalStartTime()
+
+	if startTime.IsZero() {
+		t.Error("Goal start time should not be zero after SetGoal")
+	}
+
+	// Clear the goal
+	agent.ClearGoal()
+
+	// Start time should be reset
+	resetTime := agent.GetGoalStartTime()
+	if !resetTime.IsZero() {
+		t.Errorf("Expected zero start time after ClearGoal, got %v", resetTime)
+	}
+}
+
+// TestSetGoal_EmptyString_ResetsStartTime verifies that setting an empty string
+// resets the goal start time.
+func TestSetGoal_EmptyString_ResetsStartTime(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set a goal
+	agent.SetGoal("Test goal")
+	startTime := agent.GetGoalStartTime()
+
+	if startTime.IsZero() {
+		t.Error("Goal start time should not be zero after SetGoal")
+	}
+
+	// Set empty string (deactivates goal mode)
+	agent.SetGoal("")
+
+	// Start time should be reset
+	resetTime := agent.GetGoalStartTime()
+	if !resetTime.IsZero() {
+		t.Errorf("Expected zero start time after setting empty string, got %v", resetTime)
+	}
+}
+
+// TestFormatGoalDuration tests the formatGoalDuration helper function.
+func TestFormatGoalDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		expected string
+	}{
+		{"zero seconds", 0, "0s"},
+		{"one second", 1 * time.Second, "1s"},
+		{"45 seconds", 45 * time.Second, "45s"},
+		{"one minute", 60 * time.Second, "60s (1m 0s)"},
+		{"two minutes five seconds", 125 * time.Second, "125s (2m 5s)"},
+		{"one hour", 3600 * time.Second, "3600s (1h 0m 0s)"},
+		{"one hour one minute one second", 3661 * time.Second, "3661s (1h 1m 1s)"},
+		{"one hour one minute five seconds", 3665 * time.Second, "3665s (1h 1m 5s)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatGoalDuration(tt.duration)
+			if got != tt.expected {
+				t.Errorf("formatGoalDuration(%v) = %q, want %q", tt.duration, got, tt.expected)
+			}
+		})
+	}
+}

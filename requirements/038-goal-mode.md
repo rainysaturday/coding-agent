@@ -24,6 +24,9 @@ When the goal is achieved, **the goal is automatically reset and removed** so th
 - [x] Goal achieved confirmation message is displayed in the TUI in the special color
 - [x] Goal checking happens transparently without user intervention
 - [x] Goal mode works with both streaming and non-streaming modes
+- [x] When the goal is achieved, the elapsed time since the goal was started is displayed
+- [x] Elapsed time is shown in raw seconds as well as formatted in hours, minutes, and seconds
+- [x] When a new goal is set, the timer resets to zero so each goal is measured individually
 
 ## Goal Checking Algorithm
 
@@ -62,7 +65,7 @@ Agent: [runs tools, writes files, returns response]
 LLM: "I have written the server code. Goal achieved."
 
 # Natural end - contains "goal achieved" - goal is auto-cleared, agent stops
-[Goal Achieved] ✓ Goal has been achieved!
+[Goal Achieved] ✓ Goal has been achieved! Time: 125s (2m 5s)
 ```
 
 #### Flow 2: LLM Verifies Work Before Confirming
@@ -80,6 +83,7 @@ LLM: [Runs tools to verify: read_file, bash to test]
 LLM: [After verifying] "I have verified the code compiles and runs. Goal achieved."
 
 # Natural end - contains "goal achieved" - goal is auto-cleared, agent stops
+[Goal Achieved] ✓ Goal has been achieved! Time: 45s
 ```
 
 #### Flow 3: Goal Not Yet Achieved
@@ -121,6 +125,7 @@ Manually deactivates goal mode at any time (before or after the goal is achieved
 The agent needs to track:
 - `goal string`: The current goal prompt (empty string means goal mode is off)
 - `goalActive bool`: Whether goal mode is currently active
+- `goalStartTime time.Time`: When the current goal was started (used to measure elapsed time)
 
 ### Goal Check Message Format
 When checking the goal, inject a user message like:
@@ -165,6 +170,22 @@ The string "goal achieved" should be matched case-insensitively:
 - "Goal Achieved" ✓
 - "GOAL ACHIEVED" ✓
 - "I have achieved the goal" ✗ (not matched - must contain "goal achieved")
+
+### Goal Timing
+When a goal is set, the agent records the start time. When the goal is achieved, the elapsed time is calculated and displayed in the goal achieved confirmation message.
+
+The elapsed time is formatted to show:
+- Raw seconds (e.g., `125s`)
+- Hours, minutes, and seconds when applicable (e.g., `1h 5m 25s`)
+
+Example output:
+```
+[Goal Achieved] ✓ Goal has been achieved! Time: 125s (2m 5s)
+[Goal Achieved] ✓ Goal has been achieved! Time: 3665s (1h 1m 5s)
+[Goal Achieved] ✓ Goal has been achieved! Time: 45s
+```
+
+**Timer Reset**: When a new goal is set (via `/goal`), the timer resets to zero. This ensures that each goal is measured individually, even within the same session. Clearing the goal (via `/goal-off` or automatic clear on achievement) also resets the timer.
 
 ## Error Handling
 
@@ -226,3 +247,6 @@ The goal messages should be streamed through the existing stream callback mechan
 - [x] Goal mode works in non-streaming mode
 - [x] Goal can be deactivated with /goal-off
 - [x] Case-insensitive matching works correctly
+- [x] Setting a new goal resets the elapsed time timer
+- [x] Elapsed time is displayed when goal is achieved
+- [x] Elapsed time format correctly shows seconds, minutes, and hours
