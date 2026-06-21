@@ -596,4 +596,7 @@ func TestDisplayHelp(t *testing.T) {
 	if !strings.Contains(output, "CODING_AGENT_THEME") {
 		t.Error("Expected 'CODING_AGENT_THEME' in help output")
 	}
+	if !strings.Contains(output, "--goal") {
+		t.Error("Expected '--goal' in help output")
+	}
 }

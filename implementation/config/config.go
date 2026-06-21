@@ -22,6 +22,7 @@ type Config struct {
 	Prompt      string
 	PromptFile  string
 	UseStdin    bool
+	Goal        string
 	ContextFile string // Path to context file for loading (new)
 	ShowHelp    bool
 	ShowVersion bool
@@ -128,6 +129,12 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.Prompt = args[i]
 		case "--stdin":
 			cfg.UseStdin = true
+		case "--goal":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--goal requires an argument")
+			}
+			i++
+			cfg.Goal = args[i]
 		case "--prompt-file":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--prompt-file requires an argument")
@@ -359,6 +366,8 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.ReadOnly = value == "true" || value == "1"
 		case "theme":
 			cfg.Theme = value
+		case "goal":
+			cfg.Goal = value
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
 		}
@@ -451,6 +460,10 @@ func loadEnv(cfg *Config) {
 	// Summary-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_SUMMARY_ONLY"); val != "" {
 		cfg.SummaryOnly = val == "true" || val == "1"
+	}
+	// Goal can be set via environment variable
+	if val := os.Getenv("CODING_AGENT_GOAL"); val != "" {
+		cfg.Goal = val
 	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL

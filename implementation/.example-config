@@ -21,3 +21,4 @@ read_timeout=300
 # Output settings
 verbose=false
 quiet=false
+goal=

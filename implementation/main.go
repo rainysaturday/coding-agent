@@ -80,7 +80,7 @@ func main() {
 	agent.SetBuildVersion(version)
 
 	// Detect run mode
-	if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin {
+	if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin || cfg.Goal != "" {
 		// One-shot mode
 		err = runOneShotMode(cfg)
 		if err != nil {
@@ -124,6 +124,7 @@ func displayHelp() {
 	fmt.Println("Options:")
 	fmt.Println("  -p, --prompt string      Prompt for one-shot mode (non-interactive)")
 	fmt.Println("      --stdin              Read prompt from stdin")
+	fmt.Println("      --goal string        Set a goal for one-shot mode (non-interactive, activates goal mode)")
 	fmt.Println("      --prompt-file path   Read prompt from file")
 	fmt.Println("      --load path           Load conversation context from JSON file")
 	fmt.Println("      --config path        Load configuration from file")
@@ -189,14 +190,22 @@ func displayHelp() {
 }
 
 func runOneShotMode(cfg *config.Config) error {
-	// Load prompt
-	prompt, err := loadPrompt(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to load prompt: %w", err)
-	}
+	var prompt string
+	var err error
 
-	if prompt == "" {
-		return fmt.Errorf("no prompt provided")
+	// If --goal is specified, use it as the prompt and enable goal mode
+	if cfg.Goal != "" {
+		prompt = cfg.Goal
+	} else {
+		// Load prompt from other sources
+		prompt, err = loadPrompt(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to load prompt: %w", err)
+		}
+
+		if prompt == "" {
+			return fmt.Errorf("no prompt provided")
+		}
 	}
 
 	// Initialize agent
@@ -206,6 +215,11 @@ func runOneShotMode(cfg *config.Config) error {
 		if err := ag.LoadContext(cfg.ContextFile); err != nil {
 			return fmt.Errorf("failed to load context: %w", err)
 		}
+	}
+
+	// If --goal is specified, set the goal on the agent
+	if cfg.Goal != "" {
+		ag.SetGoal(cfg.Goal)
 	}
 
 

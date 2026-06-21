@@ -459,3 +459,108 @@ func TestParseArgs_ThemeWithPersonaAndPrompt(t *testing.T) {
 		t.Errorf("Expected persona 'Go expert', got %q", cfg.Persona)
 	}
 }
+
+// ===== Tests for goal configuration =====
+
+func TestParseArgs_GoalFlag(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected string
+	}{
+		{"goal with value", []string{"--goal", "Create a REST API", "-p", "test"}, "Create a REST API"},
+		{"goal empty string", []string{"--goal", "", "-p", "test"}, ""},
+		{"no goal", []string{"-p", "test"}, ""},
+		{"goal with other flags", []string{"--goal", "Build app", "--verbose"}, "Build app"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := ParseArgs(tt.args)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if cfg.Goal != tt.expected {
+				t.Errorf("Expected goal %q, got %q", tt.expected, cfg.Goal)
+			}
+		})
+	}
+}
+
+func TestParseArgs_GoalFlagMissingValue(t *testing.T) {
+	_, err := ParseArgs([]string{"--goal"})
+	if err == nil {
+		t.Error("Expected error when --goal has no value")
+	}
+}
+
+func TestParseArgs_GoalFlagOverridesEnv(t *testing.T) {
+	os.Setenv("CODING_AGENT_GOAL", "Env goal")
+	defer os.Unsetenv("CODING_AGENT_GOAL")
+
+	cfg, err := ParseArgs([]string{"--goal", "Flag goal", "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Goal != "Flag goal" {
+		t.Errorf("Expected flag goal 'Flag goal' to override env 'Env goal', got %q", cfg.Goal)
+	}
+}
+
+func TestParseArgs_GoalFromEnv(t *testing.T) {
+	os.Setenv("CODING_AGENT_GOAL", "Env goal")
+	defer os.Unsetenv("CODING_AGENT_GOAL")
+
+	cfg, err := ParseArgs([]string{"-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Goal != "Env goal" {
+		t.Errorf("Expected goal from env 'Env goal', got %q", cfg.Goal)
+	}
+}
+
+func TestParseArgs_GoalFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.txt")
+	os.WriteFile(configFile, []byte("goal=File goal\n"), 0644)
+
+	cfg, err := ParseArgs([]string{"--config", configFile, "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Goal != "File goal" {
+		t.Errorf("Expected goal from config file 'File goal', got %q", cfg.Goal)
+	}
+}
+
+func TestParseArgs_GoalCLIOverridesConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.txt")
+	os.WriteFile(configFile, []byte("goal=File goal\n"), 0644)
+
+	cfg, err := ParseArgs([]string{"--config", configFile, "--goal", "CLI goal", "-p", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Goal != "CLI goal" {
+		t.Errorf("Expected CLI goal 'CLI goal' to override config file 'File goal', got %q", cfg.Goal)
+	}
+}
+
+func TestParseArgs_GoalWithPersonaAndPrompt(t *testing.T) {
+	cfg, err := ParseArgs([]string{
+		"--goal", "Write tests",
+		"--persona", "Test expert",
+		"-p", "test task",
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Goal != "Write tests" {
+		t.Errorf("Expected goal 'Write tests', got %q", cfg.Goal)
+	}
+	if cfg.Persona != "Test expert" {
+		t.Errorf("Expected persona 'Test expert', got %q", cfg.Persona)
+	}
+}

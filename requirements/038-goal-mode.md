@@ -119,6 +119,20 @@ When the goal is achieved, the goal is **automatically cleared** and the agent r
 ### `/goal-off`
 Manually deactivates goal mode at any time (before or after the goal is achieved).
 
+## CLI Flag
+
+### `--goal <prompt>`
+Activates goal mode with the given prompt in one-shot (non-interactive) mode. Works similarly to `--prompt`:
+- The agent immediately starts working on the goal
+- The goal prompt serves as the first user message
+- Goal checking behavior is identical to `/goal` command
+
+```
+coding-agent --goal "Create a REST API with user authentication"
+```
+
+When combined with other one-shot flags like `--prompt-file` or `--stdin`, `--goal` takes precedence as the prompt text.
+
 ## Implementation Details
 
 ### Agent State
