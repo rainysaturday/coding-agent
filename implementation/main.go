@@ -238,6 +238,7 @@ func runOneShotMode(cfg *config.Config) error {
 	// Run agent with streaming to show LLM responses in real-time
 	startTime := time.Now()
 	transitionedFromReasoning := false
+	lastContentWasToolCall := false
 	result, err := ag.RunStream(ctx, prompt, func(chunk inference.StreamingChunk) {
 		// Stream LLM responses to stdout with appropriate coloring
 		switch chunk.ContentType {
@@ -253,7 +254,18 @@ func runOneShotMode(cfg *config.Config) error {
 				fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				transitionedFromReasoning = true
 			}
-			fmt.Print(chunk.Text)
+			// Handle tool call parameter updates in-place using ANSI cursor positioning,
+			// matching the behavior of interactive mode.
+			if strings.HasPrefix(chunk.Text, "[Tool Call] ") {
+				fmt.Print("\033[2K\r" + chunk.Text)
+				lastContentWasToolCall = true
+			} else {
+				if lastContentWasToolCall {
+					fmt.Print("\n")
+				}
+				fmt.Print(chunk.Text)
+				lastContentWasToolCall = false
+			}
 		}
 	})
 	duration := time.Since(startTime)
