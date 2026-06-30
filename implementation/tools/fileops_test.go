@@ -756,3 +756,145 @@ func TestExecuteReplaceText(t *testing.T) {
 		t.Errorf("Expected success, got error: %v", result.Error)
 	}
 }
+
+func TestExecuteReadFile_TooLarge(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "large.txt")
+	// Create a file larger than 20KB
+	largeContent := make([]byte, 20*1024+1)
+	for i := range largeContent {
+		largeContent[i] = 'a'
+	}
+	os.WriteFile(testFile, largeContent, 0644)
+
+	te := NewToolExecutor()
+	result := te.executeReadFile(map[string]interface{}{
+		"path": testFile,
+	})
+	if result.Success {
+		t.Error("Expected failure for file larger than 20KB")
+	}
+	if !strings.Contains(result.Error, "too large") {
+		t.Errorf("Expected 'too large' error, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Error, "read_lines") {
+		t.Errorf("Expected error to suggest read_lines tool, got: %s", result.Error)
+	}
+}
+
+func TestExecuteReadFile_Binary(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "binary.bin")
+	// Create a binary file with null bytes
+	binaryContent := []byte{0x00, 0x01, 0x02, 0x03, 0x04}
+	os.WriteFile(testFile, binaryContent, 0644)
+
+	te := NewToolExecutor()
+	result := te.executeReadFile(map[string]interface{}{
+		"path": testFile,
+	})
+	if result.Success {
+		t.Error("Expected failure for binary file")
+	}
+	if !strings.Contains(result.Error, "binary") {
+		t.Errorf("Expected 'binary' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteReadFile_BinaryWithText(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "mixed.bin")
+	// Create a file with text but also null bytes
+	mixedContent := []byte("hello world\x00more text")
+	os.WriteFile(testFile, mixedContent, 0644)
+
+	te := NewToolExecutor()
+	result := te.executeReadFile(map[string]interface{}{
+		"path": testFile,
+	})
+	if result.Success {
+		t.Error("Expected failure for binary file with text")
+	}
+	if !strings.Contains(result.Error, "binary") {
+		t.Errorf("Expected 'binary' error, got: %s", result.Error)
+	}
+}
+
+func TestExecuteReadFile_JustUnderLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "small.txt")
+	// Create a file just under 20KB
+	content := make([]byte, 20*1024)
+	for i := range content {
+		content[i] = 'a'
+	}
+	os.WriteFile(testFile, content, 0644)
+
+	te := NewToolExecutor()
+	result := te.executeReadFile(map[string]interface{}{
+		"path": testFile,
+	})
+	if !result.Success {
+		t.Errorf("Expected success for file just under 20KB limit, got: %s", result.Error)
+	}
+}
+
+func TestExecuteReadFile_ExactlyAtLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "exact.txt")
+	// Create a file exactly 20KB
+	content := make([]byte, 20*1024)
+	for i := range content {
+		content[i] = 'a'
+	}
+	os.WriteFile(testFile, content, 0644)
+
+	te := NewToolExecutor()
+	result := te.executeReadFile(map[string]interface{}{
+		"path": testFile,
+	})
+	if !result.Success {
+		t.Errorf("Expected success for file exactly at 20KB limit, got: %s", result.Error)
+	}
+}
+
+func TestIsBinaryFile_NonExistent(t *testing.T) {
+	result := isBinaryFile("/nonexistent/file.bin")
+	if result {
+		t.Error("Expected false for non-existent file")
+	}
+}
+
+func TestIsBinaryFile_EmptyFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "empty.bin")
+	os.WriteFile(testFile, []byte{}, 0644)
+
+	result := isBinaryFile(testFile)
+	if result {
+		t.Error("Expected false for empty file")
+	}
+}
+
+func TestFormatFileSize(t *testing.T) {
+	tests := []struct {
+		bytes    int64
+		expected string
+	}{
+		{0, "0 bytes"},
+		{512, "512 bytes"},
+		{1024, "1 KB"},
+		{2048, "2 KB"},
+		{1024 * 1024, "1 MB"},
+		{1024 * 1024 * 2, "2 MB"},
+		{20 * 1024, "20 KB"},
+	}
+
+	for _, test := range tests {
+		result := formatFileSize(test.bytes)
+		if result != test.expected {
+			t.Errorf("formatFileSize(%d) = %s, expected %s", test.bytes, result, test.expected)
+		}
+	}
+}
+

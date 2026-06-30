@@ -58,6 +58,30 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 		}
 	}
 
+	// Check file size before reading
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   formatFileError(err, path),
+		}
+	}
+
+	if fileInfo.Size() > maxReadFileSize {
+		return &ToolResult{
+			Success: false,
+			Error:   formatReadFileTooLargeError(path, fileInfo.Size()),
+		}
+	}
+
+	// Check if file is binary
+	if isBinaryFile(path) {
+		return &ToolResult{
+			Success: false,
+			Error:   formatReadFileBinaryError(path),
+		}
+	}
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return &ToolResult{
