@@ -186,9 +186,6 @@ func (a *Agent) SetStreamCallback(callback StreamCallback) {
 	a.mu.Unlock()
 }
 
-// recordIteration takes a snapshot of the current context (system prompt + messages)
-// and adds it to the iteration history.
-
 // SetContextSizeCallback sets the callback function for context size updates.
 func (a *Agent) SetContextSizeCallback(callback ContextSizeCallback) {
 	a.mu.Lock()
@@ -721,10 +718,7 @@ func (a *Agent) GetStats() *Stats {
 	}
 }
 
-// ClearContext clears the conversation context.
-
-// buildTools builds the tool definitions for the OpenAI API.
-// It returns the path to the created file or an error if dumping fails.
+// DumpContext dumps the current context to a JSON file.
 func (a *Agent) DumpContext() (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

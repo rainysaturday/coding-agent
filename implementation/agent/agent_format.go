@@ -64,6 +64,12 @@ func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
 			path = p
 		}
 		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+	case "move_text":
+		srcPath := ""
+		if p, ok := tc.Parameters["source_path"].(string); ok {
+			srcPath = p
+		}
+		msg = fmt.Sprintf("\n%s[MoveText] %s%s\n", colors.GetColor("cyan"), srcPath, colors.GetColor("reset"))
 	default:
 		if paramsStr != "" {
 			msg = fmt.Sprintf("\n%s[Tool: %s] (%s)%s\n", colors.GetColor("cyan"), tc.Name, paramsStr, colors.GetColor("reset"))
@@ -181,6 +187,12 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 			}
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
+	case "move_text":
+		srcPath := ""
+		if p, ok := params["source_path"].(string); ok {
+			srcPath = p
+		}
+		msg = fmt.Sprintf("\n%s[MovingText] from: %s%s\n", colors.GetColor("cyan"), srcPath, colors.GetColor("reset"))
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", colors.GetColor("cyan"), toolName, colors.GetColor("reset"))
 	}
@@ -263,6 +275,10 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "replace_text":
 			// Show the full output including search, replace, count, and preview
+			output := result.Output
+			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
+		case "move_text":
+			// Show the move_text result
 			output := result.Output
 			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "list_files":

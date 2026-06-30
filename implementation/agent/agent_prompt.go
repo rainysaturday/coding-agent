@@ -115,8 +115,18 @@ AVAILABLE TOOLS:
      - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
    How to call: Use replace_text when you know the text to find but not the line numbers.
    Example use case: Renaming variables, updating function names, fixing typos throughout a file
+7. move_text
+   Description: Move a block of text from one location to another. Extracts lines from a source file and inserts them at a target location (same file or different file). Automatically creates target file and directories if needed.
+   Parameters:
+     - source_path (string, required): Path to the source file to extract lines from
+     - source_start (integer, required): Starting line number in source file (1-indexed)
+     - source_end (integer, required): Ending line number in source file (1-indexed, inclusive)
+     - target_path (string, required): Path to the target file to insert lines into
+     - target_line (integer, required): Line number in target file to insert before (1-indexed)
+   How to call: Use move_text to move code blocks or text between files or within the same file.
+   Example use case: Moving a function from one file to another, reorganizing code sections
 
-7. view_image
+8. view_image
     Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
     Parameters:
       - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
@@ -125,7 +135,7 @@ AVAILABLE TOOLS:
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
     Example use case: "What does this screenshot show?", "Read the text in this diagram"
 
-8. todo
+9. todo
     Description: Manage a personal task list for tracking work-in-progress during development
     Parameters:
       - action (string, required): The action to perform (add, complete, remove, or list)
