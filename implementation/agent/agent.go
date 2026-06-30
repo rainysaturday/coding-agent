@@ -42,6 +42,8 @@ type Agent struct {
 	goal                string    // Current goal prompt (empty string means goal mode is off)
 	goalActive          bool      // Whether goal mode is currently active
 	goalStartTime       time.Time // When the current goal was started (for timing)
+	goalInputTokens     int       // Input tokens used during the current goal
+	goalOutputTokens    int       // Output tokens used during the current goal
 	debugLogger         *debug.DebugLogger
 	mu                  sync.Mutex
 	// lastTotalTokens is the exact total_tokens from the last API response.
@@ -240,6 +242,8 @@ func (a *Agent) SetGoal(goal string) {
 	a.goal = goal
 	a.goalActive = true
 	a.goalStartTime = time.Now()
+	a.goalInputTokens = 0
+	a.goalOutputTokens = 0
 }
 
 // ClearGoal deactivates goal mode.
@@ -249,6 +253,8 @@ func (a *Agent) ClearGoal() {
 	a.goalActive = false
 	a.goal = ""
 	a.goalStartTime = time.Time{}
+	a.goalInputTokens = 0
+	a.goalOutputTokens = 0
 }
 
 // IsGoalActive returns whether goal mode is currently active.
@@ -401,11 +407,21 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			// Use actual API input/output token counts
 			a.stats.InputTokens += response.InputTokens
 			a.stats.OutputTokens += response.OutputTokens
+			// Track goal-specific tokens
+			if a.goalActive {
+				a.goalInputTokens += response.InputTokens
+				a.goalOutputTokens += response.OutputTokens
+			}
 		} else if response.TokenUsage > 0 {
 			// API didn't split input/output — use total token count from API
 			// TokenUsage comes from total_tokens or predicted_n (both from the API)
 			a.stats.InputTokens += response.TokenUsage / 2
 			a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
+			// Track goal-specific tokens
+			if a.goalActive {
+				a.goalInputTokens += response.TokenUsage / 2
+				a.goalOutputTokens += response.TokenUsage - response.TokenUsage/2
+			}
 		}
 
 		// Store total_tokens as the authoritative baseline for context size.
@@ -525,6 +541,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Calculate elapsed time since goal was started
 				a.mu.Lock()
 				elapsed := time.Since(a.goalStartTime)
+				goalInputTokens := a.goalInputTokens
+				goalOutputTokens := a.goalOutputTokens
 				a.mu.Unlock()
 
 				// Stream goal achieved confirmation to TUI with magenta color
@@ -536,6 +554,17 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					})
 				} else {
 					fmt.Print(goalAchievedMsg)
+				}
+
+				// Print goal token usage
+				goalTokenMsg := fmt.Sprintf("%s[Goal Tokens] Input: %d, Output: %d, Total: %d%s\n", colors.GetColor("magenta"), goalInputTokens, goalOutputTokens, goalInputTokens+goalOutputTokens, colors.GetColor("reset"))
+				if streamCallback != nil {
+					streamCallback(inference.StreamingChunk{
+						Text:        goalTokenMsg,
+						ContentType: inference.StreamingContentTypeGoal,
+					})
+				} else {
+					fmt.Print(goalTokenMsg)
 				}
 
 				// Goal achieved - automatically clear the goal and return the result

@@ -419,3 +419,54 @@ func TestFormatGoalDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestSetGoal_ResetsTokenCounters verifies that SetGoal resets goal token counters.
+func TestSetGoal_ResetsTokenCounters(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set first goal
+	agent.SetGoal("First goal")
+	agent.mu.Lock()
+	agent.goalInputTokens = 100
+	agent.goalOutputTokens = 200
+	agent.mu.Unlock()
+
+	// Set second goal - should reset token counters
+	agent.SetGoal("Second goal")
+
+	agent.mu.Lock()
+	if agent.goalInputTokens != 0 {
+		t.Errorf("Expected goalInputTokens to be 0 after SetGoal, got %d", agent.goalInputTokens)
+	}
+	if agent.goalOutputTokens != 0 {
+		t.Errorf("Expected goalOutputTokens to be 0 after SetGoal, got %d", agent.goalOutputTokens)
+	}
+	agent.mu.Unlock()
+}
+
+// TestClearGoal_ResetsTokenCounters verifies that ClearGoal resets goal token counters.
+func TestClearGoal_ResetsTokenCounters(t *testing.T) {
+	cfg := config.DefaultConfig()
+	agent := NewAgent(cfg)
+
+	// Set a goal
+	agent.SetGoal("Test goal")
+	agent.mu.Lock()
+	agent.goalInputTokens = 100
+	agent.goalOutputTokens = 200
+	agent.mu.Unlock()
+
+	// Clear the goal
+	agent.ClearGoal()
+
+	// Token counters should be reset
+	agent.mu.Lock()
+	if agent.goalInputTokens != 0 {
+		t.Errorf("Expected goalInputTokens to be 0 after ClearGoal, got %d", agent.goalInputTokens)
+	}
+	if agent.goalOutputTokens != 0 {
+		t.Errorf("Expected goalOutputTokens to be 0 after ClearGoal, got %d", agent.goalOutputTokens)
+	}
+	agent.mu.Unlock()
+}
