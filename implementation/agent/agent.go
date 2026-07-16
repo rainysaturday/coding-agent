@@ -489,9 +489,6 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				streamResult(tc.Name, result, a.streamCallback)
 				step.StreamMsg = formatToolStatus(tc.Name, result)
 
-				// Add step to the list
-				steps = append(steps, step)
-
 				// Add tool result to context with tool_call_id (OpenAI format)
 				var resultMessage string
 				if result.Success {
@@ -499,7 +496,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 					if tc.Name == "view_image" {
 						visionResult := a.handleViewImage(ctx, result)
 						resultMessage = visionResult
-						// Update step with vision result
+						// Update step output before appending to steps (avoid post-append mutation)
 						step.ToolResult.Output = visionResult
 					} else {
 						// Use full output for LLM context (not truncated)
@@ -508,6 +505,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				} else {
 					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, result.Error)
 				}
+
+				// Add step to the list (output is already finalized)
+				steps = append(steps, step)
 
 				a.mu.Lock()
 				resultIdx := len(a.context)

@@ -163,9 +163,26 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	// Messages to summarize: everything between first user msg and last N preserved messages
 	summaryMessages := messages[1 : len(messages)-preserveCount]
 
+	// Filter summary messages to remove orphaned tool results (tool messages without
+	// a preceding assistant message that made the tool call). These can occur if the
+	// boundary falls within a tool call sequence, and including them would confuse
+	// the summarizer since they have no context.
+	var filteredSummary []*inference.Message
+	lastNonToolRole := ""
+	for _, msg := range summaryMessages {
+		if msg.Role == "tool" && lastNonToolRole != "assistant" {
+			// Orphaned tool result — skip it
+			continue
+		}
+		filteredSummary = append(filteredSummary, msg)
+		if msg.Role != "tool" {
+			lastNonToolRole = msg.Role
+		}
+	}
+
 	// Build summary prompt
 	summaryReq := fmt.Sprintf("Summarize the following conversation history concisely, preserving key information, decisions, and results:\n\n")
-	for _, msg := range summaryMessages {
+	for _, msg := range filteredSummary {
 		summaryReq += fmt.Sprintf("%s: %s\n\n", msg.Role, msg.Content)
 	}
 	summaryReq += "\nProvide a concise summary that captures all essential information."

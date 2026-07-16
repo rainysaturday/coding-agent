@@ -9,67 +9,55 @@ import (
 	"github.com/coding-agent/harness/tools"
 )
 
+// getToolParamStr extracts a string parameter from tool params map.
+func getToolParamStr(key string, params map[string]interface{}) string {
+	if p, ok := params[key].(string); ok {
+		return p
+	}
+	return ""
+}
+
+// getToolParamInt extracts an int parameter from tool params map (stored as float64 from JSON).
+func getToolParamInt(key string, params map[string]interface{}) int {
+	if p, ok := params[key].(float64); ok {
+		return int(p)
+	}
+	return 0
+}
+
 // streamToolCallWithFullParams streams the full tool call with complete parameters.
 // This is called when a tool is about to be executed, showing the full command/parameters
 // (not truncated like during streaming display).
 func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
 	var msg string
+	params := tc.Parameters
 
 	// Format the full parameters for display
 	var paramsStr string
-	if len(tc.Parameters) > 0 {
-		paramsStr = formatFullToolParams(tc.Parameters)
+	if len(params) > 0 {
+		paramsStr = formatFullToolParams(params)
 	}
 
 	switch tc.Name {
 	case "bash":
-		cmd := ""
-		if p, ok := tc.Parameters["command"].(string); ok {
-			cmd = p
-		}
-		if cmd != "" && paramsStr != "" {
-			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
-		} else if cmd != "" {
+		cmd := getToolParamStr("command", params)
+		if cmd != "" {
 			msg = fmt.Sprintf("\n%s[Bash] %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
 		} else if paramsStr != "" {
 			msg = fmt.Sprintf("\n%s[Bash] (%s)%s\n", colors.GetColor("cyan"), paramsStr, colors.GetColor("reset"))
 		}
 	case "read_file":
-		path := ""
-		if p, ok := tc.Parameters["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "read_lines":
-		path := ""
-		if p, ok := tc.Parameters["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Read] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "write_file":
-		path := ""
-		if p, ok := tc.Parameters["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Write] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Write] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "insert_lines":
-		path := ""
-		if p, ok := tc.Parameters["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "replace_text":
-		path := ""
-		if p, ok := tc.Parameters["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "move_text":
-		srcPath := ""
-		if p, ok := tc.Parameters["source_path"].(string); ok {
-			srcPath = p
-		}
-		msg = fmt.Sprintf("\n%s[MoveText] %s%s\n", colors.GetColor("cyan"), srcPath, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[MoveText] %s%s\n", colors.GetColor("cyan"), getToolParamStr("source_path", params), colors.GetColor("reset"))
 	default:
 		if paramsStr != "" {
 			msg = fmt.Sprintf("\n%s[Tool: %s] (%s)%s\n", colors.GetColor("cyan"), tc.Name, paramsStr, colors.GetColor("reset"))
@@ -134,65 +122,29 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 	var msg string
 	switch toolName {
 	case "bash":
-		cmd := ""
-		if p, ok := params["command"].(string); ok {
-			cmd = p
-		}
-		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", colors.GetColor("cyan"), cmd, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Running] bash: %s%s\n", colors.GetColor("cyan"), getToolParamStr("command", params), colors.GetColor("reset"))
 	case "read_file":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Reading] file: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Reading] file: %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "read_lines":
-		path := ""
-		start, end := 0, 0
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		if p, ok := params["start"].(float64); ok {
-			start = int(p)
-		}
-		if p, ok := params["end"].(float64); ok {
-			end = int(p)
-		}
+		path := getToolParamStr("path", params)
+		start := getToolParamInt("start", params)
+		end := getToolParamInt("end", params)
 		msg = fmt.Sprintf("\n%s[Reading] lines %d-%d from: %s%s\n", colors.GetColor("cyan"), start, end, path, colors.GetColor("reset"))
 	case "write_file":
-		path := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		msg = fmt.Sprintf("\n%s[Writing] file: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[Writing] file: %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "insert_lines":
-		path := ""
-		line := 0
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		if p, ok := params["line"].(float64); ok {
-			line = int(p)
-		}
+		path := getToolParamStr("path", params)
+		line := getToolParamInt("line", params)
 		msg = fmt.Sprintf("\n%s[Inserting] at line %d in: %s%s\n", colors.GetColor("cyan"), line, path, colors.GetColor("reset"))
 	case "replace_text":
-		path := ""
-		search := ""
-		if p, ok := params["path"].(string); ok {
-			path = p
-		}
-		if p, ok := params["search"].(string); ok {
-			search = p
-			if len(search) > 30 {
-				search = search[:30] + "..."
-			}
+		path := getToolParamStr("path", params)
+		search := getToolParamStr("search", params)
+		if len(search) > 30 {
+			search = search[:30] + "..."
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
 	case "move_text":
-		srcPath := ""
-		if p, ok := params["source_path"].(string); ok {
-			srcPath = p
-		}
-		msg = fmt.Sprintf("\n%s[MovingText] from: %s%s\n", colors.GetColor("cyan"), srcPath, colors.GetColor("reset"))
+		msg = fmt.Sprintf("\n%s[MovingText] from: %s%s\n", colors.GetColor("cyan"), getToolParamStr("source_path", params), colors.GetColor("reset"))
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", colors.GetColor("cyan"), toolName, colors.GetColor("reset"))
 	}

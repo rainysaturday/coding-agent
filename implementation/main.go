@@ -522,6 +522,12 @@ func runInteractiveMode(cfg *config.Config) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		for range sigChan {
+	// Ensure cleanup when interactive mode exits (defer after goroutine start)
+	defer func() {
+		signal.Stop(sigChan)
+		// Don't close sigChan here - it may already be closed in the main loop error path.
+		// Closing twice would panic. The goroutine will exit via process termination.
+	}()
 			promptMu.Lock()
 			isPrompting := atPrompt
 			promptMu.Unlock()

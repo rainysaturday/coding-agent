@@ -178,60 +178,100 @@ func extractSummary(output string) string {
 		return "(No output from subagent)"
 	}
 
-	// Try to extract the "Final Output" section if present
-	if idx := strings.Index(output, "=== Final Output ==="); idx != -1 {
-		// Find the text after "=== Final Output ==="
-		summaryStart := idx + len("=== Final Output ===")
-		summary := strings.TrimSpace(output[summaryStart:])
-		if summary != "" {
-			return summary
-		}
+	// Strategy 1: Try to extract text after known section markers.
+	// These markers appear in various output formats (summary-only, verbose, etc.).
+	// Check in order of specificity (more specific markers first).
+	type sectionMarker struct {
+		marker   string
+		minLines int // minimum non-empty lines required after marker
+	}
+	markers := []sectionMarker{
+		{marker: "=== Final Output ===", minLines: 1},
+		{marker: "[Final Output]", minLines: 1},
+		{marker: "[Summary]", minLines: 1},
+		{marker: "[Result]", minLines: 1},
+		{marker: "[Output]", minLines: 1},
+		{marker: "## Summary", minLines: 2},
+		{marker: "Summary:", minLines: 2},
+		{marker: "Conclusion:", minLines: 2},
 	}
 
-	// Try to extract text after "[Final Output]" or "[Result]" markers
-	for _, marker := range []string{"[Final Output]", "[Result]", "[Output]"} {
-		if idx := strings.Index(output, marker); idx != -1 {
-			summary := strings.TrimSpace(output[idx+len(marker):])
-			if summary != "" && len(summary) < 10000 {
+	// Try markers first — these give the most precise extraction
+	for _, sm := range markers {
+		if idx := strings.Index(output, sm.marker); idx != -1 {
+			after := output[idx+len(sm.marker):]
+			summary := strings.TrimSpace(after)
+
+			// Count non-empty lines to verify this is a real section, not a false match
+			lines := strings.Split(summary, "\n")
+			nonEmpty := 0
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					nonEmpty++
+				}
+			}
+
+			if nonEmpty >= sm.minLines && len(summary) < 10000 {
 				return summary
 			}
 		}
 	}
 
-	// Look for the last substantial text block (after any tool output)
-	// This handles the case where the output has multiple sections
+	// Strategy 2: Look for the last substantial paragraph (multiple lines).
+	// This handles output without explicit markers.
 	lines := strings.Split(output, "\n")
 
-	// Find the last non-empty line that's not a separator or header
-	var lastSignificantLine string
+	// Find the last significant paragraph — defined as a block of 3+ related lines
+	// that are not separators, headers, or tool output artifacts.
+	var lastParagraph []string
+	currentBlock := make([]string, 0, 10)
+
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		// Skip separator lines
-		if strings.HasPrefix(line, "===") || strings.HasPrefix(line, "---") {
-			continue
-		}
-		// Skip short lines that are likely headers
-		if len(line) < 10 {
-			continue
-		}
-		lastSignificantLine = line
-		break
-	}
 
-	// If we found a significant line, return everything from that line backward
-	if lastSignificantLine != "" {
-		for i, line := range lines {
-			if strings.TrimSpace(line) == lastSignificantLine {
-				return strings.Join(lines[i:], "\n")
+		// Skip empty lines and separators
+		if line == "" || strings.HasPrefix(line, "===") || strings.HasPrefix(line, "---") {
+			if len(currentBlock) >= 3 {
+				// Found a substantial block, save it
+				lastParagraph = append(lastParagraph, currentBlock...)
+				currentBlock = make([]string, 0, 10)
+			} else {
+				currentBlock = make([]string, 0, 10)
 			}
+			continue
+		}
+
+		// Skip very short lines (likely headers or artifacts)
+		if len(line) < 5 {
+			if len(currentBlock) >= 3 {
+				lastParagraph = append(lastParagraph, currentBlock...)
+				currentBlock = make([]string, 0, 10)
+			} else {
+				currentBlock = make([]string, 0, 10)
+			}
+			continue
+		}
+
+		currentBlock = append(currentBlock, line)
+	}
+
+	// Check the last accumulated block
+	if len(currentBlock) >= 3 {
+		lastParagraph = append(lastParagraph, currentBlock...)
+	}
+
+	if len(lastParagraph) > 0 {
+		// Reverse the block (since we collected backwards) and join
+		for i, j := 0, len(lastParagraph)-1; i < j; i, j = i+1, j-1 {
+			lastParagraph[i], lastParagraph[j] = lastParagraph[j], lastParagraph[i]
+		}
+		result := strings.Join(lastParagraph, "\n")
+		if len(result) < 10000 {
+			return result
 		}
 	}
 
-	// Fall back to the raw output (trimmed)
-	// But limit the length to avoid overwhelming the main agent
+	// Strategy 3: Fall back to the raw output (trimmed) with length limit.
 	if len(output) > 5000 {
 		return output[:5000] + "\n... [output truncated]"
 	}
