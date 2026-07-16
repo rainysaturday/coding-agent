@@ -3,7 +3,7 @@ package agent
 import "github.com/coding-agent/harness/inference"
 
 // buildTools builds the tool definitions for the OpenAI API.
-// When readOnly is true, only read-only tools (read_file, read_lines, list_files, grep, git_log, git_show, git_diff) are returned.
+// When readOnly is true, only read-only tools (read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, todo) are returned.
 // When experimental is false, the subagent tool is not included.
 func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 	if readOnly {
@@ -22,6 +22,10 @@ func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
 						"command": {
 							Type:        "string",
 							Description: "The bash command to execute",
+						},
+						"timeout": {
+							Type:        "integer",
+							Description: "Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.",
 						},
 					},
 					Required: []string{"command"},
@@ -446,6 +450,31 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 						},
 					},
 					Required: []string{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "todo",
+				Description: "Manage a personal task list for tracking work-in-progress during development",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "The action to perform: add, complete, remove, or list",
+						},
+						"id": {
+							Type:        "integer",
+							Description: "The ID of the todo item (required for complete, remove; not for add or list)",
+						},
+						"description": {
+							Type:        "string",
+							Description: "The description of the todo item (required for add; not for complete, remove, or list)",
+						},
+					},
+					Required: []string{"action"},
 				},
 			},
 		},

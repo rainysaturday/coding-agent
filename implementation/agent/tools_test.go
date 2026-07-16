@@ -247,8 +247,8 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true, false)
 
-	// In read-only mode, should only have read_file, read_lines, list_files, grep, git_log, git_show, git_diff, and view_image
-	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image"}
+	// In read-only mode, should have: read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo
+	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))

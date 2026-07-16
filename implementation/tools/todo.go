@@ -5,6 +5,7 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // TodoItem represents a single todo item in the task list.
@@ -18,6 +19,7 @@ type TodoItem struct {
 type TodoStore struct {
 	items  []*TodoItem
 	nextID int
+	mu     sync.Mutex
 }
 
 // NewTodoStore creates a new empty todo store.
@@ -31,6 +33,8 @@ func NewTodoStore() *TodoStore {
 // Add creates a new todo item with the given description.
 // Returns the ID of the newly created item.
 func (ts *TodoStore) Add(description string) int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	item := &TodoItem{
 		ID:          ts.nextID,
 		Description: description,
@@ -45,6 +49,8 @@ func (ts *TodoStore) Add(description string) int {
 // Complete marks a todo item as done by ID.
 // Returns the completed item, or nil if not found.
 func (ts *TodoStore) Complete(id int) *TodoItem {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	for _, item := range ts.items {
 		if item.ID == id {
 			item.Completed = true
@@ -57,6 +63,8 @@ func (ts *TodoStore) Complete(id int) *TodoItem {
 // Remove deletes a todo item by ID.
 // Returns the removed item, or nil if not found.
 func (ts *TodoStore) Remove(id int) *TodoItem {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	for i, item := range ts.items {
 		if item.ID == id {
 			ts.items = append(ts.items[:i], ts.items[i+1:]...)
@@ -68,11 +76,15 @@ func (ts *TodoStore) Remove(id int) *TodoItem {
 
 // List returns all todo items.
 func (ts *TodoStore) List() []*TodoItem {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	return ts.items
 }
 
 // CountPending returns the number of non-completed items.
 func (ts *TodoStore) CountPending() int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	count := 0
 	for _, item := range ts.items {
 		if !item.Completed {
@@ -84,6 +96,8 @@ func (ts *TodoStore) CountPending() int {
 
 // CountCompleted returns the number of completed items.
 func (ts *TodoStore) CountCompleted() int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
 	count := 0
 	for _, item := range ts.items {
 		if item.Completed {

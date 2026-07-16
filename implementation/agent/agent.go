@@ -432,7 +432,7 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		a.toolResultMsgsSinceLastAPI = make(map[int]bool)
 
 		// Report context size to TUI with real token count (while holding lock)
-		a.reportContextSize(a.contextSizeCallback, a.maxContextSize)
+		a.reportContextSize(a.contextSizeCallback, a.getActualContextSizeUnlocked(), a.maxContextSize)
 		a.mu.Unlock()
 
 		// Log assistant response if debug is enabled

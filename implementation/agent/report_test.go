@@ -14,10 +14,10 @@ func TestReportContextSize_CallbackCalled(t *testing.T) {
 	agent.reportContextSize(func(size, max int) {
 		receivedSize = size
 		receivedMax = max
-	}, cfg.ContextSize)
+	}, 100, cfg.ContextSize)
 
-	if receivedSize <= 0 {
-		t.Errorf("Expected positive size, got %d", receivedSize)
+	if receivedSize != 100 {
+		t.Errorf("Expected size 100, got %d", receivedSize)
 	}
 	if receivedMax != cfg.ContextSize {
 		t.Errorf("Expected max %d, got %d", cfg.ContextSize, receivedMax)
@@ -29,7 +29,7 @@ func TestReportContextSize_NilCallback(t *testing.T) {
 	agent := NewAgent(cfg)
 
 	// Should not panic with nil callback
-	agent.reportContextSize(nil, cfg.ContextSize)
+	agent.reportContextSize(nil, 0, cfg.ContextSize)
 }
 
 func TestReportContextSize_ZeroMax(t *testing.T) {
@@ -40,7 +40,7 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 	agent.reportContextSize(func(size, max int) {
 		_ = size
 		receivedMax = max
-	}, 0)
+	}, 50, 0)
 
 	if receivedMax != 0 {
 		t.Errorf("Expected max 0, got %d", receivedMax)

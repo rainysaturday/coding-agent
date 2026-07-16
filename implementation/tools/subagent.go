@@ -42,6 +42,7 @@ func streamSubagentResult(result *ToolResult, callback func(chunk interface{})) 
 
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.
+// Configuration is inherited from the parent process via environment variables and CLI flags.
 func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResult {
 	prompt, ok := params["prompt"].(string)
 	if !ok || prompt == "" {
@@ -61,9 +62,6 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 		binaryPath = getExecutablePath()
 	}
 
-	// Determine if we're in read-only mode by checking the environment
-	readOnly := os.Getenv("CODING_AGENT_READ_ONLY") == "true"
-
 	// Build the command to run the subagent
 	// We use --summary-only to get just the conclusion
 	args := []string{
@@ -78,12 +76,29 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 		args = append(args, "--persona", persona)
 	}
 
-	// Add read-only flag if needed
-	if readOnly {
+	// Inherit configuration from parent process via environment variables.
+	// These are set by the parent and will be inherited by the subprocess automatically.
+	// For CLI flags that are not environment-backed, we pass them explicitly.
+
+	// Read-only mode: check environment variable
+	if os.Getenv("CODING_AGENT_READ_ONLY") == "true" {
 		args = append(args, "--read-only")
 	}
 
-	// Build the command
+	// Experimental mode: check environment variable
+	if os.Getenv("CODING_AGENT_EXPERIMENTAL") == "true" {
+		args = append(args, "--experimental")
+	}
+
+	// Theme: pass explicitly if set via env var (CLI flag override is harder to detect,
+	// but the env var is inherited by the subprocess automatically)
+	if theme := os.Getenv("CODING_AGENT_THEME"); theme != "" {
+		args = append(args, "--theme", theme)
+	}
+
+	// Debug settings are inherited via environment variables automatically
+
+	// Build the command with inherited environment
 	cmd := exec.Command(binaryPath, args...)
 
 	// Set working directory to current directory

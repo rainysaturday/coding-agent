@@ -68,6 +68,7 @@ AVAILABLE TOOLS:
    Description: Execute a bash command in the terminal
    Parameters:
      - command (string, required): The bash command to execute
+     - timeout (integer, optional): Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.
    How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
    Example use case: "ls -la", "cat file.txt", "npm install", "pip install -r requirements.txt"
 
@@ -229,7 +230,7 @@ AVAILABLE TOOLS:
     Parameters:
       - path (string, optional): Path to search (defaults to current directory if not specified)
       - pattern (string, required): Pattern to search for (supports regex)
-      - flags (array, optional): List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive)
+      - flags (array, optional): List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive, '-f' for pattern file, '-a' for all including hidden, '-c' for count, '-v' for invert match, '-l' for filenames only)
     How to call: Use grep to find specific patterns or text within files.
     Example use case: Finding where a function is defined, searching for error messages, locating configuration values
 
@@ -267,6 +268,7 @@ AVAILABLE TOOLS:
     Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
     Parameters:
       - path (string, required): Path to the image file to view
+      - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
     Supported formats: PNG, JPEG, WEBP, GIF
     How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
     Example use case: "What does this screenshot show?", "Read the text in this diagram"

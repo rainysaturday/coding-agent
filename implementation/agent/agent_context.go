@@ -8,12 +8,11 @@ import (
 	"github.com/coding-agent/harness/inference"
 )
 
-// reportContextSize calculates and reports the current actual context size.
-// It calls the unlocked version directly since it is always called while
-// the caller already holds a.mu. This avoids deadlocking.
-func (a *Agent) reportContextSize(callback ContextSizeCallback, maxContextSize int) {
+// reportContextSize reports the current actual context size to the TUI callback.
+// The actualSize parameter should be pre-computed by the caller (with lock held
+// if accuracy is critical). This function only handles the callback dispatch.
+func (a *Agent) reportContextSize(callback ContextSizeCallback, actualSize int, maxContextSize int) {
 	if callback != nil {
-		actualSize := a.getActualContextSizeUnlocked()
 		callback(actualSize, maxContextSize)
 	}
 }

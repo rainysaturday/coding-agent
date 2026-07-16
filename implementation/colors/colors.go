@@ -1,7 +1,10 @@
 // Package colors provides ANSI color constants shared across the codebase.
 package colors
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ANSI color codes (default/dark theme — used as fallback before any theme is applied)
 const (
@@ -31,7 +34,7 @@ func SetTheme(name string) error {
 		for n := range BuiltInThemes {
 			names = append(names, n)
 		}
-		return fmt.Errorf("invalid theme %q: valid themes are: %s", name, joinThemeNames(names))
+		return fmt.Errorf("invalid theme %q: valid themes are: %s", name, strings.Join(names, ", "))
 	}
 	currentTheme = &theme
 	return nil
@@ -104,14 +107,7 @@ func GetColor(slot string) string {
 }
 
 func joinThemeNames(names []string) string {
-	result := ""
-	for i, n := range names {
-		if i > 0 {
-			result += ", "
-		}
-		result += n
-	}
-	return result
+	return strings.Join(names, ", ")
 }
 
 // ListThemes returns the names of all built-in themes.

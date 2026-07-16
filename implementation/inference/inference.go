@@ -1122,11 +1122,16 @@ func formatToolCallArgs(params map[string]interface{}, maxArgWidth int) string {
 	// truncate and indicate truncation
 	if maxArgWidth > 0 && len(result) > maxArgWidth {
 		// Truncate to max width minus space for "..." suffix
+		// Use rune-aware slicing to avoid splitting multi-byte characters
 		truncLimit := maxArgWidth - 4
 		if truncLimit < 10 {
 			truncLimit = 10
 		}
-		return result[:truncLimit] + "..."
+		runes := []rune(result)
+		if truncLimit > len(runes) {
+			truncLimit = len(runes)
+		}
+		return string(runes[:truncLimit]) + "..."
 	}
 
 	return result

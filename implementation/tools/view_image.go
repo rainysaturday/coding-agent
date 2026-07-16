@@ -138,36 +138,27 @@ func GetViewImageExtra(result *ToolResult) *ViewImageExtra {
 		return nil
 	}
 
-	extra, ok := result.Extra["view_image_extra"]
-	if !ok {
-		// Try direct access to the fields
-		dataURI, _ := result.Extra["data_uri"].(string)
-		mimeType, _ := result.Extra["mime_type"].(string)
-		var size int
-		switch v := result.Extra["size"].(type) {
-		case int:
-			size = v
-		case float64:
-			size = int(v)
-		}
-		var prompt string
-		if p, ok := result.Extra["prompt"].(string); ok {
-			prompt = p
-		}
-		if dataURI != "" {
-			return &ViewImageExtra{
-				DataURI:  dataURI,
-				MIMEType: mimeType,
-				Size:     size,
-				Prompt:   prompt,
-			}
-		}
-		return nil
+	// Direct access to the fields (view_image_extra key is never used)
+	dataURI, _ := result.Extra["data_uri"].(string)
+	mimeType, _ := result.Extra["mime_type"].(string)
+	var size int
+	switch v := result.Extra["size"].(type) {
+	case int:
+		size = v
+	case float64:
+		size = int(v)
 	}
-
-	viewExtra, ok := extra.(*ViewImageExtra)
-	if !ok {
-		return nil
+	var prompt string
+	if p, ok := result.Extra["prompt"].(string); ok {
+		prompt = p
 	}
-	return viewExtra
+	if dataURI != "" {
+		return &ViewImageExtra{
+			DataURI:  dataURI,
+			MIMEType: mimeType,
+			Size:     size,
+			Prompt:   prompt,
+		}
+	}
+	return nil
 }
