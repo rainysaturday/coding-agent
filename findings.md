@@ -231,20 +231,20 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 
 ### HIGH ISSUES
 
-#### H1. Tool Call Result Handling: `step.ToolResult` Pointer Mutation
+#### H1. Tool Call Result Handling: `step.ToolResult` Pointer Mutation **[FIXED]**
 - **File**: `agent/agent.go` (in `Run()`)
-- **Issue**: When handling `view_image` results, the code mutates `step.ToolResult.Output` after appending to `steps`. This is intentional but fragile.
-- **Status**: Still open — design trade-off.
+- **Issue**: When handling `view_image` results, the code mutated `step.ToolResult.Output` after appending to `steps`. This is intentional but fragile.
+- **Fix**: Moved the output mutation before appending to the `steps` slice, ensuring the step is appended with the correct output value already set.
 
 #### H2. Bash `timeout` Parameter Now Documented in System Prompt **[FIXED]**
 - **File**: `agent_prompt.go` and `agent_tools.go`
 - **Issue**: The bash `timeout` parameter was not documented in the system prompt or tool definition.
 - **Fix**: Added `timeout` parameter to both the normal-mode system prompt and the bash tool definition in `buildTools()`.
 
-#### H3. Streaming: Tool Call Notification Logic Duplicated
+#### H3. Streaming: Tool Call Notification Logic Has Redundant Paths **[ALREADY HANDLED]**
 - **File**: `inference/inference.go` (in `handleStreamResponse`)
-- **Issue**: Tool call notifications can be sent from both `processToolCallDelta` and after the main loop.
-- **Status**: Still open — minor visual noise, non-functional.
+- **Issue**: Tool call notifications could be sent from both the multi-line JSON handler and the regular SSE handler. However, code review confirms that `processToolCallDelta` is called from two locations within the streaming loop (line ~796 and ~885), but these are mutually exclusive code paths. A `notifiedToolCalls` map (line 584) already prevents duplicate notifications for the same tool call index.
+- **Status**: Already handled by existing deduplication logic — no fix needed.
 
 #### H4. Grep `-f` Flag Documentation Added to Read-Only System Prompt **[FIXED]**
 - **File**: `agent_prompt.go`
@@ -256,10 +256,10 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: `buildReadOnlyTools()` never includes `subagent` even with `--experimental`.
 - **Status**: Still open — subagent is inherently a write/execute operation, so this is by design.
 
-#### H6. Signal Handler Goroutine Leak Risk in Interactive Mode
+#### H6. Signal Handler Goroutine Leak Risk in Interactive Mode **[FIXED]**
 - **File**: `main.go` (interactive mode signal handling)
-- **Issue**: The signal handler goroutine runs for the lifetime of interactive mode and could be orphaned.
-- **Status**: Still open — exits when process exits.
+- **Issue**: The signal handler goroutine ran for the lifetime of interactive mode and could be orphaned.
+- **Fix**: Added a deferred `signal.Stop(sigChan)` cleanup when interactive mode exits, ensuring the goroutine is properly cleaned up on all exit paths.
 
 ---
 
@@ -275,19 +275,20 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: `GetViewImageExtra()` first checked for `"view_image_extra"` key (which was never used), then fell back to direct field access.
 - **Fix**: Removed the dead `"view_image_extra"` key check, simplified to direct field access only.
 
-#### M3. `agent.go` — `streamToolCallWithFullParams` Duplicates Logic from `agent_format.go`
-- **Issue**: Both `streamToolCallWithFullParams` and `streamStatus` format tool call notifications with similar logic.
-- **Status**: Still open — minor code duplication, both serve different display contexts.
+#### M3. `agent_format.go` — Parameter Extraction Logic Duplicated Between `streamToolCallWithFullParams` and `streamStatus` **[FIXED]**
+- **File**: `agent_format.go`
+- **Issue**: Both `streamToolCallWithFullParams` and `streamStatus` format tool call notifications with similar parameter extraction logic.
+- **Fix**: Extracted shared `getToolParamStr()` and `getToolParamInt()` helper functions used by both functions, eliminating the duplicate switch-case parameter extraction.
 
-#### M4. Context Compression: `summaryMessages` May Include Tool Results Without Assistant Messages
+#### M4. Context Compression: `summaryMessages` May Include Tool Results Without Assistant Messages **[FIXED]**
 - **File**: `agent/agent_context.go` (in `compressContext()`)
-- **Issue**: The compression takes all messages between first user and last 3, which could include orphaned tool results.
-- **Status**: Still open — edge case, rare in practice.
+- **Issue**: The compression took all messages between first user and last 3, which could include orphaned tool results.
+- **Fix**: Added filtering in `compressContext()` that skips tool result messages without a preceding assistant message when building the summary prompt for the LLM.
 
-#### M5. `extractSummary` in `subagent.go` Has Fragile Parsing
+#### M5. `extractSummary` in `subagent.go` Had Fragile Parsing **[FIXED]**
 - **File**: `tools/subagent.go`
-- **Issue**: `extractSummary()` relies on specific markers ("=== Final Output ===", "[Final Output]") which are fragile.
-- **Status**: Still open — works with current output format.
+- **Issue**: `extractSummary()` relied on specific markers ("=== Final Output ===", "[Final Output]") which are fragile.
+- **Fix**: Expanded marker list to include more formats ("[Summary]", "## Summary", "Summary:", "Conclusion:"), added a paragraph-based extraction strategy that finds the last substantial text block (3+ related lines), and improved validation with minimum line counts per marker.
 
 #### M6. `--no-dump-on-exit` Flag IS Documented in Help (No Issue) **[CLARIFIED]**
 - **File**: `main.go` (help text)
@@ -409,8 +410,8 @@ All 45 requirements files in `/workspace/requirements/` have been implemented:
 
 ### Weaknesses
 - **Read-only mode inconsistencies (FIXED)**: System prompt and tool definitions were out of sync (todo tool missing, git_diff prompt param wrong) — both have been corrected.
-- **Signal handling complexity**: Multiple signal handler goroutines with complex state management
-- **Streaming output duplication**: Tool call notifications may print multiple times
+- **Signal handling complexity (FIXED)**: Added deferred cleanup for signal handler goroutine on interactive mode exit.
+- **Streaming output duplication**: Tool call notification duplication is already handled by existing `notifiedToolCalls` deduplication map.
 - **Subagent config isolation (FIXED)**: Subagents now inherit parent configuration via environment variables and explicit flag passing.
-- **Context compression accuracy**: Token counting after compression uses estimates
+- **Context compression accuracy**: Token counting after compression uses estimates (inherent design limitation).
 - **Comment vs. code mismatch (FIXED)**: The `reportContextSize` locking pattern was fragile — refactored to accept pre-computed actual size from the caller.
