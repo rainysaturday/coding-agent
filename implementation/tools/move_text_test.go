@@ -106,10 +106,10 @@ func TestExecute_MoveText_MissingTargetLine(t *testing.T) {
 	result := te.Execute(context.Background(), &ToolCall{
 		Name: "move_text",
 		Parameters: map[string]interface{}{
-			"source_path": sourceFile,
+			"source_path":  sourceFile,
 			"source_start": 1.0,
-			"source_end":  3.0,
-			"target_path": filepath.Join(tmpDir, "target.txt"),
+			"source_end":   3.0,
+			"target_path":  filepath.Join(tmpDir, "target.txt"),
 		},
 	})
 	if result.Success {

@@ -170,4 +170,3 @@ func TestBuildMessages_EmptySystemPrompt(t *testing.T) {
 		t.Errorf("Expected 1 message when system prompt is empty, got %d", len(result))
 	}
 }
-

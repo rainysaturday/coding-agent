@@ -112,7 +112,7 @@ func TestDumpAndLoadContext(t *testing.T) {
 	// 1. Set up initial state
 	agent.AddUserMessage("Hello, this is a test message")
 	agent.AddAssistantMessage("Hi! How can I help you?")
-	
+
 	// Simulate some stats
 	agent.mu.Lock()
 	agent.stats.InputTokens = 100
@@ -209,8 +209,6 @@ func TestLoadContext_UnsupportedVersion(t *testing.T) {
 		t.Errorf("Expected 'unsupported context version' in error, got: %v", err)
 	}
 }
-
-
 
 // TestGetGoal_ReturnsCorrectValue tests that GetGoal returns the correct value
 func TestGetGoal_ReturnsCorrectValue(t *testing.T) {
@@ -634,5 +632,3 @@ func TestLoadContext_Version1EmptyIterations(t *testing.T) {
 		t.Error("Expected error when loading version 1 with empty iterations")
 	}
 }
-
-

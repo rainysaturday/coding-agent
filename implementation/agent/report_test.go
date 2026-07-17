@@ -46,4 +46,3 @@ func TestReportContextSize_ZeroMax(t *testing.T) {
 		t.Errorf("Expected max 0, got %d", receivedMax)
 	}
 }
-

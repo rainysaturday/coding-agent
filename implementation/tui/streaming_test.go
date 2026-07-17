@@ -69,4 +69,3 @@ func TestStreamNormalChunk(t *testing.T) {
 	tui.StreamNormalChunk("Hello world")
 	tui.StreamEnd()
 }
-

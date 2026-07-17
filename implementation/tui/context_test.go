@@ -34,7 +34,6 @@ func TestPrintContextSize_LowUsage(t *testing.T) {
 	tui.printContextSize()
 }
 
-
 func TestPrintContextSize_HighUsage(t *testing.T) {
 	cfg := config.DefaultConfig()
 	tui := NewTUI(cfg)
@@ -43,7 +42,6 @@ func TestPrintContextSize_HighUsage(t *testing.T) {
 	// High usage (75-90%)
 	tui.printContextSize()
 }
-
 
 func TestDisplayStats_ZeroContext(t *testing.T) {
 	cfg := config.DefaultConfig()
@@ -94,4 +92,3 @@ func TestDisplayStats_ZeroStartTime(t *testing.T) {
 	// Should not panic with zero start time
 	tui.DisplayStats(stats)
 }
-

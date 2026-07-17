@@ -29,6 +29,12 @@ import (
 // Version information injected at build time
 // Terminal color codes for one-shot mode output.
 
+// File permission constants.
+const (
+	filePermWrite = os.FileMode(0644)
+	filePermDir   = os.FileMode(0755)
+)
+
 var (
 	gitHash   string
 	gitDirty  string
@@ -345,7 +351,7 @@ func loadPrompt(cfg *config.Config) (string, error) {
 func outputResult(result *agent.Result, cfg *config.Config, duration time.Duration) error {
 	// Write to file if specified (do this first, before any early return)
 	if cfg.OutputFile != "" {
-		err := os.WriteFile(cfg.OutputFile, []byte(result.FinalOutput), 0644)
+		err := os.WriteFile(cfg.OutputFile, []byte(result.FinalOutput), filePermWrite)
 		if err != nil {
 			return fmt.Errorf("failed to write output file: %w", err)
 		}

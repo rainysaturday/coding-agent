@@ -2,6 +2,7 @@
 // This file contains shared utility functions used across multiple tools.
 package tools
 
+
 import (
 	"context"
 	"fmt"
@@ -10,6 +11,14 @@ import (
 	"strconv"
 	"strings"
 )
+// File permission constants used across tool implementations.
+const (
+	FilePermWrite = os.FileMode(0644)
+	FilePermDir   = os.FileMode(0755)
+	FilePermRead  = os.FileMode(0400)
+)
+
+
 
 // countLines counts the number of lines in text.
 // A line is defined as text terminated by a newline character.
@@ -123,7 +132,7 @@ func parseIntParam(params map[string]interface{}, key string, defaultValue int) 
 func ensureDirectory(path string) error {
 	dir := filepath.Dir(path)
 	if dir != "" && dir != "." {
-		return os.MkdirAll(dir, 0755)
+		return os.MkdirAll(dir, FilePermDir)
 	}
 	return nil
 }

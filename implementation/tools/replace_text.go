@@ -107,7 +107,7 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 	}
 
 	// Write back
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(newContent), FilePermWrite); err != nil {
 		return &ToolResult{
 			Success: false,
 			Error:   formatFileError(err, path),

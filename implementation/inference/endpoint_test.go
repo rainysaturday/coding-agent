@@ -50,4 +50,3 @@ func TestIsGitHubModelsEndpoint(t *testing.T) {
 		t.Error("Expected isGitHubModelsEndpoint to be false for non-GitHub Models endpoint")
 	}
 }
-

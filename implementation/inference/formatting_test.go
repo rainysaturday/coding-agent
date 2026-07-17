@@ -68,4 +68,3 @@ func TestFormatJSONArrayWithMaxWidth(t *testing.T) {
 }
 
 // ===== Tests for handleStreamResponse with callbacks =====
-

@@ -148,4 +148,3 @@ func TestHandleResponse_DecodeError(t *testing.T) {
 		t.Errorf("Expected decode error, got: %v", err)
 	}
 }
-

@@ -177,7 +177,7 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 
 		// Write the modified content back to the file.
 		output := joinLines(finalLines)
-		if err := os.WriteFile(sourcePath, []byte(output), 0644); err != nil {
+		if err := os.WriteFile(sourcePath, []byte(output), FilePermWrite); err != nil {
 			return &ToolResult{
 				Success: false,
 				Error:   formatFileError(err, sourcePath),
@@ -204,7 +204,7 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 	// ---- Cross-File Move ----
 	// Write the modified source file (with lines removed).
 	sourceOutput := joinLines(remainingLines)
-	if err := os.WriteFile(sourcePath, []byte(sourceOutput), 0644); err != nil {
+	if err := os.WriteFile(sourcePath, []byte(sourceOutput), FilePermWrite); err != nil {
 		return &ToolResult{
 			Success: false,
 			Error:   formatFileError(err, sourcePath),
@@ -245,7 +245,7 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 
 	// Write the target file with inserted content.
 	targetOutput := joinLines(finalTargetLines)
-	if err := os.WriteFile(targetPath, []byte(targetOutput), 0644); err != nil {
+	if err := os.WriteFile(targetPath, []byte(targetOutput), FilePermWrite); err != nil {
 		return &ToolResult{
 			Success: false,
 			Error:   formatFileError(err, targetPath),

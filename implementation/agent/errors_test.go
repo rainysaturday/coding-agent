@@ -120,4 +120,3 @@ func TestWrapError_OtherError(t *testing.T) {
 		t.Errorf("Expected same error, got %v", wrapped)
 	}
 }
-

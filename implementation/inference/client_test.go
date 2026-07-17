@@ -169,4 +169,3 @@ func TestInferenceClient_GetTools(t *testing.T) {
 		t.Errorf("Expected tool name 'tool1', got %q", result[0].Function.Name)
 	}
 }
-

@@ -5,7 +5,6 @@ package tools
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // executeWriteFile writes to a file.
@@ -26,17 +25,14 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 	}
 
 	// Create parent directories if needed
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("cannot create directory: %v", err),
-			}
+	if err := ensureDirectory(path); err != nil {
+		return &ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("cannot create directory: %v", err),
 		}
 	}
 
-	err := os.WriteFile(path, []byte(content), 0644)
+	err := os.WriteFile(path, []byte(content), FilePermWrite)
 	if err != nil {
 		return &ToolResult{
 			Success: false,

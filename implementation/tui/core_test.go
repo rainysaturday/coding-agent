@@ -119,4 +119,3 @@ func TestNewTUI_ConfigReference(t *testing.T) {
 		t.Error("Expected TUI to reference the same config")
 	}
 }
-

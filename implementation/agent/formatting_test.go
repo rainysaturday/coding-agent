@@ -467,4 +467,3 @@ func TestFormatParamValue_Array(t *testing.T) {
 		t.Errorf("Expected 'a' in result, got '%s'", result)
 	}
 }
-

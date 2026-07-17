@@ -960,4 +960,3 @@ func TestAddToHistory_NoMax(t *testing.T) {
 		t.Errorf("Expected 10 history items, got %d", len(tui.history))
 	}
 }
-

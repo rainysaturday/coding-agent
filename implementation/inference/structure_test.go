@@ -159,4 +159,3 @@ func TestAPIToolCall_JSON(t *testing.T) {
 		t.Errorf("Expected function name 'read_file', got %v", fn["name"])
 	}
 }
-

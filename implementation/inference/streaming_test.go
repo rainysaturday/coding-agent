@@ -620,4 +620,3 @@ data: [DONE]
 		t.Errorf("Expected 'Hello world', got %q", result.Content)
 	}
 }
-

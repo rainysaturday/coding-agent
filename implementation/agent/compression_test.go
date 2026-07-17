@@ -164,4 +164,3 @@ func TestGroupAssistantToolMessages(t *testing.T) {
 		t.Errorf("Expected empty, got %d", len(result))
 	}
 }
-

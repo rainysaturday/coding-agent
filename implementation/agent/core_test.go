@@ -197,4 +197,3 @@ func TestNewAgent_ReadOnlyMode(t *testing.T) {
 		}
 	}
 }
-

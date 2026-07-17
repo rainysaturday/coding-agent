@@ -121,4 +121,3 @@ func TestEstimateContextSize_AllComponents(t *testing.T) {
 		t.Errorf("Expected total to be sum of all components")
 	}
 }
-

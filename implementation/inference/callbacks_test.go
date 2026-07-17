@@ -393,4 +393,3 @@ func TestInferenceRequestWithCallback_MarshalError(t *testing.T) {
 		t.Error("Expected error when no server is running")
 	}
 }
-

@@ -112,4 +112,3 @@ func TestRunStream_ContextCancellation(t *testing.T) {
 		t.Error("Expected error when context is cancelled")
 	}
 }
-

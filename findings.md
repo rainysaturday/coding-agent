@@ -346,11 +346,12 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 ---
 
 
-#### M8. Inconsistent Directory Creation: `insert_lines.go` and `write_file.go` Use Raw `os.MkdirAll` Instead of `ensureDirectory` Helper
+#### M8. Inconsistent Directory Creation: `insert_lines.go` and `write_file.go` Use Raw `os.MkdirAll` Instead of `ensureDirectory` Helper **[FIXED]**
 - **File**: `tools/insert_lines.go`, `tools/write_file.go`
-- **Issue**: `insert_lines.go:78` and `write_file.go:31` use `os.MkdirAll(dir, 0755)` directly with the same error handling pattern (`fmt.Sprintf("cannot create directory: %v", err)`), while `move_text.go:216` uses the `ensureDirectory` helper from `utils.go`. This is inconsistent and duplicates the `cannot create directory` error message.
-- **Impact**: Three places with nearly identical directory creation logic, two of which bypass the shared helper.
+- **Issue**: `insert_lines.go:78` and `write_file.go:31` used `os.MkdirAll(dir, 0755)` directly with the same error handling pattern (`fmt.Sprintf("cannot create directory: %v", err)`), while `move_text.go:216` uses the `ensureDirectory` helper from `utils.go`. This was inconsistent and duplicated the `cannot create directory` error message.
+- **Impact**: Three places with nearly identical directory creation logic, two of which bypassed the shared helper.
 - **Recommendation**: Replace raw `os.MkdirAll` calls in `insert_lines.go` and `write_file.go` with `ensureDirectory()`.
+- **Fix**: Replaced raw `os.MkdirAll` calls in `insert_lines.go` and `write_file.go` with `ensureDirectory()`. Removed unused `path/filepath` import from both files.
 
 #### M9. Inconsistent Truncation Thresholds Across Codebase
 - **Files**: Multiple files (agent_format.go, git_diff.go, git_log.go, git_show.go, subagent.go)

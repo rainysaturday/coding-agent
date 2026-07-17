@@ -13,4 +13,3 @@ func TestAddOutputf(t *testing.T) {
 	// Should not panic
 	tui.AddOutputf("formatted %s output %d", "test", 42)
 }
-

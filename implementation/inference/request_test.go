@@ -105,4 +105,3 @@ func TestInferenceRequestWithCallbackTyped(t *testing.T) {
 	}
 	// Callback should not be called since connection fails before streaming
 }
-
