@@ -18,11 +18,7 @@ import (
 	"path/filepath"
 )
 
-// File permission constants.
-const (
-	filePermWrite = os.FileMode(0644)
-	filePermDir   = os.FileMode(0755)
-)
+// File permission constants (using exported constants from tools package).
 
 // StreamCallback is a function type for handling streaming chunks.
 // Using inference.StreamingCallbackWithType for typed streaming support.
@@ -768,7 +764,7 @@ func (a *Agent) DumpContext() (string, error) {
 	}
 
 	// Write to file with read/write permissions for the owner
-	if err := os.WriteFile(filePath, data, filePermWrite); err != nil {
+	if err := os.WriteFile(filePath, data, tools.FilePermWrite); err != nil {
 		return "", fmt.Errorf("failed to write context file: %w", err)
 	}
 
