@@ -78,19 +78,19 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 	if sourceStart < 1 {
 		return &ToolResult{
 			Success: false,
-			Error: fmt.Sprintf("invalid source_start: %d (must be >= 1)", sourceStart),
+			Error:   fmt.Sprintf("invalid source_start: %d (must be >= 1)", sourceStart),
 		}
 	}
 	if sourceEnd < sourceStart {
 		return &ToolResult{
 			Success: false,
-			Error: fmt.Sprintf("invalid line range: source_start (%d) > source_end (%d)", sourceStart, sourceEnd),
+			Error:   fmt.Sprintf("invalid line range: source_start (%d) > source_end (%d)", sourceStart, sourceEnd),
 		}
 	}
 	if targetLine < 1 {
 		return &ToolResult{
 			Success: false,
-			Error: fmt.Sprintf("invalid target_line: %d (must be >= 1)", targetLine),
+			Error:   fmt.Sprintf("invalid target_line: %d (must be >= 1)", targetLine),
 		}
 	}
 
@@ -186,7 +186,7 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 
 		return &ToolResult{
 			Success: true,
-			Output:  fmt.Sprintf("Moved %d line(s) within %s (lines %d-%d -> line %d)\n--- Moved content ---\n%s",
+			Output: fmt.Sprintf("Moved %d line(s) within %s (lines %d-%d -> line %d)\n--- Moved content ---\n%s",
 				linesMoved, sourcePath, sourceStart, sourceEnd, targetLine, truncateOutput(movedContent, 10)),
 			Path: sourcePath,
 			Extra: map[string]interface{}{
@@ -254,7 +254,7 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 
 	return &ToolResult{
 		Success: true,
-		Output:  fmt.Sprintf("Moved %d line(s) from %s (lines %d-%d) to %s (line %d)\n--- Moved content ---\n%s",
+		Output: fmt.Sprintf("Moved %d line(s) from %s (lines %d-%d) to %s (line %d)\n--- Moved content ---\n%s",
 			linesMoved, sourcePath, sourceStart, sourceEnd, targetPath, targetLine, truncateOutput(movedContent, 10)),
 		Path: targetPath,
 		Extra: map[string]interface{}{
@@ -273,9 +273,10 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 // A trailing newline does not create an extra empty line element.
 //
 // For example:
-//   "a\nb\n" -> ["a", "b"]
-//   "a\nb"   -> ["a", "b"]
-//   ""       -> []
+//
+//	"a\nb\n" -> ["a", "b"]
+//	"a\nb"   -> ["a", "b"]
+//	""       -> []
 func splitLines(content string) []string {
 	if content == "" {
 		return []string{}
@@ -292,8 +293,9 @@ func splitLines(content string) []string {
 // Adds a trailing newline if there are any lines (standard text file format).
 //
 // For example:
-//   ["a", "b"] -> "a\nb\n"
-//   []         -> ""
+//
+//	["a", "b"] -> "a\nb\n"
+//	[]         -> ""
 func joinLines(lines []string) string {
 	if len(lines) == 0 {
 		return ""

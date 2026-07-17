@@ -204,15 +204,15 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 // read_file, list_files, read_lines, grep, git_log, git_show, and view_image are safe read-only operations.
 // todo is also allowed since add/complete are blocked by earlier per-action check.
 var readOnlyTools = map[string]bool{
-	"read_file":   true,
-	"list_files":  true,
-	"read_lines":  true,
-	"grep":        true,
-	"git_log":     true,
-	"git_show":    true,
-	"git_diff":    true,
-	"view_image":  true,
-	"todo":        true,
+	"read_file":  true,
+	"list_files": true,
+	"read_lines": true,
+	"grep":       true,
+	"git_log":    true,
+	"git_show":   true,
+	"git_diff":   true,
+	"view_image": true,
+	"todo":       true,
 }
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.

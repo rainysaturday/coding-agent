@@ -24,7 +24,6 @@ const (
 	filePermDir   = os.FileMode(0755)
 )
 
-
 // StreamCallback is a function type for handling streaming chunks.
 // Using inference.StreamingCallbackWithType for typed streaming support.
 type StreamCallback = inference.StreamingCallbackWithType

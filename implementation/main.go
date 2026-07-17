@@ -228,7 +228,6 @@ func runOneShotMode(cfg *config.Config) error {
 		ag.SetGoal(cfg.Goal)
 	}
 
-
 	// Create context with cancellation support
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -433,7 +432,6 @@ func runInteractiveMode(cfg *config.Config) error {
 		}
 	}
 
-
 	// Detect terminal width and set max display width for tool call arguments
 	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
 		width, _, err := term.GetSize(fd)
@@ -528,12 +526,12 @@ func runInteractiveMode(cfg *config.Config) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		for range sigChan {
-	// Ensure cleanup when interactive mode exits (defer after goroutine start)
-	defer func() {
-		signal.Stop(sigChan)
-		// Don't close sigChan here - it may already be closed in the main loop error path.
-		// Closing twice would panic. The goroutine will exit via process termination.
-	}()
+			// Ensure cleanup when interactive mode exits (defer after goroutine start)
+			defer func() {
+				signal.Stop(sigChan)
+				// Don't close sigChan here - it may already be closed in the main loop error path.
+				// Closing twice would panic. The goroutine will exit via process termination.
+			}()
 			promptMu.Lock()
 			isPrompting := atPrompt
 			promptMu.Unlock()
@@ -697,7 +695,6 @@ func runInteractiveMode(cfg *config.Config) error {
 				// Context already cancelled (e.g., by root or completion)
 			}
 		}()
-
 
 		// Show waiting indicator
 		fmt.Println()
