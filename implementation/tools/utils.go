@@ -160,3 +160,48 @@ func isGitRepo(path string) bool {
 	}
 	return true
 }
+
+// parseFlagsParamToMap extracts flags from the "flags" parameter and stores them in a map[string]bool.
+// This is used by tools like grep and list_files that use single-char flags.
+func parseFlagsParamToMap(params map[string]interface{}) map[string]bool {
+	flags := make(map[string]bool)
+	if flagsParam, ok := params["flags"]; ok {
+		switch v := flagsParam.(type) {
+		case []interface{}:
+			for _, f := range v {
+				if flagStr, ok := f.(string); ok {
+					if len(flagStr) == 1 {
+						flags[flagStr] = true
+					}
+				}
+			}
+		case []string:
+			for _, flagStr := range v {
+				if len(flagStr) == 1 {
+					flags[flagStr] = true
+				}
+			}
+		}
+	}
+	return flags
+}
+
+// parseFlagsParamToSlice extracts flags from the "flags" parameter and returns them as a []string.
+// This is used by tools like git_log, git_show, and git_diff that use multi-char flags.
+func parseFlagsParamToSlice(params map[string]interface{}) []string {
+	var flags []string
+	if flagsParam, ok := params["flags"]; ok {
+		switch v := flagsParam.(type) {
+		case []interface{}:
+			for _, f := range v {
+				if flagStr, ok := f.(string); ok {
+					flags = append(flags, flagStr)
+				}
+			}
+		case []string:
+			flags = append(flags, v...)
+		}
+	}
+	return flags
+}
+

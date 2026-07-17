@@ -42,33 +42,11 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 		path = p
 	}
 
-	flags := map[string]bool{
-		"i": false, // case-insensitive
-		"r": false, // recursive
-		"c": false, // count only
-		"n": false, // line numbers
-		"v": false, // invert match
-		"l": false, // filenames only
-		"a": false, // show all files including hidden
-		"f": false, // use file as pattern source
-	}
-
-	if flagsParam, ok := params["flags"]; ok {
-		switch v := flagsParam.(type) {
-		case []interface{}:
-			for _, f := range v {
-				if flagStr, ok := f.(string); ok {
-					if len(flagStr) == 1 {
-						flags[flagStr] = true
-					}
-				}
-			}
-		case []string:
-			for _, flagStr := range v {
-				if len(flagStr) == 1 {
-					flags[flagStr] = true
-				}
-			}
+	flags := parseFlagsParamToMap(params)
+	// Ensure all known keys exist
+	for _, k := range []string{"i", "r", "c", "n", "v", "l", "a", "f"} {
+		if _, ok := flags[k]; !ok {
+			flags[k] = false
 		}
 	}
 

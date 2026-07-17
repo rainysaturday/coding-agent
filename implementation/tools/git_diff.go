@@ -50,19 +50,7 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 	}
 
 	// Parse flags
-	flags := []string{}
-	if flagsParam, ok := params["flags"]; ok {
-		switch v := flagsParam.(type) {
-		case []interface{}:
-			for _, f := range v {
-				if flagStr, ok := f.(string); ok {
-					flags = append(flags, flagStr)
-				}
-			}
-		case []string:
-			flags = append(flags, v...)
-		}
-	}
+	flags := parseFlagsParamToSlice(params)
 
 	// Build git diff command
 	args := []string{"diff"}

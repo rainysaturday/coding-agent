@@ -31,32 +31,11 @@ func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]
 	}
 
 	// Parse flags
-	flags := map[string]bool{
-		"l": false,
-		"a": false,
-		"h": false,
-		"t": false,
-		"S": false,
-		"r": false,
-		"R": false,
-	}
-
-	if flagsParam, ok := params["flags"]; ok {
-		switch v := flagsParam.(type) {
-		case []interface{}:
-			for _, f := range v {
-				if flagStr, ok := f.(string); ok {
-					if len(flagStr) == 1 {
-						flags[flagStr] = true
-					}
-				}
-			}
-		case []string:
-			for _, flagStr := range v {
-				if len(flagStr) == 1 {
-					flags[flagStr] = true
-				}
-			}
+	flags := parseFlagsParamToMap(params)
+	// Ensure all known keys exist
+	for _, k := range []string{"l", "a", "h", "t", "S", "r", "R"} {
+		if _, ok := flags[k]; !ok {
+			flags[k] = false
 		}
 	}
 

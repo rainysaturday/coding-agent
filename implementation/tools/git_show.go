@@ -33,19 +33,7 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 	}
 
 	// Parse flags
-	flags := []string{}
-	if flagsParam, ok := params["flags"]; ok {
-		switch v := flagsParam.(type) {
-		case []interface{}:
-			for _, f := range v {
-				if flagStr, ok := f.(string); ok {
-					flags = append(flags, flagStr)
-				}
-			}
-		case []string:
-			flags = append(flags, v...)
-		}
-	}
+	flags := parseFlagsParamToSlice(params)
 
 	// Build git show command
 	args := []string{"show", commit}
