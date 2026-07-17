@@ -21,26 +21,26 @@ type accumulatedToolCall struct {
 
 // streamState holds the state for processing a streaming response.
 type streamState struct {
-	fullContent    strings.Builder
-	fullReasoning  strings.Builder
-	reasoningType  string
-	totalTokens    int
-	inputTokens    int
-	outputTokens   int
-	streamEnded    bool
-	toolCallsList  []*accumulatedToolCall
-	notifiedCalls  map[int]bool
+	fullContent     strings.Builder
+	fullReasoning   strings.Builder
+	reasoningType   string
+	totalTokens     int
+	inputTokens     int
+	outputTokens    int
+	streamEnded     bool
+	toolCallsList   []*accumulatedToolCall
+	notifiedCalls   map[int]bool
 	lastActiveIndex int
-	callback       StreamingCallbackWithType
+	callback        StreamingCallbackWithType
 	maxDisplayWidth int
 }
 
 // newStreamState creates a new streamState with initialized fields.
 func newStreamState(callback StreamingCallbackWithType, maxDisplayWidth int) *streamState {
 	return &streamState{
-		notifiedCalls:  make(map[int]bool),
+		notifiedCalls:   make(map[int]bool),
 		lastActiveIndex: -1,
-		callback:       callback,
+		callback:        callback,
 		maxDisplayWidth: maxDisplayWidth,
 	}
 }

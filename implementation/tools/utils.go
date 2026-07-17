@@ -227,4 +227,3 @@ func parseFlagsParamToSlice(params map[string]interface{}) []string {
 	}
 	return flags
 }
-

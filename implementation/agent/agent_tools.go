@@ -78,7 +78,7 @@ func sharedToolDefs() []inference.ToolDefinition {
 				Name:        "view_image",
 				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
 				Parameters: inference.ParameterSchema{
-					Type: "object",
+					Type:     "object",
 					Required: []string{"path"},
 					Properties: map[string]inference.Property{
 						"path": {
