@@ -18,6 +18,20 @@ const (
 	FilePermRead  = os.FileMode(0400)
 )
 
+// Truncation threshold constants used across tool implementations.
+const (
+	// MaxDisplayOutput is the maximum number of characters for display output (used by list_files).
+	MaxDisplayOutput = 500
+	// MaxToolOutput is the maximum number of characters for tool result output (used by grep, git_log, git_show, git_diff).
+	MaxToolOutput = 1000
+	// MaxSubagentOutput is the maximum number of characters for subagent tool result output.
+	MaxSubagentOutput = 5000
+	// MaxSubagentMarkerLimit is the maximum number of characters for subagent marker extraction.
+	MaxSubagentMarkerLimit = 10000
+	// MaxSubagentResultDisplay is the maximum number of characters for subagent result display.
+	MaxSubagentResultDisplay = 200
+)
+
 // countLines counts the number of lines in text.
 // A line is defined as text terminated by a newline character.
 // An empty string has 0 lines. Text without a trailing newline still counts as a line.
@@ -151,6 +165,15 @@ func parseFlagValue(flag string) (name string, value string) {
 		value = parts[1]
 	}
 	return
+}
+
+// TruncateOutputByLen truncates text to a maximum number of characters for display purposes.
+// It adds a "[truncated]" suffix if the content was truncated.
+func TruncateOutputByLen(text string, maxLen int, suffix string) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	return text[:maxLen] + "\n... [" + suffix + "]"
 }
 
 // isGitRepo checks if the given path is a git repository.

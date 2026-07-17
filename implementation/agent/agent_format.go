@@ -242,9 +242,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				entries = e
 			}
 			// Truncate output if too long
-			if len(output) > 500 {
-				output = output[:500] + "\n... [listing truncated]"
-			}
+			output = tools.TruncateOutputByLen(output, tools.MaxDisplayOutput, "listing truncated")
 			return fmt.Sprintf("%s[Success] listed %d entries%s\n%s\n", colors.GetColor("green"), entries, colors.GetColor("reset"), output)
 		case "grep":
 			// Show the actual grep results with match count
@@ -254,9 +252,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				matches = m
 			}
 			// Truncate output if too long
-			if len(output) > 1000 {
-				output = output[:1000] + "\n... [output truncated]"
-			}
+			output = tools.TruncateOutputByLen(output, tools.MaxToolOutput, "output truncated")
 			if matches == 0 {
 				return fmt.Sprintf("%s[Success] grep: 0 matches found%s\n", colors.GetColor("green"), colors.GetColor("reset"))
 			}
@@ -273,9 +269,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				count = c
 			}
 			// Truncate output if too long
-			if len(output) > 1000 {
-				output = output[:1000] + "\n... [log truncated]"
-			}
+			output = tools.TruncateOutputByLen(output, tools.MaxToolOutput, "log truncated")
 			return fmt.Sprintf("%s[Success] git log: %d commits from %s\n%s%s\n", colors.GetColor("green"), count, reference, output, colors.GetColor("reset"))
 		case "git_show":
 			// Show the git show output with commit details
@@ -285,9 +279,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				commit = c
 			}
 			// Truncate output if too long
-			if len(output) > 1000 {
-				output = output[:1000] + "\n... [output truncated]"
-			}
+			output = tools.TruncateOutputByLen(output, tools.MaxToolOutput, "output truncated")
 			return fmt.Sprintf("%s[Success] git show %s\n%s%s\n", colors.GetColor("green"), commit, output, colors.GetColor("reset"))
 		case "git_diff":
 			// Show the git diff output with summary info
@@ -301,9 +293,7 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 				ref2 = r
 			}
 			// Truncate output if too long
-			if len(output) > 1000 {
-				output = output[:1000] + "\n... [diff truncated]"
-			}
+			output = tools.TruncateOutputByLen(output, tools.MaxToolOutput, "diff truncated")
 			msg := fmt.Sprintf("%s[Success] git diff", colors.GetColor("green"))
 			if ref1 != "" {
 				msg += fmt.Sprintf(" %s", ref1)
