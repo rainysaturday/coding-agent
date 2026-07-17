@@ -2,267 +2,8 @@ package agent
 
 import "github.com/coding-agent/harness/inference"
 
-// buildTools builds the tool definitions for the OpenAI API.
-// When readOnly is true, only read-only tools (read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, todo) are returned.
-// When experimental is false, the subagent tool is not included.
-func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
-	if readOnly {
-		return buildReadOnlyTools()
-	}
-
-	baseTools := []inference.ToolDefinition{
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "bash",
-				Description: "Execute a bash command in the terminal",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"command": {
-							Type:        "string",
-							Description: "The bash command to execute",
-						},
-						"timeout": {
-							Type:        "integer",
-							Description: "Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.",
-						},
-					},
-					Required: []string{"command"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "read_file",
-				Description: "Read the contents of a file",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "Path to the file to read",
-						},
-					},
-					Required: []string{"path"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "write_file",
-				Description: "Write content to a file",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "Path to the file to write",
-						},
-						"content": {
-							Type:        "string",
-							Description: "Content to write to the file",
-						},
-					},
-					Required: []string{"path", "content"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "read_lines",
-				Description: "Read a specific line range from a file",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "Path to the file to read",
-						},
-						"start": {
-							Type:        "integer",
-							Description: "Starting line number (1-indexed)",
-						},
-						"end": {
-							Type:        "integer",
-							Description: "Ending line number (1-indexed)",
-						},
-					},
-					Required: []string{"path", "start", "end"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "insert_lines",
-				Description: "Insert lines at a specific line number in a file",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "File path to modify",
-						},
-						"line": {
-							Type:        "integer",
-							Description: "Line number to insert before (1-indexed)",
-						},
-						"lines": {
-							Type:        "string",
-							Description: "Lines to insert (use \\n for newlines)",
-						},
-					},
-					Required: []string{"path", "line", "lines"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "replace_text",
-				Description: "Find and replace text in a file by searching for a pattern",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"path": {
-							Type:        "string",
-							Description: "File path to modify",
-						},
-						"search": {
-							Type:        "string",
-							Description: "Text pattern to find (exact match, not regex)",
-						},
-						"replace": {
-							Type:        "string",
-							Description: "Replacement text",
-						},
-						"count": {
-							Type:        "integer",
-							Description: "Number of occurrences to replace (default: 1, use -1 for all)",
-						},
-					},
-					Required: []string{"path", "search", "replace"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "move_text",
-				Description: "Move a block of text from one location to another. Extracts lines from a source file and inserts them at a target location (same file or different file). Automatically creates target file and directories if needed.",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"source_path": {
-							Type:        "string",
-							Description: "Path to the source file to extract lines from",
-						},
-						"source_start": {
-							Type:        "integer",
-							Description: "Starting line number in source file (1-indexed)",
-						},
-						"source_end": {
-							Type:        "integer",
-							Description: "Ending line number in source file (1-indexed, inclusive)",
-						},
-						"target_path": {
-							Type:        "string",
-							Description: "Path to the target file to insert lines into",
-						},
-						"target_line": {
-							Type:        "integer",
-							Description: "Line number in target file to insert before (1-indexed)",
-						},
-					},
-					Required: []string{"source_path", "source_start", "source_end", "target_path", "target_line"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "todo",
-				Description: "Manage a personal task list for tracking work-in-progress during development",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"action": {
-							Type:        "string",
-							Description: "The action to perform: add, complete, remove, or list",
-						},
-						"id": {
-							Type:        "integer",
-							Description: "The ID of the todo item (required for complete, remove; not for add or list)",
-						},
-						"description": {
-							Type:        "string",
-							Description: "The description of the todo item (required for add; not for complete, remove, or list)",
-						},
-					},
-					Required: []string{"action"},
-				},
-			},
-		},
-	}
-
-	tools := baseTools
-
-	// Add view_image tool (always available, including read-only)
-	tools = append(tools, inference.ToolDefinition{
-		Type: "function",
-		Function: inference.FunctionDefinition{
-			Name:        "view_image",
-			Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
-			Parameters: inference.ParameterSchema{
-				Type: "object",
-				Properties: map[string]inference.Property{
-					"path": {
-						Type:        "string",
-						Description: "Path to the image file to view",
-					},
-					"prompt": {
-						Type:        "string",
-						Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
-					},
-				},
-				Required: []string{"path"},
-			},
-		},
-	})
-
-	if experimental {
-		tools = append(tools, inference.ToolDefinition{
-			Type: "function",
-			Function: inference.FunctionDefinition{
-				Name:        "subagent",
-				Description: "Spawn a sub-agent to work on a task independently. The sub-agent runs as a separate process and returns only its conclusion/summary.",
-				Parameters: inference.ParameterSchema{
-					Type: "object",
-					Properties: map[string]inference.Property{
-						"prompt": {
-							Type:        "string",
-							Description: "The task description for the sub-agent. Be specific and clear about what you want the sub-agent to accomplish.",
-						},
-						"persona": {
-							Type:        "string",
-							Description: "A persona to give the sub-agent. For example: \"Expert Go developer\", \"Code reviewer focused on security\", \"Documentation writer\".",
-						},
-					},
-					Required: []string{"prompt"},
-				},
-			},
-		})
-	}
-
-	return tools
-}
-
-// buildReadOnlyTools returns only the read-only tool definitions.
-func buildReadOnlyTools() []inference.ToolDefinition {
+// sharedToolDefs returns the tool definitions shared between normal and read-only modes.
+func sharedToolDefs() []inference.ToolDefinition {
 	return []inference.ToolDefinition{
 		{
 			Type: "function",
@@ -306,6 +47,57 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "todo",
+				Description: "Manage a personal task list for tracking work-in-progress during development",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"action": {
+							Type:        "string",
+							Description: "The action to perform: add, complete, remove, or list",
+						},
+						"id": {
+							Type:        "integer",
+							Description: "The ID of the todo item (required for complete, remove; not for add or list)",
+						},
+						"description": {
+							Type:        "string",
+							Description: "The description of the todo item (required for add; not for complete, remove, or list)",
+						},
+					},
+					Required: []string{"action"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "view_image",
+				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "Path to the image file to view",
+						},
+						"prompt": {
+							Type:        "string",
+							Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// readOnlyOnlyToolDefs returns tool definitions specific to read-only mode.
+func readOnlyOnlyToolDefs() []inference.ToolDefinition {
+	return []inference.ToolDefinition{
 		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
@@ -453,50 +245,202 @@ func buildReadOnlyTools() []inference.ToolDefinition {
 				},
 			},
 		},
+	}
+}
+
+// buildTools builds the tool definitions for the OpenAI API.
+// When readOnly is true, only read-only tools are returned.
+// When experimental is false, the subagent tool is not included.
+func buildTools(readOnly bool, experimental bool) []inference.ToolDefinition {
+	if readOnly {
+		return buildReadOnlyTools()
+	}
+
+	baseTools := []inference.ToolDefinition{
 		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
-				Name:        "todo",
-				Description: "Manage a personal task list for tracking work-in-progress during development",
+				Name:        "bash",
+				Description: "Execute a bash command in the terminal",
 				Parameters: inference.ParameterSchema{
 					Type: "object",
 					Properties: map[string]inference.Property{
-						"action": {
+						"command": {
 							Type:        "string",
-							Description: "The action to perform: add, complete, remove, or list",
+							Description: "The bash command to execute",
 						},
-						"id": {
+						"timeout": {
 							Type:        "integer",
-							Description: "The ID of the todo item (required for complete, remove; not for add or list)",
-						},
-						"description": {
-							Type:        "string",
-							Description: "The description of the todo item (required for add; not for complete, remove, or list)",
+							Description: "Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.",
 						},
 					},
-					Required: []string{"action"},
+					Required: []string{"command"},
 				},
 			},
 		},
 		{
 			Type: "function",
 			Function: inference.FunctionDefinition{
-				Name:        "view_image",
-				Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
+				Name:        "write_file",
+				Description: "Write content to a file",
 				Parameters: inference.ParameterSchema{
 					Type: "object",
 					Properties: map[string]inference.Property{
 						"path": {
 							Type:        "string",
-							Description: "Path to the image file to view",
+							Description: "Path to the file to write",
 						},
-						"prompt": {
+						"content": {
 							Type:        "string",
-							Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
+							Description: "Content to write to the file",
 						},
 					},
+					Required: []string{"path", "content"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "insert_lines",
+				Description: "Insert lines at a specific line number in a file",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to modify",
+						},
+						"line": {
+							Type:        "integer",
+							Description: "Line number to insert before (1-indexed)",
+						},
+						"lines": {
+							Type:        "string",
+							Description: "Lines to insert (use \\n for newlines)",
+						},
+					},
+					Required: []string{"path", "line", "lines"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "replace_text",
+				Description: "Find and replace text in a file by searching for a pattern",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"path": {
+							Type:        "string",
+							Description: "File path to modify",
+						},
+						"search": {
+							Type:        "string",
+							Description: "Text pattern to find (exact match, not regex)",
+						},
+						"replace": {
+							Type:        "string",
+							Description: "Replacement text",
+						},
+						"count": {
+							Type:        "integer",
+							Description: "Number of occurrences to replace (default: 1, use -1 for all)",
+						},
+					},
+					Required: []string{"path", "search", "replace"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "move_text",
+				Description: "Move a block of text from one location to another. Extracts lines from a source file and inserts them at a target location (same file or different file). Automatically creates target file and directories if needed.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"source_path": {
+							Type:        "string",
+							Description: "Path to the source file to extract lines from",
+						},
+						"source_start": {
+							Type:        "integer",
+							Description: "Starting line number in source file (1-indexed)",
+						},
+						"source_end": {
+							Type:        "integer",
+							Description: "Ending line number in source file (1-indexed, inclusive)",
+						},
+						"target_path": {
+							Type:        "string",
+							Description: "Path to the target file to insert lines into",
+						},
+						"target_line": {
+							Type:        "integer",
+							Description: "Line number in target file to insert before (1-indexed)",
+						},
+					},
+					Required: []string{"source_path", "source_start", "source_end", "target_path", "target_line"},
 				},
 			},
 		},
 	}
+
+	tools := append(baseTools, sharedToolDefs()...)
+
+	// Add view_image tool (always available, including read-only)
+	tools = append(tools, inference.ToolDefinition{
+		Type: "function",
+		Function: inference.FunctionDefinition{
+			Name:        "view_image",
+			Description: "View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents. Supported formats: PNG, JPEG, WEBP, GIF.",
+			Parameters: inference.ParameterSchema{
+				Type: "object",
+				Properties: map[string]inference.Property{
+					"path": {
+						Type:        "string",
+						Description: "Path to the image file to view",
+					},
+					"prompt": {
+						Type:        "string",
+						Description: "Optional custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.",
+					},
+				},
+				Required: []string{"path"},
+			},
+		},
+	})
+
+	if experimental {
+		tools = append(tools, inference.ToolDefinition{
+			Type: "function",
+			Function: inference.FunctionDefinition{
+				Name:        "subagent",
+				Description: "Spawn a sub-agent to work on a task independently. The sub-agent runs as a separate process and returns only its conclusion/summary.",
+				Parameters: inference.ParameterSchema{
+					Type: "object",
+					Properties: map[string]inference.Property{
+						"prompt": {
+							Type:        "string",
+							Description: "The task description for the sub-agent. Be specific and clear about what you want the sub-agent to accomplish.",
+						},
+						"persona": {
+							Type:        "string",
+							Description: "A persona to give the sub-agent. For example: \"Expert Go developer\", \"Code reviewer focused on security\", \"Documentation writer\".",
+						},
+					},
+					Required: []string{"prompt"},
+				},
+			},
+		})
+	}
+
+	return tools
+}
+
+// buildReadOnlyTools returns only the read-only tool definitions.
+func buildReadOnlyTools() []inference.ToolDefinition {
+	return append(sharedToolDefs(), readOnlyOnlyToolDefs()...)
 }
