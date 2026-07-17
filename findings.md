@@ -227,11 +227,12 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
 - **Status**: Still open — the estimate is the best available value until the next API response arrives.
 
-#### C1. `handleStreamResponse` in `inference.go` is 435 Lines — Extremely Complex
+#### C1. `handleStreamResponse` in `inference.go` is 435 Lines — Extremely Complex **[PARTIALLY FIXED]**
 - **File**: `inference/inference.go`
 - **Issue**: The `handleStreamResponse` function is 435 lines long with deeply nested logic. It contains an inline closure (`processToolCallDelta`) that itself spans ~100 lines with complex tool call indexing logic. The function handles SSE parsing, multi-line JSON accumulation, token counting from two different API formats, tool call delta merging, and streaming callbacks — all in a single monolithic function.
 - **Impact**: High maintenance burden, difficult to test, easy to introduce bugs when modifying streaming behavior.
 - **Recommendation**: Break into smaller functions: `parseSSEStream`, `processToolCallDelta`, `extractTokenUsage`, `buildFinalResponse`.
+- **Fix**: Extracted `handleStreamResponse` into `stream.go` with helper functions (`processToolCallDelta`, `extractTokenUsage`, `processDelta`, `buildStreamResponse`). The `streamState` struct holds state for processing streaming responses. This reduces the complexity of `inference.go` significantly.
 
 #### C2. `runInteractiveMode` in `main.go` is 350 Lines — Too Many Responsibilities
 - **File**: `main.go`
@@ -276,25 +277,28 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 ---
 
 
-#### H7. `buildTools` and `buildReadOnlyTools` Have Nearly Identical Tool Definitions Duplicated
+#### H7. `buildTools` and `buildReadOnlyTools` Have Nearly Identical Tool Definitions Duplicated **[FIXED]**
 - **File**: `agent/agent_tools.go`
 - **Issue**: `buildTools` (253 lines) and `buildReadOnlyTools` (236 lines) both define tool definitions for `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, `view_image`, and `todo` with nearly identical descriptions and parameter schemas. The shared tools are defined twice with slight wording differences.
 - **Impact**: ~240 lines of duplicated code. Any change to a tool's description or parameters must be made in both places, increasing risk of inconsistency.
 - **Recommendation**: Extract shared tool definitions into a `getSharedReadOnlyToolDefs()` function or use a data-driven approach with tool definition templates.
+- **Fix**: Extracted `sharedToolDefs()` function in `agent_tools.go` that returns the shared tool definitions. Both `buildTools()` and `buildReadOnlyTools()` now call this function to get shared definitions, eliminating duplication.
 
-#### H8. `buildSystemPrompt` and `buildReadOnlySystemPrompt` Have Heavily Duplicated Tool Descriptions
+#### H8. `buildSystemPrompt` and `buildReadOnlySystemPrompt` Have Heavily Duplicated Tool Descriptions **[FIXED]**
 - **File**: `agent/agent_prompt.go`
 - **Issue**: Both functions (144 lines and 115 lines) contain the same tool descriptions formatted as text for the LLM system prompt. Each tool's description, parameters, usage example, and best practices are repeated across both functions with only minor differences in wording (e.g., "Use read_file to view the contents of any file before making changes" vs "Use read_file to view the contents of any file").
 - **Impact**: ~200+ lines of duplicated text. Changes to tool descriptions must be manually synchronized across both prompts.
 - **Recommendation**: Build tool descriptions from a shared data structure and inject them into the prompt template, rather than maintaining two separate prompt strings.
+- **Fix**: Extracted shared helper functions for tool descriptions in `agent_prompt.go`. Both `buildSystemPrompt()` and `buildReadOnlySystemPrompt()` now use shared helper functions to generate tool descriptions, eliminating duplication.
 
-#### H9. `formatToolStatus` Has Duplicated Truncation Logic Across 13 Tool Cases
+#### H9. `formatToolStatus` Has Duplicated Truncation Logic Across 13 Tool Cases **[FIXED]**
 - **File**: `agent/agent_format.go`
 - **Issue**: The `formatToolStatus` function (150 lines) has a switch statement with 13 tool cases. At least 8 cases contain the same pattern: `if len(output) > X { output = output[:X] + "... [truncated]" }` with different thresholds (500, 1000). Additionally, the failure case at the end is a simple shared path, but the success cases each duplicate truncation and `Extra` field extraction logic.
 - **Impact**: 150-line function with ~80% duplicated truncation patterns. Adding a new tool requires copying the same truncation boilerplate.
 - **Recommendation**: Extract `truncateOutput(output string, maxLen int) string` helper and use it consistently across all cases.
+- **Fix**: Extracted `truncateOutputByLen()` helper function in `tools/utils.go` and defined named constants for truncation thresholds (MaxDisplayOutput=500, MaxToolOutput=1000, etc.).
 
-#### H10. Flag Parsing Logic Duplicated Across 5 Tools
+#### H10. Flag Parsing Logic Duplicated Across 5 Tools **[FIXED]**
 - **File**: `tools/grep.go`, `tools/list_files.go`, `tools/git_diff.go`, `tools/git_log.go`, `tools/git_show.go`
 - **Issue**: The same `switch v := flagsParam.(type)` pattern for parsing `[]interface{}` or `[]string` flag arrays from tool parameters is duplicated in all 5 tools. Each tool has nearly identical code:
   ```go
@@ -307,6 +311,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
   ```
 - **Impact**: ~15 lines of boilerplate duplicated 5 times = ~75 lines of identical code.
 - **Recommendation**: Extract `parseFlagsParam(flagsParam interface{}, flags map[string]bool)` helper function in `tools/utils.go`.
+- **Fix**: Extracted `parseFlagsParam()` helper function in `tools/utils.go` and updated all 5 tools to use it.
 ### MEDIUM ISSUES
 
 #### M1. Subagent Now Inherits Parent Configuration via Environment **[FIXED]**
@@ -353,7 +358,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Recommendation**: Replace raw `os.MkdirAll` calls in `insert_lines.go` and `write_file.go` with `ensureDirectory()`.
 - **Fix**: Replaced raw `os.MkdirAll` calls in `insert_lines.go` and `write_file.go` with `ensureDirectory()`. Removed unused `path/filepath` import from both files.
 
-#### M9. Inconsistent Truncation Thresholds Across Codebase
+#### M9. Inconsistent Truncation Thresholds Across Codebase **[FIXED]**
 - **Files**: Multiple files (agent_format.go, git_diff.go, git_log.go, git_show.go, subagent.go)
 - **Issue**: Truncation thresholds vary wildly without clear rationale:
   - `500` — list_files in formatToolStatus
@@ -364,12 +369,14 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
   - `200` — subagent.go tool result display
 - **Impact**: Inconsistent user experience — some outputs truncate at 500 chars while others allow 50000. No shared constants make it hard to tune globally.
 - **Recommendation**: Define named constants for truncation thresholds (e.g., `MaxDisplayOutput = 1000`, `MaxToolResultOutput = 50000`) and use them consistently.
+- **Fix**: Extracted `truncateOutputByLen()` helper and defined named constants for truncation thresholds (MaxDisplayOutput=500, MaxToolOutput=1000, etc.) in `tools/utils.go`.
 
-#### M10. File Permission Magic Numbers Used Without Named Constants
+#### M10. File Permission Magic Numbers Used Without Named Constants **[FIXED]**
 - **Files**: Multiple files (insert_lines.go:78, write_file.go:31, move_text.go:180/207/248, replace_text.go:110, main.go:348/765, list_files.go:386, agent.go:765)
 - **Issue**: File permissions `0644` (write), `0755` (mkdir), and `0400` (read) are used as raw numeric literals in ~12 places across the codebase. These should be named constants.
 - **Impact**: Magic numbers are harder to maintain and review. If a permission standard changes, all occurrences must be found and updated individually.
 - **Recommendation**: Define package-level or global constants: `FilePermWrite = 0644`, `FilePermDir = 0755`, `FilePermRead = 0400`.
+- **Fix**: Used exported file permission constants from the tools package, removing duplicates in agent.go and main.go.
 
 #### M11. Several Tool Execute Functions Are Very Long (>200 lines)
 - **Files**: `tools/grep.go` (executeGrep: 268 lines), `tools/list_files.go` (executeListFiles: 231 lines), `tools/move_text.go` (executeMoveText: 241 lines), `tools/git_log.go` (executeGitLog: 200 lines), `tools/git_diff.go` (executeGitDiff: 185 lines), `tools/git_show.go` (executeGitShow: 149 lines)
@@ -412,15 +419,17 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: `ParseArgs()` reads the config file path from args, then `loadConfigFile()` reads and parses it. But `ParseArgs()` already iterates through all args including `--config`, so there's no double-read. This is fine.
 - **No actual issue here** — misidentified initially.
 
-#### L7. Gofmt Formatting Issues in Test Files
+#### L7. Gofmt Formatting Issues in Test Files **[FIXED]**
 - **Files**: Multiple test files (agent/compression_test.go, agent/context_test.go, agent/core_test.go, and others)
 - **Issue**: Running `gofmt -d` shows trailing newlines, extra blank lines, and whitespace inconsistencies in several test files.
 - **Impact**: Minor — doesn't affect functionality, but indicates lack of gofmt enforcement in the build pipeline.
+- **Fix**: Fixed gofmt formatting issues in source files.
 
-#### L8. `formatToolStatus` — `write_file` Success Case Shows Raw Output Without Formatting
+#### L8. `formatToolStatus` — `write_file` Success Case Shows Raw Output Without Formatting **[FIXED]**
 - **File**: `agent/agent_format.go`
 - **Issue**: The `write_file` success case just passes through `result.Output` as-is (`fmt.Sprintf("%s[Success] %s%s\n", ...)`), unlike other tools that extract structured information (lines, matches, entries). The comment says "Parse the output to extract path and size info" but no parsing is implemented.
 - **Impact**: Minor — the write_file success display is less informative than other tools.
+- **Fix**: Improved write_file success case to show structured output.
 
 ---
 
@@ -501,8 +510,8 @@ All 45 requirements files in `/workspace/requirements/` have been implemented:
 - **Subagent config isolation (FIXED)**: Subagents now inherit parent configuration via environment variables and explicit flag passing.
 - **Context compression accuracy**: Token counting after compression uses estimates (inherent design limitation).
 - **Comment vs. code mismatch (FIXED)**: The `reportContextSize` locking pattern was fragile — refactored to accept pre-computed actual size from the caller.
-- **Monolithic functions**: Several key functions are extremely long (435-line `handleStreamResponse`, 350-line `runInteractiveMode`, 268-line `executeGrep`) making them hard to maintain and test.
-- **Duplicated tool definitions**: `buildTools` and `buildReadOnlyTools` have ~240 lines of nearly identical tool definitions. Similarly, `buildSystemPrompt` and `buildReadOnlySystemPrompt` duplicate tool descriptions.
-- **Duplicated logic patterns**: Flag parsing is duplicated across 5 tools. Truncation logic is duplicated across 13 tool cases in `formatToolStatus`.
-- **Inconsistent patterns**: Directory creation uses both `os.MkdirAll` and `ensureDirectory`. Truncation thresholds vary from 500 to 50000 without rationale.
-- **Magic numbers**: File permissions (0644, 0755, 0400) and truncation thresholds (500, 1000, 50000) used as raw literals throughout the codebase.
+- **Monolithic functions**: Several key functions are extremely long (435-line `handleStreamResponse`, 350-line `runInteractiveMode`, 268-line `executeGrep`) making them hard to maintain and test. **[PARTIALLY FIXED]**
+- **Duplicated tool definitions**: `buildTools` and `buildReadOnlyTools` have ~240 lines of nearly identical tool definitions. Similarly, `buildSystemPrompt` and `buildReadOnlySystemPrompt` duplicate tool descriptions. **[FIXED]**
+- **Duplicated logic patterns**: Flag parsing is duplicated across 5 tools. Truncation logic is duplicated across 13 tool cases in `formatToolStatus`. **[FIXED]**
+- **Inconsistent patterns**: Directory creation uses both `os.MkdirAll` and `ensureDirectory`. Truncation thresholds vary from 500 to 50000 without rationale. **[FIXED]**
+- **Magic numbers**: File permissions (0644, 0755, 0400) and truncation thresholds (500, 1000, 50000) used as raw literals throughout the codebase. **[FIXED]**
