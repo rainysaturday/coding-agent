@@ -208,7 +208,15 @@ func formatToolStatus(toolName string, result *tools.ToolResult) string {
 		case "write_file":
 			// Show the file path, size, and truncated content preview
 			output := result.Output
-			// Parse the output to extract path and size info
+			// Extract path and content length from Extra if available
+			if result.Extra != nil {
+				if msg, ok := result.Extra["message"].(string); ok && msg != "" {
+					output = msg
+				}
+				if contentLen, ok := result.Extra["contentLength"].(int); ok && contentLen > 0 {
+					output += fmt.Sprintf(" (%d bytes)", contentLen)
+				}
+			}
 			return fmt.Sprintf("%s[Success] %s%s\n", colors.GetColor("green"), output, colors.GetColor("reset"))
 		case "read_lines":
 			// Show the lines that were read, truncated if too long
