@@ -22,181 +22,37 @@ type walkEntry struct {
 	fileSize int64
 }
 
-// executeListFiles lists files and directories, formatted like ls.
-// Supports context cancellation and various flags similar to ls.
-func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]interface{}) *ToolResult {
+// listFilesParams holds the parsed parameters for a list_files operation.
+type listFilesParams struct {
+	path  string
+	flags map[string]bool
+}
+
+// parseListFilesParams extracts and validates list_files parameters from the tool params map.
+func parseListFilesParams(params map[string]interface{}) *listFilesParams {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
 	}
 
-	// Parse flags
 	flags := parseFlagsParamToMap(params)
-	// Ensure all known keys exist
 	for _, k := range []string{"l", "a", "h", "t", "S", "r", "R"} {
 		if _, ok := flags[k]; !ok {
 			flags[k] = false
 		}
 	}
 
-	// Check if path is a file or directory
-	info, err := os.Stat(path)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
+	return &listFilesParams{path: path, flags: flags}
+}
 
-	// If it's a file, return information about that single file
-	if !info.IsDir() {
-		if flags["l"] {
-			line := formatFileLong(info, flags)
-			return &ToolResult{
-				Success: true,
-				Output:  line,
-				Extra: map[string]interface{}{
-					"entriesListed": 1,
-					"path":          path,
-				},
-			}
-		}
-		return &ToolResult{
-			Success: true,
-			Output:  info.Name(),
-			Extra: map[string]interface{}{
-				"entriesListed": 1,
-				"path":          path,
-			},
-		}
-	}
-
-	var entries []os.DirEntry
-	var output string
-
-	// Handle recursive listing
-	if flags["R"] {
-		// Use filepath.Walk to get entries with relative paths
-		var resultEntries []walkEntry
-		walkErr := filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return nil
-			}
-			// Skip .git directories
-			if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
-				if fileInfo.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			// Skip hidden files/dirs unless "a" flag is set
-			if !flags["a"] {
-				baseName := fileInfo.Name()
-				if strings.HasPrefix(baseName, ".") {
-					if fileInfo.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
-			relPath, _ := filepath.Rel(path, filePath)
-			resultEntries = append(resultEntries, walkEntry{
-				path:     relPath,
-				isDir:    fileInfo.IsDir(),
-				info:     fileInfo,
-				modTime:  fileInfo.ModTime(),
-				fileSize: fileInfo.Size(),
-			})
-			return nil
-		})
-		if walkErr != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   formatFileError(walkErr, path),
-			}
-		}
-
-		// Sort entries
-		sort.Slice(resultEntries, func(i, j int) bool {
-			// Directories first
-			iIsDir := resultEntries[i].isDir
-			jIsDir := resultEntries[j].isDir
-			if iIsDir != jIsDir {
-				return iIsDir
-			}
-			// Then by sort criteria
-			switch {
-			case flags["t"]:
-				if flags["r"] {
-					return resultEntries[i].modTime.Before(resultEntries[j].modTime)
-				}
-				return resultEntries[i].modTime.After(resultEntries[j].modTime)
-			case flags["S"]:
-				if flags["r"] {
-					return resultEntries[i].fileSize < resultEntries[j].fileSize
-				}
-				return resultEntries[i].fileSize > resultEntries[j].fileSize
-			default:
-				if flags["r"] {
-					return resultEntries[i].path > resultEntries[j].path
-				}
-				return resultEntries[i].path < resultEntries[j].path
-			}
-		})
-
-		if flags["l"] {
-			output = formatRecursiveLongList(resultEntries, path, flags)
-		} else {
-			var names []string
-			for _, e := range resultEntries {
-				name := e.path
-				if e.isDir {
-					name += "/"
-				}
-				names = append(names, name)
-			}
-			output = strings.Join(names, "\n")
-		}
-
-		return &ToolResult{
-			Success: true,
-			Output:  output,
-			Extra: map[string]interface{}{
-				"entriesListed": len(resultEntries),
-				"path":          path,
-			},
-		}
-	}
-
-	// Read directory (non-recursive)
-	entries, err = os.ReadDir(path)
-	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   formatFileError(err, path),
-		}
-	}
-
-	// Filter entries
-	var filtered []os.DirEntry
-	for _, entry := range entries {
-		name := entry.Name()
-		if !flags["a"] && strings.HasPrefix(name, ".") {
-			continue
-		}
-		filtered = append(filtered, entry)
-	}
-
-	// Sort entries
+// sortDirEntries sorts directory entries by sort criteria.
+func sortDirEntries(filtered []os.DirEntry, flags map[string]bool) {
 	sort.Slice(filtered, func(i, j int) bool {
-		// Directories first
 		iIsDir := filtered[i].IsDir()
 		jIsDir := filtered[j].IsDir()
 		if iIsDir != jIsDir {
 			return iIsDir
 		}
-
-		// Then by the specified sort criteria
 		switch {
 		case flags["t"]:
 			iInfo, _ := filtered[i].Info()
@@ -219,10 +75,154 @@ func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]
 			return filtered[i].Name() < filtered[j].Name()
 		}
 	})
+}
 
-	// Format output
-	if flags["l"] {
-		output = formatLongList(filtered, flags)
+// sortWalkEntries sorts walk entries by sort criteria.
+func sortWalkEntries(entries []walkEntry, flags map[string]bool) {
+	sort.Slice(entries, func(i, j int) bool {
+		iIsDir := entries[i].isDir
+		jIsDir := entries[j].isDir
+		if iIsDir != jIsDir {
+			return iIsDir
+		}
+		switch {
+		case flags["t"]:
+			if flags["r"] {
+				return entries[i].modTime.Before(entries[j].modTime)
+			}
+			return entries[i].modTime.After(entries[j].modTime)
+		case flags["S"]:
+			if flags["r"] {
+				return entries[i].fileSize < entries[j].fileSize
+			}
+			return entries[i].fileSize > entries[j].fileSize
+		default:
+			if flags["r"] {
+				return entries[i].path > entries[j].path
+			}
+			return entries[i].path < entries[j].path
+		}
+	})
+}
+
+// filterHiddenEntries filters out hidden files/directories unless "a" flag is set.
+func filterHiddenEntries(entries []os.DirEntry, showHidden bool) []os.DirEntry {
+	if showHidden {
+		return entries
+	}
+	var filtered []os.DirEntry
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".") {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+// executeListFiles lists files and directories, formatted like ls.
+// Supports context cancellation and various flags similar to ls.
+func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]interface{}) *ToolResult {
+	lp := parseListFilesParams(params)
+
+	info, err := os.Stat(lp.path)
+	if err != nil {
+		return &ToolResult{Success: false, Error: formatFileError(err, lp.path)}
+	}
+
+	// Handle single file
+	if !info.IsDir() {
+		output := info.Name()
+		if lp.flags["l"] {
+			output = formatFileLong(info, lp.flags)
+		}
+		return &ToolResult{
+			Success: true,
+			Output:  output,
+			Extra:   map[string]interface{}{"entriesListed": 1, "path": lp.path},
+		}
+	}
+
+	// Handle recursive listing
+	if lp.flags["R"] {
+		return te.listFilesRecursive(lp)
+	}
+
+	// Handle non-recursive listing
+	return te.listFilesNonRecursive(lp)
+}
+
+// listFilesRecursive handles recursive directory listing.
+func (te *ToolExecutor) listFilesRecursive(lp *listFilesParams) *ToolResult {
+	var resultEntries []walkEntry
+	walkErr := filepath.Walk(lp.path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
+			if fileInfo.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !lp.flags["a"] {
+			if strings.HasPrefix(fileInfo.Name(), ".") {
+				if fileInfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+		relPath, _ := filepath.Rel(lp.path, filePath)
+		resultEntries = append(resultEntries, walkEntry{
+			path:     relPath,
+			isDir:    fileInfo.IsDir(),
+			info:     fileInfo,
+			modTime:  fileInfo.ModTime(),
+			fileSize: fileInfo.Size(),
+		})
+		return nil
+	})
+	if walkErr != nil {
+		return &ToolResult{Success: false, Error: formatFileError(walkErr, lp.path)}
+	}
+
+	sortWalkEntries(resultEntries, lp.flags)
+
+	var output string
+	if lp.flags["l"] {
+		output = formatRecursiveLongList(resultEntries, lp.path, lp.flags)
+	} else {
+		var names []string
+		for _, e := range resultEntries {
+			name := e.path
+			if e.isDir {
+				name += "/"
+			}
+			names = append(names, name)
+		}
+		output = strings.Join(names, "\n")
+	}
+
+	return &ToolResult{
+		Success: true,
+		Output:  output,
+		Extra:   map[string]interface{}{"entriesListed": len(resultEntries), "path": lp.path},
+	}
+}
+
+// listFilesNonRecursive handles non-recursive directory listing.
+func (te *ToolExecutor) listFilesNonRecursive(lp *listFilesParams) *ToolResult {
+	entries, err := os.ReadDir(lp.path)
+	if err != nil {
+		return &ToolResult{Success: false, Error: formatFileError(err, lp.path)}
+	}
+
+	filtered := filterHiddenEntries(entries, lp.flags["a"])
+	sortDirEntries(filtered, lp.flags)
+
+	var output string
+	if lp.flags["l"] {
+		output = formatLongList(filtered, lp.flags)
 	} else {
 		output = formatSimpleList(filtered)
 	}
@@ -230,10 +230,7 @@ func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]
 	return &ToolResult{
 		Success: true,
 		Output:  output,
-		Extra: map[string]interface{}{
-			"entriesListed": len(filtered),
-			"path":          path,
-		},
+		Extra:   map[string]interface{}{"entriesListed": len(filtered), "path": lp.path},
 	}
 }
 
