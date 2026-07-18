@@ -227,12 +227,12 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
 - **Status**: Still open — the estimate is the best available value until the next API response arrives.
 
-#### C1. `handleStreamResponse` in `inference.go` is 435 Lines — Extremely Complex **[PARTIALLY FIXED]**
+#### C1. `handleStreamResponse` in `inference.go` is 435 Lines — Extremely Complex **[FIXED]**
 - **File**: `inference/inference.go`
 - **Issue**: The `handleStreamResponse` function is 435 lines long with deeply nested logic. It contains an inline closure (`processToolCallDelta`) that itself spans ~100 lines with complex tool call indexing logic. The function handles SSE parsing, multi-line JSON accumulation, token counting from two different API formats, tool call delta merging, and streaming callbacks — all in a single monolithic function.
 - **Impact**: High maintenance burden, difficult to test, easy to introduce bugs when modifying streaming behavior.
 - **Recommendation**: Break into smaller functions: `parseSSEStream`, `processToolCallDelta`, `extractTokenUsage`, `buildFinalResponse`.
-- **Fix**: Extracted `handleStreamResponse` into `stream.go` with helper functions (`processToolCallDelta`, `extractTokenUsage`, `processDelta`, `buildStreamResponse`). The `streamState` struct holds state for processing streaming responses. This reduces the complexity of `inference.go` significantly.
+- **Fix**: Extracted `handleStreamResponse` into `stream.go` with helper functions (`processToolCallDelta`, `extractTokenUsage`, `processDelta`, `buildStreamResponse`). The `streamState` struct holds state for processing streaming responses. This reduces the complexity of `inference.go` significantly. The function is now 176 lines (down from 435).
 
 #### C2. `runInteractiveMode` in `main.go` is 350 Lines — Too Many Responsibilities **[FIXED]**
 - **File**: `main.go`
