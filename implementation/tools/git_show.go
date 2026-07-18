@@ -11,20 +11,18 @@ import (
 	"strings"
 )
 
-// executeGitShow shows details of a specific commit with context support.
-func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]interface{}) *ToolResult {
-	// Parse parameters
+// gitShowParams holds the parsed parameters for a git_show operation.
+type gitShowParams struct {
+	path   string
+	commit string
+	flags  []string
+}
+
+// parseGitShowParams extracts and validates git_show parameters from the tool params map.
+func parseGitShowParams(params map[string]interface{}) *gitShowParams {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
-	}
-
-	// Validate path exists and is accessible
-	if _, err := os.Stat(path); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
-		}
 	}
 
 	commit := "HEAD"
@@ -32,14 +30,16 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 		commit = c
 	}
 
-	// Parse flags
 	flags := parseFlagsParamToSlice(params)
 
-	// Build git show command
-	args := []string{"show", commit}
+	return &gitShowParams{path: path, commit: commit, flags: flags}
+}
 
-	// Add format flags based on options
-	for _, flag := range flags {
+// buildGitShowArgs builds the git show command arguments.
+func buildGitShowArgs(gp *gitShowParams) []string {
+	args := []string{"show", gp.commit}
+
+	for _, flag := range gp.flags {
 		switch flag {
 		case "stat":
 			args = append(args, "--stat")
@@ -68,69 +68,65 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 		}
 	}
 
+	return args
+}
+
+// executeGitShow shows details of a specific commit with context support.
+func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]interface{}) *ToolResult {
+	gp := parseGitShowParams(params)
+
+	// Validate path exists and is accessible
+	if _, err := os.Stat(gp.path); err != nil {
+		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found or not accessible: %s", gp.path)}
+	}
+
+	args := buildGitShowArgs(gp)
+
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
-	showCmdDir := path
-	showSubpath := ""
-	if path != "." {
-		// Check if path is itself a git repo root
-		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	cmdDir := gp.path
+	subpath := ""
+	if gp.path != "." {
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
 			repoRoot := strings.TrimSpace(string(repoRootOut))
-			if repoRoot == path || repoRoot == "." {
-				showCmdDir = path
+			if repoRoot == gp.path || repoRoot == "." {
+				cmdDir = gp.path
 			} else {
-				showCmdDir = repoRoot
-				relPath, relErr := filepath.Rel(repoRoot, path)
+				cmdDir = repoRoot
+				relPath, relErr := filepath.Rel(repoRoot, gp.path)
 				if relErr == nil {
-					showSubpath = relPath
+					subpath = relPath
 				}
 			}
 		}
 	}
 
-	// Add subpath to limit show scope
-	if showSubpath != "" {
-		args = append(args, "--", showSubpath)
+	if subpath != "" {
+		args = append(args, "--", subpath)
 	}
 
 	// Execute git show with context for cancellation support
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = showCmdDir
+	cmd.Dir = cmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		// Check if it was cancelled
 		if ctx.Err() != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("git show was cancelled: %v", ctx.Err()),
-			}
+			return &ToolResult{Success: false, Error: fmt.Sprintf("git show was cancelled: %v", ctx.Err())}
 		}
-		// Check if it's a git repository
-		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   "not a git repository",
-			}
+			return &ToolResult{Success: false, Error: "not a git repository"}
 		}
-		// Check if the error is "no commits yet"
 		if strings.Contains(string(output), "does not have any commits yet") {
 			return &ToolResult{
 				Success: true,
 				Output:  "No commits found.",
-				Extra: map[string]interface{}{
-					"path":   path,
-					"commit": commit,
-					"flags":  flags,
-				},
+				Extra:   map[string]interface{}{"path": gp.path, "commit": gp.commit, "flags": gp.flags},
 			}
 		}
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("git show failed: %s", string(output)),
-		}
+		return &ToolResult{Success: false, Error: fmt.Sprintf("git show failed: %s", string(output))}
 	}
 
 	resultStr := strings.TrimSpace(string(output))
@@ -138,7 +134,6 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 		resultStr = "No information available for the specified commit."
 	}
 
-	// Truncate if excessively large (> 50KB)
 	if len(resultStr) > 50000 {
 		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
 	}
@@ -146,8 +141,6 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 	return &ToolResult{
 		Success: true,
 		Output:  resultStr,
-		Extra: map[string]interface{}{
-			"commitReference": commit,
-		},
+		Extra:   map[string]interface{}{"commitReference": gp.commit},
 	}
 }
