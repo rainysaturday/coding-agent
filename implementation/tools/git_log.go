@@ -11,20 +11,20 @@ import (
 	"strings"
 )
 
-// executeGitLog views the commit history of a git repository with context support.
-func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]interface{}) *ToolResult {
-	// Parse parameters
+// gitLogParams holds the parsed parameters for a git_log operation.
+type gitLogParams struct {
+	path      string
+	reference string
+	count     int
+	flags     []string
+	grep      string
+}
+
+// parseGitLogParams extracts and validates git_log parameters from the tool params map.
+func parseGitLogParams(params map[string]interface{}) *gitLogParams {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
-	}
-
-	// Validate path exists and is accessible
-	if _, err := os.Stat(path); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
-		}
 	}
 
 	reference := ""
@@ -40,36 +40,23 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		count = 1000
 	}
 
-	// Parse flags
 	flags := parseFlagsParamToSlice(params)
 
-	// Build git log command
-	args := []string{"log", fmt.Sprintf("--max-count=%d", count)}
-
-	// Validate conflicting format flags
-	if hasFlag(flags, "oneline") {
-		if hasFlag(flags, "stat") {
-			return &ToolResult{
-				Success: false,
-				Error:   "conflicting flags: --oneline cannot be used with --stat",
-			}
-		}
-		if hasFlag(flags, "patch") {
-			return &ToolResult{
-				Success: false,
-				Error:   "conflicting flags: --oneline cannot be used with --patch",
-			}
-		}
-		if hasFlag(flags, "shortstat") {
-			return &ToolResult{
-				Success: false,
-				Error:   "conflicting flags: --oneline cannot be used with --shortstat",
-			}
-		}
+	grep := ""
+	if gp, ok := params["grep"].(string); ok && gp != "" {
+		grep = gp
+	} else if reference != "" {
+		grep = reference
 	}
 
-	// Add format flags based on options (must come before reference and path)
-	for _, flag := range flags {
+	return &gitLogParams{path: path, reference: reference, count: count, flags: flags, grep: grep}
+}
+
+// buildGitLogArgs builds the git log command arguments.
+func buildGitLogArgs(gp *gitLogParams) []string {
+	args := []string{"log", fmt.Sprintf("--max-count=%d", gp.count)}
+
+	for _, flag := range gp.flags {
 		switch flag {
 		case "s":
 			args = append(args, "--no-patch")
@@ -88,16 +75,8 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		case "follow":
 			args = append(args, "--follow")
 		case "grep":
-			// Use dedicated grep parameter for searching commit messages
-			grepParam := ""
-			if gp, ok := params["grep"].(string); ok && gp != "" {
-				grepParam = gp
-			} else if reference != "" {
-				// Fall back to reference for backwards compatibility
-				grepParam = reference
-			}
-			if grepParam != "" {
-				args = append(args, "--grep="+grepParam)
+			if gp.grep != "" {
+				args = append(args, "--grep="+gp.grep)
 			}
 		case "decorate":
 			args = append(args, "--decorate")
@@ -108,27 +87,50 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		}
 	}
 
-	// Add reference if specified
-	if reference != "" {
-		args = append(args, reference)
+	if gp.reference != "" {
+		args = append(args, gp.reference)
 	}
+
+	return args
+}
+
+// executeGitLog views the commit history of a git repository with context support.
+func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]interface{}) *ToolResult {
+	gp := parseGitLogParams(params)
+
+	// Validate path exists and is accessible
+	if _, err := os.Stat(gp.path); err != nil {
+		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found or not accessible: %s", gp.path)}
+	}
+
+	// Validate conflicting format flags
+	if hasFlag(gp.flags, "oneline") {
+		if hasFlag(gp.flags, "stat") {
+			return &ToolResult{Success: false, Error: "conflicting flags: --oneline cannot be used with --stat"}
+		}
+		if hasFlag(gp.flags, "patch") {
+			return &ToolResult{Success: false, Error: "conflicting flags: --oneline cannot be used with --patch"}
+		}
+		if hasFlag(gp.flags, "shortstat") {
+			return &ToolResult{Success: false, Error: "conflicting flags: --oneline cannot be used with --shortstat"}
+		}
+	}
+
+	args := buildGitLogArgs(gp)
 
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
-	cmdDir := path
+	cmdDir := gp.path
 	subpath := ""
-	if path != "." {
-		// Check if path is itself a git repo root
-		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	if gp.path != "." {
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
-			// path is a git repo root (or . itself)
 			repoRoot := strings.TrimSpace(string(repoRootOut))
-			if repoRoot == path || repoRoot == "." {
-				cmdDir = path
+			if repoRoot == gp.path || repoRoot == "." {
+				cmdDir = gp.path
 			} else {
-				// path is a subdirectory within a git repo
 				cmdDir = repoRoot
-				relPath, relErr := filepath.Rel(repoRoot, path)
+				relPath, relErr := filepath.Rel(repoRoot, gp.path)
 				if relErr == nil {
 					subpath = relPath
 				}
@@ -136,7 +138,6 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		}
 	}
 
-	// Add subpath to limit log scope
 	if subpath != "" {
 		args = append(args, "--", subpath)
 	}
@@ -147,38 +148,21 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		// Check if it was cancelled
 		if ctx.Err() != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("git log was cancelled: %v", ctx.Err()),
-			}
+			return &ToolResult{Success: false, Error: fmt.Sprintf("git log was cancelled: %v", ctx.Err())}
 		}
-		// Check if it's a git repository
-		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   "not a git repository",
-			}
+			return &ToolResult{Success: false, Error: "not a git repository"}
 		}
-		// Check if the error is "no commits yet"
 		if strings.Contains(string(output), "does not have any commits yet") {
 			return &ToolResult{
 				Success: true,
 				Output:  "No commits found.",
-				Extra: map[string]interface{}{
-					"path":      path,
-					"count":     count,
-					"reference": reference,
-					"flags":     flags,
-				},
+				Extra:   map[string]interface{}{"path": gp.path, "count": gp.count, "reference": gp.reference, "flags": gp.flags},
 			}
 		}
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("git log failed: %s", string(output)),
-		}
+		return &ToolResult{Success: false, Error: fmt.Sprintf("git log failed: %s", string(output))}
 	}
 
 	resultStr := strings.TrimSpace(string(output))
@@ -186,7 +170,6 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		resultStr = "No commits found."
 	}
 
-	// Truncate if excessively large (> 50KB)
 	if len(resultStr) > 50000 {
 		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
 	}
@@ -194,11 +177,6 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 	return &ToolResult{
 		Success: true,
 		Output:  resultStr,
-		Extra: map[string]interface{}{
-			"path":      path,
-			"count":     count,
-			"reference": reference,
-			"flags":     flags,
-		},
+		Extra:   map[string]interface{}{"path": gp.path, "count": gp.count, "reference": gp.reference, "flags": gp.flags},
 	}
 }
