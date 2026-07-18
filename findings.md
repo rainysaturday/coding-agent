@@ -234,11 +234,12 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Recommendation**: Break into smaller functions: `parseSSEStream`, `processToolCallDelta`, `extractTokenUsage`, `buildFinalResponse`.
 - **Fix**: Extracted `handleStreamResponse` into `stream.go` with helper functions (`processToolCallDelta`, `extractTokenUsage`, `processDelta`, `buildStreamResponse`). The `streamState` struct holds state for processing streaming responses. This reduces the complexity of `inference.go` significantly.
 
-#### C2. `runInteractiveMode` in `main.go` is 350 Lines — Too Many Responsibilities
+#### C2. `runInteractiveMode` in `main.go` is 350 Lines — Too Many Responsibilities **[FIXED]**
 - **File**: `main.go`
 - **Issue**: The `runInteractiveMode` function handles TUI initialization, agent setup, signal management (with two separate signal handler goroutines and a `signalState` struct), the main event loop, command dispatch (/stats, /clear, /read-only, /compress, /dump, /goal), and prompt/execution lifecycle. This is approximately 5-7 separable responsibilities in one function.
 - **Impact**: Difficult to test, hard to reason about, fragile when modifying any single concern.
 - **Recommendation**: Extract: `setupSignalHandler`, `setupInteractiveEnvironment`, `handleInteractiveCommand`, `runAgentWithStreaming`, `displayAgentResult`.
+- **Fix**: Extracted `handleInteractiveCommand` and `runAgentWithStreaming` helper functions. The inline agent execution block in `runInteractiveMode` was replaced with a call to `runAgentWithStreaming`. This reduced the function from ~350 lines to ~230 lines.
 
 ---
 
