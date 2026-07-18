@@ -409,6 +409,135 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 	return nil
 }
 
+// handleInteractiveCommand handles interactive mode commands.
+// Returns (input string, shouldContinue bool).
+// If the command is handled (not /goal), input is unchanged and shouldContinue is true.
+// If the command is /goal, input is modified to the goal prompt and shouldContinue is false.
+func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TUI, cfg *config.Config) (string, bool) {
+	if !strings.HasPrefix(input, "/") {
+		return input, false
+	}
+
+	fullCommand := strings.TrimPrefix(input, "/")
+	parts := strings.SplitN(fullCommand, " ", 2)
+	command := parts[0]
+
+	switch command {
+	case "stats":
+		stats := ag.GetStats()
+		tuiInstance.DisplayStats(stats)
+		return input, true
+	case "clear":
+		tuiInstance.ClearOutput()
+		return input, true
+	case "clear-history":
+		tuiInstance.ClearHistory()
+		return input, true
+	case "read-only":
+		ag.GetToolExecutor().SetReadOnly(true)
+		fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+		return input, true
+	case "compress":
+		fmt.Print("\n[Compressing context...]")
+		timeout := time.Duration(cfg.ReadTimeout) * time.Second
+		if timeout == 0 {
+			timeout = 24 * 60 * 60 * time.Second // Default to 24 hours if not set
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		err := ag.CompressContext(ctx)
+		cancel()
+		if err != nil {
+			fmt.Printf("%s[Compression failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+		} else {
+			fmt.Printf("%s[Context compressed successfully]%s\n", colors.GetColor("green"), colors.GetColor("reset"))
+		}
+		return input, true
+	case "goal":
+		var goalPrompt string
+		if len(parts) > 1 {
+			goalPrompt = strings.TrimSpace(parts[1])
+		}
+		if goalPrompt == "" {
+			fmt.Printf("%sUsage: /goal <your goal here>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+			return input, true
+		}
+		ag.SetGoal(goalPrompt)
+		fmt.Printf("%s[Goal mode activated: %q]%s\n", colors.GetColor("magenta"), goalPrompt, colors.GetColor("reset"))
+		return goalPrompt, false
+	case "goal-off":
+		ag.ClearGoal()
+		fmt.Printf("%s[Goal mode deactivated]%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		return input, true
+	case "dump":
+		path, err := ag.DumpContext()
+		if err != nil {
+			fmt.Printf("%s[Dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+		} else {
+			fmt.Printf("%s[Context dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
+		}
+		return input, true
+	default:
+		fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
+		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		return input, true
+	}
+}
+
+// runAgentWithStreaming runs the agent with streaming and displays the result.
+func runAgentWithStreaming(ctx context.Context, ag *agent.Agent, tuiInstance *tui.TUI, cfg *config.Config, userInput string) {
+	var result *agent.Result
+	var err error
+
+	if cfg.Streaming {
+		// Use streaming mode - tokens appear as they arrive
+		result, err = ag.RunStream(ctx, userInput, func(chunk inference.StreamingChunk) {
+			// Stream each chunk immediately through TUI with appropriate coloring
+			switch chunk.ContentType {
+			case inference.StreamingContentTypeReasoning:
+				tuiInstance.StreamReasoningChunk(chunk.Text)
+			case inference.StreamingContentTypeGoal:
+				tuiInstance.StreamGoalChunk(chunk.Text)
+			default:
+				tuiInstance.StreamNormalChunk(chunk.Text)
+			}
+		})
+		// Ensure streaming session is ended even on error
+		defer tuiInstance.StreamEnd()
+	} else {
+		// Non-streaming mode
+		result, err = ag.Run(ctx, userInput)
+	}
+
+	// Check if we were cancelled
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+		return
+	}
+
+	if err != nil {
+		fmt.Printf("%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+		return
+	}
+
+	// Display final output if not already streamed
+	if !cfg.Streaming && result.FinalOutput != "" {
+		if result.Reasoning != "" {
+			tuiInstance.AddOutputf("\n%s[Assistant]%s %s[Reasoning]\n%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
+		} else {
+			tuiInstance.AddOutputf("\n%s[Assistant]%s %s%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
+		}
+	}
+
+	// Display summary if verbose
+	if cfg.Verbose {
+		tuiInstance.AddOutputf("\n--- Summary ---")
+		tuiInstance.AddOutputf("Steps: %d, Tokens: %d", len(result.Steps), result.TokenUsage)
+		if result.Reasoning != "" {
+			tuiInstance.AddOutputf("Reasoning: %d chars", len(result.Reasoning))
+		}
+	}
+}
+
 func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
@@ -597,79 +726,10 @@ func runInteractiveMode(cfg *config.Config) error {
 		}
 
 		// Handle commands (with / prefix)
-		if strings.HasPrefix(input, "/") {
-			// Extract the full command string after "/"
-			fullCommand := strings.TrimPrefix(input, "/")
-			// Split to get the command name and arguments
-			parts := strings.SplitN(fullCommand, " ", 2)
-			command := parts[0]
-
-			switch command {
-			case "stats":
-				stats := ag.GetStats()
-				tuiInstance.DisplayStats(stats)
-				continue
-			case "clear":
-				tuiInstance.ClearOutput()
-				continue
-			case "clear-history":
-				tuiInstance.ClearHistory()
-				continue
-			case "read-only":
-				ag.GetToolExecutor().SetReadOnly(true)
-				fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-				continue
-			case "compress":
-				fmt.Print("\n[Compressing context...]")
-				timeout := time.Duration(cfg.ReadTimeout) * time.Second
-				if timeout == 0 {
-					timeout = 24 * 60 * 60 * time.Second // Default to 24 hours if not set
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), timeout)
-				err := ag.CompressContext(ctx)
-				cancel()
-				if err != nil {
-					fmt.Printf("%s[Compression failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-				} else {
-					fmt.Printf("%s[Context compressed successfully]%s\n", colors.GetColor("green"), colors.GetColor("reset"))
-				}
-				continue
-			case "goal":
-				// Extract the goal prompt (everything after "/goal ")
-				var goalPrompt string
-				if len(parts) > 1 {
-					goalPrompt = strings.TrimSpace(parts[1])
-				}
-				if goalPrompt == "" {
-					fmt.Printf("%sUsage: /goal <your goal here>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-					continue
-				}
-				ag.SetGoal(goalPrompt)
-				fmt.Printf("%s[Goal mode activated: %q]%s\n", colors.GetColor("magenta"), goalPrompt, colors.GetColor("reset"))
-				// Set input to goalPrompt so the agent starts working immediately
-				// with the goal as the first user prompt
-				input = goalPrompt
-			case "goal-off":
-				ag.ClearGoal()
-				fmt.Printf("%s[Goal mode deactivated]%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-				continue
-			case "dump":
-				path, err := ag.DumpContext()
-				if err != nil {
-					fmt.Printf("%s[Dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-				} else {
-					fmt.Printf("%s[Context dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
-				}
-				continue
-
-			default:
-				// Unknown command - show error
-				fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-				fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-				continue
-			}
+		input, shouldContinue := handleInteractiveCommand(input, ag, tuiInstance, cfg)
+		if shouldContinue {
+			continue
 		}
-
 		// Get current root context for this request
 		sigMu.Lock()
 		currentRootCtx := st.rootCtx
@@ -702,58 +762,7 @@ func runInteractiveMode(cfg *config.Config) error {
 		go func(userInput string) {
 			defer wg.Done()
 			defer cancel()
-
-			var result *agent.Result
-			var err error
-
-			if cfg.Streaming {
-				// Use streaming mode - tokens appear as they arrive
-				result, err = ag.RunStream(ctx, userInput, func(chunk inference.StreamingChunk) {
-					// Stream each chunk immediately through TUI with appropriate coloring
-					switch chunk.ContentType {
-					case inference.StreamingContentTypeReasoning:
-						tuiInstance.StreamReasoningChunk(chunk.Text)
-					case inference.StreamingContentTypeGoal:
-						tuiInstance.StreamGoalChunk(chunk.Text)
-					default:
-						tuiInstance.StreamNormalChunk(chunk.Text)
-					}
-				})
-				// Ensure streaming session is ended even on error
-				defer tuiInstance.StreamEnd()
-			} else {
-				// Non-streaming mode
-				result, err = ag.Run(ctx, userInput)
-			}
-
-			// Check if we were cancelled
-			if err == context.Canceled || err == context.DeadlineExceeded {
-				fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-				return
-			}
-
-			if err != nil {
-				fmt.Printf("%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-				return
-			}
-
-			// Display final output if not already streamed
-			if !cfg.Streaming && result.FinalOutput != "" {
-				if result.Reasoning != "" {
-					tuiInstance.AddOutputf("\n%s[Assistant]%s %s[Reasoning]\n%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
-				} else {
-					tuiInstance.AddOutputf("\n%s[Assistant]%s %s%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
-				}
-			}
-
-			// Display summary if verbose
-			if cfg.Verbose {
-				tuiInstance.AddOutputf("\n--- Summary ---")
-				tuiInstance.AddOutputf("Steps: %d, Tokens: %d", len(result.Steps), result.TokenUsage)
-				if result.Reasoning != "" {
-					tuiInstance.AddOutputf("Reasoning: %d chars", len(result.Reasoning))
-				}
-			}
+			runAgentWithStreaming(ctx, ag, tuiInstance, cfg, userInput)
 		}(input)
 
 		// Loop continues, but wg.Wait() at top will block until done
