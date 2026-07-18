@@ -379,11 +379,12 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Recommendation**: Define package-level or global constants: `FilePermWrite = 0644`, `FilePermDir = 0755`, `FilePermRead = 0400`.
 - **Fix**: Used exported file permission constants from the tools package, removing duplicates in agent.go and main.go.
 
-#### M11. Several Tool Execute Functions Are Very Long (>200 lines)
+#### M11. Several Tool Execute Functions Are Very Long (>200 lines) **[FIXED]**
 - **Files**: `tools/grep.go` (executeGrep: 268 lines), `tools/list_files.go` (executeListFiles: 231 lines), `tools/move_text.go` (executeMoveText: 241 lines), `tools/git_log.go` (executeGitLog: 200 lines), `tools/git_diff.go` (executeGitDiff: 185 lines), `tools/git_show.go` (executeGitShow: 149 lines)
 - **Issue**: These functions handle parameter extraction, flag parsing, file operations, error handling, result formatting, and extra metadata construction all in a single function. The grep tool alone has ~268 lines covering pattern compilation, file traversal, result aggregation, and output formatting.
 - **Impact**: Hard to test individual concerns, difficult to reason about edge cases, high bug-introduction risk when modifying.
 - **Recommendation**: Break each into helper functions: `parseParams`, `executeSearch`, `formatResult` pattern.
+- **Fix**: Extracted helper functions from all 6 tool execute functions: `parseGrepParams`, `compileGrepRegex`, `formatGrepResults` (grep.go), `parseListFilesParams`, `sortDirEntries`, `sortWalkEntries`, `filterHiddenEntries`, `listFilesRecursive`, `listFilesNonRecursive` (list_files.go), `moveTextParams`, `parseMoveTextParams`, `executeSameFileMove`, `executeCrossFileMove` (move_text.go), `gitLogParams`, `parseGitLogParams`, `buildGitLogArgs` (git_log.go), `gitDiffParams`, `parseGitDiffParams`, `buildGitDiffArgs` (git_diff.go), `gitShowParams`, `parseGitShowParams`, `buildGitShowArgs` (git_show.go). All execute functions are now well under 200 lines.
 ### LOW ISSUES
 
 #### L1. `grep` Tool — `-f` Flag for Pattern File Has No Documentation **[FIXED]**
