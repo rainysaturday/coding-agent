@@ -212,8 +212,6 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
 - **Status**: Still open — the estimate is the best available value until the next API response arrives.
 
-
-
 ---
 
 ### HIGH ISSUES
@@ -225,11 +223,6 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 
 ---
 
-
-
-
-
-
 ### MEDIUM ISSUES
 
 #### M7. Config File Loading: Unknown Keys Print Warning but Continue
@@ -239,11 +232,6 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 
 ---
 
-
-
-
-
-
 ### LOW ISSUES
 
 #### L6. `config.go` — `loadConfigFile` Reads File Twice (Once in ParseArgs, Once in LoadConfigFile)
@@ -251,10 +239,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - **Issue**: `ParseArgs()` reads the config file path from args, then `loadConfigFile()` reads and parses it. But `ParseArgs()` already iterates through all args including `--config`, so there's no double-read. This is fine.
 - **No actual issue here** — misidentified initially.
 
-
-
 ---
-
 
 ## 10. Requirements Coverage
 
