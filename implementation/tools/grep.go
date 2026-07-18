@@ -19,45 +19,44 @@ type matchResult struct {
 	line     string
 }
 
-// executeGrep searches through file contents using grep-like pattern matching.
-// Supports context cancellation, recursive search, and various grep-like flags.
-func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]interface{}) *ToolResult {
+// grepParams holds the parsed parameters for a grep operation.
+type grepParams struct {
+	pattern string
+	path    string
+	flags   map[string]bool
+}
+
+// parseGrepParams extracts and validates grep parameters from the tool params map.
+func parseGrepParams(params map[string]interface{}) (*grepParams, *ToolResult) {
 	pattern, ok := params["pattern"].(string)
 	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: pattern",
-		}
+		return nil, &ToolResult{Success: false, Error: "missing required parameter: pattern"}
 	}
 	if strings.TrimSpace(pattern) == "" {
-		return &ToolResult{
-			Success: false,
-			Error:   "pattern cannot be empty",
-		}
+		return nil, &ToolResult{Success: false, Error: "pattern cannot be empty"}
 	}
 
-	// Parse parameters and flags first (flags affect pattern handling and search)
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
 	}
 
 	flags := parseFlagsParamToMap(params)
-	// Ensure all known keys exist
 	for _, k := range []string{"i", "r", "c", "n", "v", "l", "a", "f"} {
 		if _, ok := flags[k]; !ok {
 			flags[k] = false
 		}
 	}
 
-	// If "f" flag is set, use pattern as a file path containing patterns (one per line)
+	return &grepParams{pattern: pattern, path: path, flags: flags}, nil
+}
+
+// compileGrepRegex handles pattern file reading and regex compilation.
+func compileGrepRegex(pattern string, flags map[string]bool) (*regexp.Regexp, *ToolResult) {
 	if flags["f"] {
 		patternContent, err := os.ReadFile(pattern)
 		if err != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("failed to read pattern file: %v", err),
-			}
+			return nil, &ToolResult{Success: false, Error: fmt.Sprintf("failed to read pattern file: %v", err)}
 		}
 		lines := strings.Split(strings.TrimSpace(string(patternContent)), "\n")
 		var escaped []string
@@ -68,135 +67,26 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 			}
 		}
 		if len(escaped) == 0 {
-			return &ToolResult{
-				Success: false,
-				Error:   "pattern file is empty",
-			}
+			return nil, &ToolResult{Success: false, Error: "pattern file is empty"}
 		}
 		pattern = strings.Join(escaped, "|")
 	}
 
-	// Compile the regex pattern.
-	// If case-insensitive flag is set, compile with (?i) prefix
-	// so the pattern itself handles case insensitivity.
 	patternToCompile := pattern
 	if flags["i"] {
 		patternToCompile = "(?i)" + pattern
 	}
 	re, err := regexp.Compile(patternToCompile)
 	if err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("invalid regex pattern: %v", err),
-		}
+		return nil, &ToolResult{Success: false, Error: fmt.Sprintf("invalid regex pattern: %v", err)}
 	}
+	return re, nil
+}
 
-	// Build a slice to collect results
-	var results []matchResult
-	var skipCount int
-	var binaryCount int
-	const maxResults = 5000
-
-	// Check if path is a single file
-	info, err := os.Stat(path)
-	if err == nil && !info.IsDir() {
-		// It's a file, search directly
-		res, sc, bc := te.searchFile(path, re, flags, maxResults)
-		skipCount += sc
-		binaryCount += bc
-		results = append(results, res...)
-	} else if info != nil && info.IsDir() {
-		// It's a directory, search recursively if flag is set
-		if flags["r"] {
-			err = filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
-				// Check for cancellation
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				if walkErr != nil {
-					return nil // Skip inaccessible files
-				}
-				// Skip hidden directories and files (unless "a" flag is set)
-				if !flags["a"] {
-					if strings.HasPrefix(fileInfo.Name(), ".") && strings.Count(filePath, "/") > 0 {
-						if fileInfo.IsDir() {
-							return filepath.SkipDir
-						}
-						return nil
-					}
-				}
-				// Skip .git directory
-				if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
-					if fileInfo.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				if !fileInfo.IsDir() {
-					if len(results) >= maxResults {
-						return filepath.SkipDir
-					}
-					res, sc, bc := te.searchFile(filePath, re, flags, maxResults-len(results))
-					skipCount += sc
-					binaryCount += bc
-					results = append(results, res...)
-				}
-				return nil
-			})
-		} else {
-			// Non-recursive, just list files in the directory
-			// Check for cancellation before reading directory
-			select {
-			case <-ctx.Done():
-				return &ToolResult{
-					Success: false,
-					Error:   "operation was cancelled",
-				}
-			default:
-			}
-			entries, err := os.ReadDir(path)
-			if err != nil {
-				return &ToolResult{
-					Success: false,
-					Error:   formatFileError(err, path),
-				}
-			}
-			for _, entry := range entries {
-				// Check for cancellation between files
-				select {
-				case <-ctx.Done():
-					return &ToolResult{
-						Success: false,
-						Error:   "operation was cancelled",
-					}
-				default:
-				}
-				if entry.IsDir() {
-					continue
-				}
-				fullPath := filepath.Join(path, entry.Name())
-				if len(results) >= maxResults {
-					break
-				}
-				res, sc, bc := te.searchFile(fullPath, re, flags, maxResults-len(results))
-				skipCount += sc
-				binaryCount += bc
-				results = append(results, res...)
-			}
-		}
-	} else {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("path not found: %s", path),
-		}
-	}
-
-	// Build output
+// formatGrepResults formats grep results based on flags.
+func formatGrepResults(results []matchResult, flags map[string]bool) string {
 	var output strings.Builder
 
-	// If filenames-only flag, just list matching files
 	if flags["l"] {
 		fileSet := make(map[string]bool)
 		for _, r := range results {
@@ -210,36 +100,131 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 		for _, f := range files {
 			output.WriteString(f + "\n")
 		}
+	} else if flags["c"] {
+		countMap := make(map[string]int)
+		for _, r := range results {
+			countMap[r.filePath]++
+		}
+		files := make([]string, 0, len(countMap))
+		for f := range countMap {
+			files = append(files, f)
+		}
+		sort.Strings(files)
+		for _, f := range files {
+			output.WriteString(fmt.Sprintf("%s:%d\n", f, countMap[f]))
+		}
 	} else {
-		// If count flag, show count per file
-		if flags["c"] {
-			countMap := make(map[string]int)
-			for _, r := range results {
-				countMap[r.filePath]++
-			}
-			files := make([]string, 0, len(countMap))
-			for f := range countMap {
-				files = append(files, f)
-			}
-			sort.Strings(files)
-			for _, f := range files {
-				output.WriteString(fmt.Sprintf("%s:%d\n", f, countMap[f]))
-			}
-		} else {
-			// Show matching lines
-			for _, r := range results {
-				if flags["n"] {
-					output.WriteString(fmt.Sprintf("%s:%d:%s\n", r.filePath, r.lineNum, r.line))
-				} else {
-					output.WriteString(fmt.Sprintf("%s:%s\n", r.filePath, r.line))
-				}
+		for _, r := range results {
+			if flags["n"] {
+				output.WriteString(fmt.Sprintf("%s:%d:%s\n", r.filePath, r.lineNum, r.line))
+			} else {
+				output.WriteString(fmt.Sprintf("%s:%s\n", r.filePath, r.line))
 			}
 		}
 	}
 
-	resultStr := strings.TrimSuffix(output.String(), "\n")
+	return strings.TrimSuffix(output.String(), "\n")
+}
 
-	// Add info about skipped files
+// executeGrep searches through file contents using grep-like pattern matching.
+// Supports context cancellation, recursive search, and various grep-like flags.
+func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]interface{}) *ToolResult {
+	gp, errResult := parseGrepParams(params)
+	if errResult != nil {
+		return errResult
+	}
+
+	re, errResult := compileGrepRegex(gp.pattern, gp.flags)
+	if errResult != nil {
+		return errResult
+	}
+
+	// Build a slice to collect results
+	var results []matchResult
+	var skipCount int
+	var binaryCount int
+	const maxResults = 5000
+
+	// Check if path is a single file
+	info, err := os.Stat(gp.path)
+	if err == nil && !info.IsDir() {
+		res, sc, bc := te.searchFile(gp.path, re, gp.flags, maxResults)
+		skipCount += sc
+		binaryCount += bc
+		results = append(results, res...)
+	} else if info != nil && info.IsDir() {
+		if gp.flags["r"] {
+			err = filepath.Walk(gp.path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				if walkErr != nil {
+					return nil
+				}
+				if !gp.flags["a"] {
+					if strings.HasPrefix(fileInfo.Name(), ".") && strings.Count(filePath, "/") > 0 {
+						if fileInfo.IsDir() {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+				}
+				if strings.Contains(filePath, "/.git/") || strings.HasSuffix(filePath, "/.git") {
+					if fileInfo.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if !fileInfo.IsDir() {
+					if len(results) >= maxResults {
+						return filepath.SkipDir
+					}
+					res, sc, bc := te.searchFile(filePath, re, gp.flags, maxResults-len(results))
+					skipCount += sc
+					binaryCount += bc
+					results = append(results, res...)
+				}
+				return nil
+			})
+		} else {
+			select {
+			case <-ctx.Done():
+				return &ToolResult{Success: false, Error: "operation was cancelled"}
+			default:
+			}
+			entries, err := os.ReadDir(gp.path)
+			if err != nil {
+				return &ToolResult{Success: false, Error: formatFileError(err, gp.path)}
+			}
+			for _, entry := range entries {
+				select {
+				case <-ctx.Done():
+					return &ToolResult{Success: false, Error: "operation was cancelled"}
+				default:
+				}
+				if entry.IsDir() {
+					continue
+				}
+				fullPath := filepath.Join(gp.path, entry.Name())
+				if len(results) >= maxResults {
+					break
+				}
+				res, sc, bc := te.searchFile(fullPath, re, gp.flags, maxResults-len(results))
+				skipCount += sc
+				binaryCount += bc
+				results = append(results, res...)
+			}
+		}
+	} else {
+		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found: %s", gp.path)}
+	}
+
+	// Build output
+	resultStr := formatGrepResults(results, gp.flags)
+
+	// Build extra info
 	var extraInfo strings.Builder
 	if binaryCount > 0 {
 		extraInfo.WriteString(fmt.Sprintf("\n[Skipped %d binary file(s)]", binaryCount))
@@ -253,8 +238,8 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 
 	extra := map[string]interface{}{
 		"matchesFound": len(results),
-		"path":         path,
-		"pattern":      pattern,
+		"path":         gp.path,
+		"pattern":      gp.pattern,
 	}
 	if binaryCount > 0 {
 		extra["skippedBinaryFiles"] = binaryCount
