@@ -511,7 +511,7 @@ All 45 requirements files in `/workspace/requirements/` have been implemented:
 - **Subagent config isolation (FIXED)**: Subagents now inherit parent configuration via environment variables and explicit flag passing.
 - **Context compression accuracy**: Token counting after compression uses estimates (inherent design limitation).
 - **Comment vs. code mismatch (FIXED)**: The `reportContextSize` locking pattern was fragile — refactored to accept pre-computed actual size from the caller.
-- **Monolithic functions**: Several key functions are extremely long (435-line `handleStreamResponse`, 350-line `runInteractiveMode`, 268-line `executeGrep`) making them hard to maintain and test. **[PARTIALLY FIXED]**
+- **Monolithic functions**: Several key functions are extremely long (435-line `handleStreamResponse`, 350-line `runInteractiveMode`, 268-line `executeGrep`) making them hard to maintain and test. **[FIXED]**
 - **Duplicated tool definitions**: `buildTools` and `buildReadOnlyTools` have ~240 lines of nearly identical tool definitions. Similarly, `buildSystemPrompt` and `buildReadOnlySystemPrompt` duplicate tool descriptions. **[FIXED]**
 - **Duplicated logic patterns**: Flag parsing is duplicated across 5 tools. Truncation logic is duplicated across 13 tool cases in `formatToolStatus`. **[FIXED]**
 - **Inconsistent patterns**: Directory creation uses both `os.MkdirAll` and `ensureDirectory`. Truncation thresholds vary from 500 to 50000 without rationale. **[FIXED]**
