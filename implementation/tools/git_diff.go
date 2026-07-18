@@ -11,27 +11,25 @@ import (
 	"strings"
 )
 
-// executeGitDiff shows the diff between two commits, branches, or the working tree with context support.
-func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]interface{}) *ToolResult {
-	// Parse parameters
+// gitDiffParams holds the parsed parameters for a git_diff operation.
+type gitDiffParams struct {
+	path       string
+	reference1 string
+	reference2 string
+	flags      []string
+}
+
+// parseGitDiffParams extracts and validates git_diff parameters from the tool params map.
+func parseGitDiffParams(params map[string]interface{}) *gitDiffParams {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
-	}
-
-	// Validate path exists and is accessible
-	if _, err := os.Stat(path); err != nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("path not found or not accessible: %s", path),
-		}
 	}
 
 	reference1 := ""
 	if c, ok := params["reference1"].(string); ok && c != "" {
 		reference1 = c
 	}
-	// Also accept "commit1" for backwards compatibility
 	if reference1 == "" {
 		if c, ok := params["commit1"].(string); ok && c != "" {
 			reference1 = c
@@ -42,21 +40,22 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 	if c, ok := params["reference2"].(string); ok && c != "" {
 		reference2 = c
 	}
-	// Also accept "commit2" for backwards compatibility
 	if reference2 == "" {
 		if c, ok := params["commit2"].(string); ok && c != "" {
 			reference2 = c
 		}
 	}
 
-	// Parse flags
 	flags := parseFlagsParamToSlice(params)
 
-	// Build git diff command
+	return &gitDiffParams{path: path, reference1: reference1, reference2: reference2, flags: flags}
+}
+
+// buildGitDiffArgs builds the git diff command arguments.
+func buildGitDiffArgs(gp *gitDiffParams) []string {
 	args := []string{"diff"}
 
-	// Add format flags based on options
-	for _, flag := range flags {
+	for _, flag := range gp.flags {
 		switch flag {
 		case "stat":
 			args = append(args, "--stat")
@@ -99,71 +98,66 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 		}
 	}
 
-	// Handle reference1 and reference2
-	if reference1 != "" && reference2 != "" {
-		// Diff between two commits/refs
-		args = append(args, reference1, reference2)
-	} else if reference1 != "" {
-		// Diff between commit and working tree (or index)
-		args = append(args, reference1)
-	} else {
-		// Default: diff working tree against index
-		if reference2 != "" {
-			// Diff index against a commit
-			args = append(args, reference2)
-		}
+	if gp.reference1 != "" && gp.reference2 != "" {
+		args = append(args, gp.reference1, gp.reference2)
+	} else if gp.reference1 != "" {
+		args = append(args, gp.reference1)
+	} else if gp.reference2 != "" {
+		args = append(args, gp.reference2)
 	}
+
+	return args
+}
+
+// executeGitDiff shows the diff between two commits, branches, or the working tree with context support.
+func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]interface{}) *ToolResult {
+	gp := parseGitDiffParams(params)
+
+	// Validate path exists and is accessible
+	if _, err := os.Stat(gp.path); err != nil {
+		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found or not accessible: %s", gp.path)}
+	}
+
+	args := buildGitDiffArgs(gp)
 
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>
-	diffCmdDir := path
-	diffSubpath := ""
-	if path != "." {
-		repoRootCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	cmdDir := gp.path
+	subpath := ""
+	if gp.path != "." {
+		repoRootCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if repoRootOut, repoRootErr := repoRootCmd.Output(); repoRootErr == nil {
 			repoRoot := strings.TrimSpace(string(repoRootOut))
-			if repoRoot == path || repoRoot == "." {
-				diffCmdDir = path
+			if repoRoot == gp.path || repoRoot == "." {
+				cmdDir = gp.path
 			} else {
-				diffCmdDir = repoRoot
-				relPath, relErr := filepath.Rel(repoRoot, path)
+				cmdDir = repoRoot
+				relPath, relErr := filepath.Rel(repoRoot, gp.path)
 				if relErr == nil {
-					diffSubpath = relPath
+					subpath = relPath
 				}
 			}
 		}
 	}
 
-	// Add subpath to limit diff scope
-	if diffSubpath != "" {
-		args = append(args, "--", diffSubpath)
+	if subpath != "" {
+		args = append(args, "--", subpath)
 	}
 
 	// Execute git diff with context for cancellation support
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = diffCmdDir
+	cmd.Dir = cmdDir
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		// Check if it was cancelled
 		if ctx.Err() != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   fmt.Sprintf("git diff was cancelled: %v", ctx.Err()),
-			}
+			return &ToolResult{Success: false, Error: fmt.Sprintf("git diff was cancelled: %v", ctx.Err())}
 		}
-		// Check if it's a git repository
-		gitCmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+		gitCmd := exec.CommandContext(ctx, "git", "-C", gp.path, "rev-parse", "--show-toplevel")
 		if _, err2 := gitCmd.CombinedOutput(); err2 != nil {
-			return &ToolResult{
-				Success: false,
-				Error:   "not a git repository",
-			}
+			return &ToolResult{Success: false, Error: "not a git repository"}
 		}
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("git diff failed: %s", string(output)),
-		}
+		return &ToolResult{Success: false, Error: fmt.Sprintf("git diff failed: %s", string(output))}
 	}
 
 	resultStr := strings.TrimSpace(string(output))
@@ -171,7 +165,6 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 		resultStr = "No differences found."
 	}
 
-	// Truncate if excessively large (> 50KB)
 	if len(resultStr) > 50000 {
 		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
 	}
@@ -179,11 +172,6 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 	return &ToolResult{
 		Success: true,
 		Output:  resultStr,
-		Extra: map[string]interface{}{
-			"path":       path,
-			"reference1": reference1,
-			"reference2": reference2,
-			"flags":      flags,
-		},
+		Extra:   map[string]interface{}{"path": gp.path, "reference1": gp.reference1, "reference2": gp.reference2, "flags": gp.flags},
 	}
 }
