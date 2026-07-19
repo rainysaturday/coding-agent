@@ -45,8 +45,6 @@ func parseGitLogParams(params map[string]interface{}) *gitLogParams {
 	grep := ""
 	if gp, ok := params["grep"].(string); ok && gp != "" {
 		grep = gp
-	} else if reference != "" {
-		grep = reference
 	}
 
 	return &gitLogParams{path: path, reference: reference, count: count, flags: flags, grep: grep}
