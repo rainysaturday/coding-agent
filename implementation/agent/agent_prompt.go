@@ -117,7 +117,6 @@ func readOnlyOnlyToolDescriptions() string {
       - reference1 (string, optional): First git reference for comparison (commit hash, branch, tag; omit for working tree)
       - reference2 (string, optional): Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)
       - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
-     - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
     How to call: Use git_diff to compare different versions of files, branches, or commits.
     Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree`
 }
