@@ -15,7 +15,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
     main.go              - Entry point, CLI parsing, interactive & one-shot modes
     agent/               - Core agent loop (agent.go, agent_context.go, agent_errors.go, agent_format.go, agent_prompt.go, agent_tools.go)
     config/              - Configuration (config.go)
-    inference/           - LLM API client (inference.go)
+    inference/           - LLM API client (inference.go, stream.go)
     tools/               - Tool execution system (bash, file ops, git, grep, subagent, todo, view_image, etc.)
     tui/                 - Terminal user interface (tui.go)
     colors/              - ANSI color codes and theme support (colors.go, theme.go)
@@ -118,7 +118,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - Custom `MarshalJSON()` for conditional content field (string vs array)
 - Tool call normalization: ensures `type` field is always populated
 
-### Streaming
+### Streaming (stream.go)
 - SSE parsing with `data:` prefix and `[DONE]` terminator
 - Multi-line JSON blob accumulation
 - Tool call delta accumulation by index (merging partial deltas)
@@ -145,7 +145,7 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 - Read-only mode enforcement via `isReadOnlyTool()` map
 - Todo store (in-memory task list)
 
-### Implemented Tools (13 total)
+### Implemented Tools (15 total)
 | Tool | File | Read-Only? | Description |
 |------|------|------------|-------------|
 | `bash` | bash.go | No | Execute commands with timeout/cancellation |
@@ -207,37 +207,112 @@ This is a **Minimal Coding Agent Harness** written in Go (module `github.com/cod
 
 ### CRITICAL ISSUES
 
-#### I4. `lastTotalTokens` Reset During Compression May Underreport Context Size
+#### C1. Stray `- prompt` Parameter in `git_diff` Text Description (agent_prompt.go)
+- **File**: `agent/agent_prompt.go` — `readOnlyOnlyToolDescriptions()` function
+- **Line**: ~101 (in the `git_diff` block)
+- **Description**: The `git_diff` tool description text includes a copy-pasted `- prompt` parameter from `view_image`:
+  ```
+  - prompt (string, optional): Custom prompt or question to guide the vision analysis.
+    When provided, this prompt is used instead of the default description prompt.
+  ```
+  The `git_diff` tool does NOT have a `prompt` parameter (confirmed by checking `git_diff.go`, `agent_tools.go` git_diff definition, and `tools.go` dispatcher).
+- **Impact**: The LLM reads this text description and may attempt to pass a `prompt` parameter when calling `git_diff`. Since the actual tool schema (in `agent_tools.go`) is correct (no `prompt` parameter), this would not cause a runtime error, but it misleads the LLM into thinking there's an extra parameter available. This wastes a potential tool call parameter slot and may confuse the model.
+- **Severity**: CRITICAL — The prompt text the LLM receives is inconsistent with the actual tool schema.
+- **Fix**: Remove the spurious `- prompt` line from the `git_diff` text description in `readOnlyOnlyToolDescriptions()`.
+
+#### C2. `lastTotalTokens` Reset During Compression May Underreport Context Size
 - **File**: `agent_context.go` (`compressContext()`)
-- **Issue**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
-- **Status**: Still open — the estimate is the best available value until the next API response arrives.
+- **Description**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
+- **Status**: Design limitation — the estimate is the best available value until the next API response arrives.
 
 ---
 
 ### HIGH ISSUES
 
-#### H5. Subagent Tool Not Available in Read-Only Mode
-- **File**: `agent_tools.go`
-- **Issue**: `buildReadOnlyTools()` never includes `subagent` even with `--experimental`.
-- **Status**: Still open — subagent is inherently a write/execute operation, so this is by design.
+#### H1. Subagent Tool Not Available in Read-Only Mode
+- **File**: `agent_tools.go` and `tools.go`
+- **Description**: `buildReadOnlyTools()` never includes `subagent` even with `--experimental`. The `isReadOnlyTool()` map in `tools.go` also doesn't include `subagent`.
+- **Status**: By design — subagent is inherently a write/execute operation. However, this means read-only mode cannot use subagents even with `--experimental`.
+
+#### H2. Missing `streamToolCallWithFullParams` / `streamStatus` Cases for Read-Only Tools
+- **File**: `agent/agent_format.go`
+- **Description**: The `streamToolCallWithFullParams()` and `streamStatus()` functions have explicit display formatting for write tools (`bash`, `read_file`, `write_file`, `insert_lines`, `replace_text`, `move_text`) but NOT for read-only tools (`list_files`, `grep`, `git_log`, `git_show`, `git_diff`). These tools fall through to the generic default case:
+  ```
+  [Tool: git_diff] (key: value, ...)
+  ```
+  instead of a descriptive message like:
+  ```
+  [Diff] ref1 ref2
+  ```
+  Meanwhile, `formatToolStatus()` DOES handle all these tools with specific formatting — making the streaming display inconsistent.
+- **Impact**: During streaming in read-only mode, tool calls are displayed with generic labels instead of descriptive ones. This is a user experience issue.
+- **Severity**: HIGH — affects all read-only tool usage display.
+- **Fix**: Add case statements for `list_files`, `grep`, `git_log`, `git_show`, `git_diff` in both `streamToolCallWithFullParams()` and `streamStatus()`.
 
 ---
 
 ### MEDIUM ISSUES
 
-#### M7. Config File Loading: Unknown Keys Print Warning but Continue
+#### M1. `--initial-token-timeout` CLI Flag Missing
+- **Files**: `config/config.go`, `implementation/main.go` (help text)
+- **Description**: The `InitialTokenTimeout` config field is fully implemented:
+  - Set in `DefaultConfig()` (24 hours)
+  - Parsed from config file via `initial_token_timeout` key
+  - Parsed from env var via `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`
+  - Validated in `Validate()` (minimum 10 seconds)
+  - Used in `NewInferenceClient()` for HTTP timeout
+  - Used in `handleStreamResponse()` for read deadline
+  - BUT there is NO `--initial-token-timeout` CLI flag in `ParseArgs()`.
+  - The help text in `main.go` does not mention it.
+  - The `implementation/README.md` (line 223) labels it as "future" despite the code fully supporting it via config file and env var.
+- **Impact**: Users who only use CLI flags cannot set the initial token timeout; they must use a config file or environment variable.
+- **Severity**: MEDIUM — workaround exists (config file or env var).
+- **Fix**: Add `--initial-token-timeout` case to the `ParseArgs()` switch statement and update the help text.
+
+#### M2. Unknown Config Keys Print Warning but Continue
 - **File**: `config/config.go`
-- **Issue**: Unknown config file keys print a warning to stderr but don't return an error.
-- **Status**: Still open — by design, allows forward-compatibility with future config keys.
+- **Description**: Unknown config file keys print a warning to stderr but don't return an error.
+- **Status**: By design — allows forward-compatibility with future config keys.
 
 ---
 
 ### LOW ISSUES
 
-#### L6. `config.go` — `loadConfigFile` Reads File Twice (Once in ParseArgs, Once in LoadConfigFile)
-- **File**: `config/config.go`
-- **Issue**: `ParseArgs()` reads the config file path from args, then `loadConfigFile()` reads and parses it. But `ParseArgs()` already iterates through all args including `--config`, so there's no double-read. This is fine.
-- **No actual issue here** — misidentified initially.
+#### L1. Redundant Conditions in `isContextLimitError` (agent_errors.go)
+- **File**: `agent/agent_errors.go`
+- **Line**: ~54-55
+- **Description**: The function checks both `"maximum context length"` and `"maximum context length exceeded"`:
+  ```go
+  return strings.Contains(msg, "context size limit") ||
+      strings.Contains(msg, "maximum context length") ||
+      strings.Contains(msg, "maximum context length exceeded") ||  // <-- REDUNDANT
+      strings.Contains(msg, "maximum context length")              // <-- DUPLICATE
+  ```
+  The third check `"maximum context length exceeded"` is redundant because `"maximum context length"` (fourth check) is a substring of it. Additionally, the fourth check is a duplicate of the second.
+- **Impact**: No functional impact, just code quality.
+- **Severity**: LOW.
+- **Fix**: Remove the redundant/duplicate conditions.
+
+#### L2. Stale Comment in `subagent.go` (executeSubagentFromTool → ExecuteSubagent)
+- **File**: `tools/subagent.go`
+- **Line**: ~231
+- **Description**: The comment says `executeSubagentFromTool` but the function is named `ExecuteSubagent`:
+  ```go
+  // executeSubagentFromTool is the main entry point for the subagent tool.
+  // It's called by the tool executor and handles getting the binary path.
+  func ExecuteSubagent(params map[string]interface{}) *ToolResult {
+  ```
+  This appears to be a stale comment from a function rename.
+- **Impact**: None — cosmetic only.
+- **Severity**: LOW.
+- **Fix**: Update the comment to match the function name.
+
+#### L3. README Discrepancy: `--initial-token-timeout` Marked as "Future"
+- **File**: `implementation/README.md` (line 223)
+- **Description**: The README labels `--initial-token-timeout` as "future" despite the code fully supporting it via config file and env var.
+- **Impact**: Misleading documentation.
+- **Severity**: LOW.
+- **Fix**: Update the README to reflect current implementation status.
 
 ---
 
@@ -294,7 +369,7 @@ All 45 requirements files in `/workspace/requirements/` have been implemented:
 
 ### Additional Observations
 - **MCP Server Integration** (`specifications/mcp-server-integration.md`) exists as a specification but is NOT implemented in code. This is a future feature.
-- **`--initial-token-timeout`** flag is parsed but not documented in `--help` output.
+- **`--initial-token-timeout`** flag is NOT parsed in CLI but IS supported via config file and environment variable.
 
 ---
 
@@ -311,5 +386,9 @@ All 45 requirements files in `/workspace/requirements/` have been implemented:
 - Extensive test coverage (multiple test files per package)
 
 ### Weaknesses
-- **Streaming output duplication**: Tool call notification duplication is already handled by existing `notifiedToolCalls` deduplication map.
+- **Prompt/schema inconsistency**: The LLM-readable text description for `git_diff` includes a non-existent `prompt` parameter (copy-paste error from `view_image`), while the actual JSON schema is correct.
+- **Incomplete CLI flag**: `--initial-token-timeout` is implemented in config file and env var but missing from CLI flag parsing and help text.
+- **Inconsistent streaming display**: Read-only tools (`list_files`, `grep`, `git_log`, `git_show`, `git_diff`) lack specific display formatting in `streamToolCallWithFullParams()` and `streamStatus()`.
+- **Redundant error check conditions**: `isContextLimitError()` has duplicate/redundant string checks.
+- **Stale documentation comments**: `subagent.go` has a comment referencing a non-existent function name.
 - **Context compression accuracy**: Token counting after compression uses estimates (inherent design limitation).
