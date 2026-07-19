@@ -317,7 +317,7 @@ func loadConfigFile(path string, cfg *Config) error {
 
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
-			continue
+			return fmt.Errorf("invalid config line (expected KEY=VALUE format): %s", line)
 		}
 
 		key := strings.TrimSpace(parts[0])
