@@ -497,7 +497,9 @@ func (c *Config) Validate() error {
 	if c.InitialTokenTimeout < 10 {
 		return fmt.Errorf("initial token timeout must be at least 10 seconds")
 	}
-	// ConnectionTimeout and ReadTimeout have defaults, only validate if explicitly set (non-zero)
+	// ConnectionTimeout and ReadTimeout have non-zero defaults (24h).
+	// The !=0 check allows explicit 0 (no timeout) to skip validation,
+	// while ensuring non-zero values meet minimum thresholds.
 	if c.ConnectionTimeout != 0 && c.ConnectionTimeout < 5 {
 		return fmt.Errorf("connection timeout must be at least 5 seconds")
 	}
