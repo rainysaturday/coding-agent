@@ -41,11 +41,7 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 	var existingLines []string
 	content, err := os.ReadFile(path)
 	if err == nil {
-		existingLines = strings.Split(string(content), "\n")
-		// Handle trailing newline
-		if len(existingLines) > 0 && existingLines[len(existingLines)-1] == "" {
-			existingLines = existingLines[:len(existingLines)-1]
-		}
+		existingLines = splitLines(string(content))
 	}
 
 	// Adjust to 0-indexed
