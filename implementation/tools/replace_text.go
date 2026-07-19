@@ -94,15 +94,10 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 		newContent = strings.ReplaceAll(originalContent, searchText, replaceText)
 		replacementsMade = totalOccurrences
 	} else {
-		// Replace only count occurrences
-		newContent = originalContent
-		for i := 0; i < count; i++ {
-			idx := strings.Index(newContent, searchText)
-			if idx == -1 {
-				break
-			}
-			newContent = newContent[:idx] + replaceText + newContent[idx+len(searchText):]
-		}
+		// Replace only count occurrences (strings.Replace with n>0 replaces
+		// the first n non-overlapping instances, which avoids re-searching
+		// when replacement text contains the search text)
+		newContent = strings.Replace(originalContent, searchText, replaceText, count)
 		replacementsMade = count
 	}
 
