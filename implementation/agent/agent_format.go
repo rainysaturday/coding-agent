@@ -55,7 +55,46 @@ func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
 	case "insert_lines":
 		msg = fmt.Sprintf("\n%s[Insert] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
 	case "replace_text":
-		msg = fmt.Sprintf("\n%s[Replace] %s%s\n", colors.GetColor("cyan"), getToolParamStr("path", params), colors.GetColor("reset"))
+		path := getToolParamStr("path", params)
+		search := getToolParamStr("search", params)
+		if len(search) > 30 {
+			search = search[:30] + "..."
+		}
+		msg = fmt.Sprintf("\n%s[Replace] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
+	case "list_files":
+		path := getToolParamStr("path", params)
+		if path != "" {
+			msg = fmt.Sprintf("\n%s[ListFiles] %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[ListFiles] .%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
+	case "grep":
+		msg = fmt.Sprintf("\n%s[Grep] %s%s\n", colors.GetColor("cyan"), getToolParamStr("pattern", params), colors.GetColor("reset"))
+	case "git_log":
+		path := getToolParamStr("path", params)
+		reference := getToolParamStr("reference", params)
+		if reference != "" {
+			msg = fmt.Sprintf("\n%s[GitLog] %s in: %s%s\n", colors.GetColor("cyan"), reference, path, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitLog] HEAD in: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		}
+	case "git_show":
+		commit := getToolParamStr("commit", params)
+		if commit != "" {
+			msg = fmt.Sprintf("\n%s[GitShow] commit: %s%s\n", colors.GetColor("cyan"), commit, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitShow] HEAD%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
+	case "git_diff":
+		ref1 := getToolParamStr("reference1", params)
+		ref2 := getToolParamStr("reference2", params)
+		if ref1 != "" && ref2 != "" {
+			msg = fmt.Sprintf("\n%s[GitDiff] %s..%s%s\n", colors.GetColor("cyan"), ref1, ref2, colors.GetColor("reset"))
+		} else if ref1 != "" {
+			msg = fmt.Sprintf("\n%s[GitDiff] %s%s\n", colors.GetColor("cyan"), ref1, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitDiff] working tree%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
 	case "move_text":
 		msg = fmt.Sprintf("\n%s[MoveText] %s%s\n", colors.GetColor("cyan"), getToolParamStr("source_path", params), colors.GetColor("reset"))
 	default:
@@ -145,6 +184,44 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
 	case "move_text":
 		msg = fmt.Sprintf("\n%s[MovingText] from: %s%s\n", colors.GetColor("cyan"), getToolParamStr("source_path", params), colors.GetColor("reset"))
+	case "list_files":
+		path := getToolParamStr("path", params)
+		if path != "" {
+			msg = fmt.Sprintf("\n%s[Listing] files in: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[Listing] files in: .%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
+	case "grep":
+		pattern := getToolParamStr("pattern", params)
+		if len(pattern) > 30 {
+			pattern = pattern[:30] + "..."
+		}
+		msg = fmt.Sprintf("\n%s[Searching] for '%s'%s\n", colors.GetColor("cyan"), pattern, colors.GetColor("reset"))
+	case "git_log":
+		path := getToolParamStr("path", params)
+		reference := getToolParamStr("reference", params)
+		if reference != "" {
+			msg = fmt.Sprintf("\n%s[GitLog] %s in: %s%s\n", colors.GetColor("cyan"), reference, path, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitLog] HEAD in: %s%s\n", colors.GetColor("cyan"), path, colors.GetColor("reset"))
+		}
+	case "git_show":
+		commit := getToolParamStr("commit", params)
+		if commit != "" {
+			msg = fmt.Sprintf("\n%s[GitShow] commit: %s%s\n", colors.GetColor("cyan"), commit, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitShow] HEAD%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
+	case "git_diff":
+		ref1 := getToolParamStr("reference1", params)
+		ref2 := getToolParamStr("reference2", params)
+		if ref1 != "" && ref2 != "" {
+			msg = fmt.Sprintf("\n%s[GitDiff] comparing %s..%s%s\n", colors.GetColor("cyan"), ref1, ref2, colors.GetColor("reset"))
+		} else if ref1 != "" {
+			msg = fmt.Sprintf("\n%s[GitDiff] comparing %s%s\n", colors.GetColor("cyan"), ref1, colors.GetColor("reset"))
+		} else {
+			msg = fmt.Sprintf("\n%s[GitDiff] comparing working tree%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		}
 	default:
 		msg = fmt.Sprintf("\n%s[Running] tool: %s%s\n", colors.GetColor("cyan"), toolName, colors.GetColor("reset"))
 	}

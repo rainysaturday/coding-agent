@@ -174,6 +174,13 @@ func ParseArgs(args []string) (*Config, error) {
 		case "--max-tokens":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--max-tokens requires an argument")
+			}
+			i++
+			maxTokens, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid max-tokens: %v", err)
+			}
+			cfg.MaxTokens = maxTokens
 		case "--initial-token-timeout":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--initial-token-timeout requires an argument")
@@ -184,13 +191,6 @@ func ParseArgs(args []string) (*Config, error) {
 				return nil, fmt.Errorf("invalid initial-token-timeout: %v", err)
 			}
 			cfg.InitialTokenTimeout = initTimeout
-			}
-			i++
-			maxTokens, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid max-tokens: %v", err)
-			}
-			cfg.MaxTokens = maxTokens
 		case "--max-iterations":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--max-iterations requires an argument")
