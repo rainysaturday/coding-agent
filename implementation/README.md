@@ -209,7 +209,7 @@ Can be configured via:
 
 - Environment variable: `CODING_AGENT_CONTEXT_SIZE`
 - Command-line flag: `--context-size`
-- Config file (future)
+- Config file
 
 ### Initial Token Timeout
 
@@ -220,7 +220,7 @@ Minimum: 10 seconds
 Can be configured via:
 
 - Environment variable: `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`
-- Command-line flag: `--initial-token-timeout` (future)
+- Command-line flag: `--initial-token-timeout`
 
 ## Architecture
 

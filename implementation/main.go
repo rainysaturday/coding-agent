@@ -141,6 +141,7 @@ func displayHelp() {
 	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 24 hours)")
 	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 24 hours)")
 	fmt.Println("      --api-endpoint string  API endpoint URL (default: \"http://localhost:8080\")")
+	fmt.Println("      --initial-token-timeout int  Initial token timeout in seconds (default: 24 hours)")
 	fmt.Println("      --api-key string       API key for authentication")
 	fmt.Println("      --verbose            Enable verbose output")
 	fmt.Println("      --quiet              Suppress non-essential output")
