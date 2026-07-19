@@ -8,6 +8,9 @@ import (
 	"strings"
 )
 
+// maxReadLinesBlock is the maximum number of lines that read_lines will return at once.
+const maxReadLinesBlock = 5000
+
 // executeReadLines reads specific lines from a file.
 func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolResult {
 	path, ok := params["path"].(string)
@@ -58,23 +61,16 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	// Check file size before reading
-	fileInfo, err := os.Stat(path)
-	if err != nil {
+	// Protect against requesting too many lines at once
+	requestedLines := endLine - startLine + 1
+	if requestedLines > maxReadLinesBlock {
 		return &ToolResult{
 			Success: false,
-			Error:   formatFileError(err, path),
+			Error:   fmt.Sprintf("requested %d lines but maximum is %d. Use a smaller range or use the bash tool to process the file.", requestedLines, maxReadLinesBlock),
 		}
 	}
 
-	if fileInfo.Size() > maxReadFileSize {
-		return &ToolResult{
-			Success: false,
-			Error:   formatReadFileTooLargeError(path, fileInfo.Size()),
-		}
-	}
-
-	// Check if file is binary
+	// Check if file is binary before reading
 	if isBinaryFile(path) {
 		return &ToolResult{
 			Success: false,
