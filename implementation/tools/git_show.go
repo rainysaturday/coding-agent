@@ -29,6 +29,11 @@ func parseGitShowParams(params map[string]interface{}) *gitShowParams {
 	if c, ok := params["commit"].(string); ok && c != "" {
 		commit = c
 	}
+	if commit == "HEAD" {
+		if c, ok := params["reference"].(string); ok && c != "" {
+			commit = c
+		}
+	}
 
 	flags := parseFlagsParamToSlice(params)
 

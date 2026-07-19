@@ -31,6 +31,11 @@ func parseGitLogParams(params map[string]interface{}) *gitLogParams {
 	if ref, ok := params["reference"].(string); ok && ref != "" {
 		reference = ref
 	}
+	if reference == "" {
+		if ref, ok := params["commit"].(string); ok && ref != "" {
+			reference = ref
+		}
+	}
 
 	count := 10
 	if c, ok := params["count"].(float64); ok && c > 0 {
