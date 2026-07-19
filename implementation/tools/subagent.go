@@ -279,7 +279,7 @@ func extractSummary(output string) string {
 	return output
 }
 
-// executeSubagentFromTool is the main entry point for the subagent tool.
+// ExecuteSubagent is the main entry point for the subagent tool.
 // It's called by the tool executor and handles getting the binary path.
 func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 	// Try to find the coding-agent binary
