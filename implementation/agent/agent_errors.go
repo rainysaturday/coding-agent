@@ -55,8 +55,6 @@ func isContextLimitError(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "context size limit") ||
-		strings.Contains(msg, "maximum context length") ||
-		strings.Contains(msg, "maximum context length exceeded") ||
 		strings.Contains(msg, "maximum context length")
 }
 
