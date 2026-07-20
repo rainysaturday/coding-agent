@@ -15,7 +15,7 @@ import (
 )
 
 func TestBuildTools_AllToolsPresent(t *testing.T) {
-	tools := buildTools(false, false)
+	tools := buildTools(false, false, nil)
 
 	expectedNames := []string{
 		"bash",
@@ -41,7 +41,7 @@ func TestBuildTools_AllToolsPresent(t *testing.T) {
 }
 
 func TestBuildTools_Parameters(t *testing.T) {
-	toolDefs := buildTools(false, false)
+	toolDefs := buildTools(false, false, nil)
 
 	expectedParams := map[string][]string{
 		"bash":         {"command"},
@@ -51,8 +51,12 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"insert_lines": {"path", "line", "lines"},
 		"replace_text": {"path", "search", "replace"},
 		"move_text":    {"source_path", "source_start", "source_end", "target_path", "target_line"},
+		"list_files":   {},
+		"grep":         {"pattern"},
+		"git_log":      {},
+		"git_show":     {},
+		"git_diff":     {},
 		"view_image":   {"path"},
-		"subagent":     {"prompt"},
 		"todo":         {"action"},
 	}
 
@@ -84,7 +88,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 }
 
 func TestBuildTools_ViewImage_OptionalPrompt(t *testing.T) {
-	toolDefs := buildTools(false, false)
+	toolDefs := buildTools(false, false, nil)
 
 	var viewImageTool *inference.ToolDefinition
 	for _, tool := range toolDefs {
@@ -116,7 +120,7 @@ func TestBuildTools_ViewImage_OptionalPrompt(t *testing.T) {
 }
 
 func TestBuildTools_ReadOnly_ViewImage_OptionalPrompt(t *testing.T) {
-	toolDefs := buildTools(true, false)
+	toolDefs := buildTools(true, false, nil)
 
 	var viewImageTool *inference.ToolDefinition
 	for _, tool := range toolDefs {
@@ -245,7 +249,7 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 }
 
 func TestBuildTools_ReadOnly(t *testing.T) {
-	tools := buildTools(true, false)
+	tools := buildTools(true, false, nil)
 
 	// In read-only mode, should have: read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo
 	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}
@@ -280,7 +284,7 @@ func TestBuildTools_ReadOnly(t *testing.T) {
 
 func TestBuildTools_ExperimentalGating(t *testing.T) {
 	// Without experimental flag, subagent should NOT be present
-	toolsNoExp := buildTools(false, false)
+	toolsNoExp := buildTools(false, false, nil)
 	for _, tool := range toolsNoExp {
 		if tool.Function.Name == "subagent" {
 			t.Error("subagent should NOT be present when experimental=false")
@@ -288,7 +292,7 @@ func TestBuildTools_ExperimentalGating(t *testing.T) {
 	}
 
 	// With experimental flag, subagent SHOULD be present
-	toolsWithExp := buildTools(false, true)
+	toolsWithExp := buildTools(false, true, nil)
 	found := false
 	for _, tool := range toolsWithExp {
 		if tool.Function.Name == "subagent" {

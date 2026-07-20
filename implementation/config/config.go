@@ -27,6 +27,10 @@ type Config struct {
 	ShowHelp    bool
 	ShowVersion bool
 	ConfigFile  string
+	ListTools   bool // When true, list available tools and exit
+
+	// Tools customization
+	Tools []string // Custom tool list (comma-separated tool names)
 
 	// Read-only mode
 	// Experimental mode
@@ -285,6 +289,20 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			i++
 			cfg.Theme = args[i]
+		case "--tools":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--tools requires a comma-separated list of tool names")
+			}
+			i++
+			// Parse comma-separated tool names
+			toolStr := args[i]
+			cfg.Tools = strings.Split(toolStr, ",")
+			// Trim whitespace from each tool name
+			for j, t := range cfg.Tools {
+				cfg.Tools[j] = strings.TrimSpace(t)
+			}
+		case "--list-tools":
+			cfg.ListTools = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -378,6 +396,12 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Theme = value
 		case "goal":
 			cfg.Goal = value
+		case "tools":
+			// Parse comma-separated tool names
+			cfg.Tools = strings.Split(value, ",")
+			for j, t := range cfg.Tools {
+				cfg.Tools[j] = strings.TrimSpace(t)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
 		}
@@ -474,6 +498,13 @@ func loadEnv(cfg *Config) {
 	// Goal can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_GOAL"); val != "" {
 		cfg.Goal = val
+	}
+	// Tools can be set via environment variable
+	if val := os.Getenv("CODING_AGENT_TOOLS"); val != "" {
+		cfg.Tools = strings.Split(val, ",")
+		for j, t := range cfg.Tools {
+			cfg.Tools[j] = strings.TrimSpace(t)
+		}
 	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL

@@ -80,6 +80,11 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 	// These are set by the parent and will be inherited by the subprocess automatically.
 	// For CLI flags that are not environment-backed, we pass them explicitly.
 
+	// Tools: pass explicitly if set via env var
+	if toolsEnv := os.Getenv("CODING_AGENT_TOOLS"); toolsEnv != "" {
+		args = append(args, "--tools", toolsEnv)
+	}
+
 	// Read-only mode: check environment variable
 	if os.Getenv("CODING_AGENT_READ_ONLY") == "true" {
 		args = append(args, "--read-only")

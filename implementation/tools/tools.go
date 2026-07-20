@@ -219,3 +219,69 @@ var readOnlyTools = map[string]bool{
 func isReadOnlyTool(name string) bool {
 	return readOnlyTools[name]
 }
+
+// AllToolNames returns a sorted list of all available tool names.
+func AllToolNames() []string {
+	return []string{
+		"bash",
+		"grep",
+		"git_diff",
+		"git_log",
+		"git_show",
+		"insert_lines",
+		"list_files",
+		"move_text",
+		"read_file",
+		"read_lines",
+		"replace_text",
+		"subagent",
+		"todo",
+		"view_image",
+		"write_file",
+	}
+}
+
+// DefaultNormalTools returns the default set of tool names for normal mode.
+func DefaultNormalTools() []string {
+	return []string{
+		"bash",
+		"read_file",
+		"read_lines",
+		"write_file",
+		"insert_lines",
+		"replace_text",
+		"move_text",
+		"list_files",
+		"grep",
+		"git_log",
+		"git_show",
+		"git_diff",
+		"view_image",
+		"todo",
+	}
+}
+
+// DefaultReadOnlyTools returns the default set of tool names for read-only mode.
+func DefaultReadOnlyTools() []string {
+	return []string{
+		"read_file",
+		"read_lines",
+		"list_files",
+		"grep",
+		"git_log",
+		"git_show",
+		"git_diff",
+		"view_image",
+		"todo",
+	}
+}
+
+// IsValidToolName checks if the given name is a valid tool.
+func IsValidToolName(name string) bool {
+	for _, n := range AllToolNames() {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}

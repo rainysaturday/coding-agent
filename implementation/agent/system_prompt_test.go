@@ -9,7 +9,7 @@ import (
 )
 
 func TestBuildSystemPrompt_Sections(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	sections := []string{
 		"AVAILABLE TOOLS:",
@@ -32,7 +32,7 @@ func TestBuildSystemPrompt_Sections(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	toolDescriptions := []struct {
 		name        string
@@ -54,7 +54,7 @@ func TestBuildSystemPrompt_ToolDescriptions(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_IncludesEnvInfo(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	// Should include environment information
 	if !strings.Contains(prompt, "ENVIRONMENT INFORMATION:") {
@@ -95,7 +95,7 @@ func TestGetSystemPrompt_NonEmpty(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	// Count occurrences of key phrases
 	toolNames := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text"}
@@ -109,7 +109,7 @@ func TestBuildSystemPrompt_NoDuplicates(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ContainsSubAgentInfo(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	if !strings.Contains(prompt, "coding-agent") {
 		t.Error("buildSystemPrompt() should contain coding-agent reference")
@@ -131,7 +131,7 @@ func TestGetEnvironmentInfo_CWD(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
-	prompt := buildSystemPrompt(true, "", false)
+	prompt := buildSystemPrompt(true, "", false, nil)
 
 	// Should mention read-only mode
 	if !strings.Contains(prompt, "READ-ONLY MODE") {
@@ -171,7 +171,7 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_ReadOnlyNotices(t *testing.T) {
-	prompt := buildSystemPrompt(true, "", false)
+	prompt := buildSystemPrompt(true, "", false, nil)
 
 	// Should warn about limitations
 	if !strings.Contains(prompt, "CANNOT modify") && !strings.Contains(prompt, "CANNOT write") {

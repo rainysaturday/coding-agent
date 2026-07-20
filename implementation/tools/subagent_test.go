@@ -405,15 +405,15 @@ func TestSubagentToolDefinition(t *testing.T) {
 	// Import from agent package to test the tool definition
 	// We'll test that the subagent tool has the correct structure
 
-	// Read the agent_tools.go file to verify the tool definition exists
-	content, err := os.ReadFile("../agent/agent_tools.go")
+	// Read the tool_defs.go file to verify the tool definition exists
+	content, err := os.ReadFile("../agent/tool_defs.go")
 	if err != nil {
-		t.Skipf("Cannot read agent_tools.go: %v", err)
+		t.Skipf("Cannot read tool_defs.go: %v", err)
 	}
 
 	// Verify subagent tool definition exists
 	if !strings.Contains(string(content), `"subagent"`) {
-		t.Error("Subagent tool definition not found in agent_tools.go")
+		t.Error("Subagent tool definition not found in tool_defs.go")
 	}
 
 	// Verify prompt parameter

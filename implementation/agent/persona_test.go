@@ -12,7 +12,7 @@ import (
 // ===== Tests for persona configuration =====
 
 func TestBuildSystemPrompt_WithPersona(t *testing.T) {
-	prompt := buildSystemPrompt(false, "Expert Go developer focused on clean code", false)
+	prompt := buildSystemPrompt(false, "Expert Go developer focused on clean code", false, nil)
 
 	// Should contain the persona section
 	if !strings.Contains(prompt, "YOUR PERSONA:") {
@@ -36,7 +36,7 @@ func TestBuildSystemPrompt_WithPersona(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_WithEmptyPersona(t *testing.T) {
-	prompt := buildSystemPrompt(false, "", false)
+	prompt := buildSystemPrompt(false, "", false, nil)
 
 	// Should NOT contain persona section when empty
 	if strings.Contains(prompt, "YOUR PERSONA:") {
@@ -59,7 +59,7 @@ func TestBuildSystemPrompt_PreservesTools(t *testing.T) {
 	}
 
 	for _, persona := range personas {
-		prompt := buildSystemPrompt(false, persona, false)
+		prompt := buildSystemPrompt(false, persona, false, nil)
 
 		// All tool names should be present
 		tools := []string{"bash", "read_file", "write_file", "read_lines", "insert_lines", "replace_text"}
@@ -80,7 +80,7 @@ func TestBuildSystemPrompt_PreservesTools(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_PersonaAfterTools(t *testing.T) {
-	prompt := buildSystemPrompt(false, "Test persona", false)
+	prompt := buildSystemPrompt(false, "Test persona", false, nil)
 
 	// Find positions of key sections
 	toolsPos := strings.Index(prompt, "AVAILABLE TOOLS:")
@@ -100,7 +100,7 @@ func TestBuildSystemPrompt_PersonaAfterTools(t *testing.T) {
 }
 
 func TestBuildReadOnlySystemPrompt_WithPersona(t *testing.T) {
-	prompt := buildReadOnlySystemPrompt("ENV INFO", "Security expert", false)
+	prompt := buildReadOnlySystemPrompt("ENV INFO", []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}, "Security expert", false)
 
 	// Should contain persona
 	if !strings.Contains(prompt, "YOUR PERSONA:") {
@@ -120,7 +120,7 @@ func TestBuildReadOnlySystemPrompt_WithPersona(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_PersonaWithSummaryOnly(t *testing.T) {
-	prompt := buildSystemPrompt(false, "Concise assistant", true)
+	prompt := buildSystemPrompt(false, "Concise assistant", true, nil)
 
 	// Should contain persona
 	if !strings.Contains(prompt, "YOUR PERSONA:") {
@@ -137,7 +137,7 @@ func TestBuildSystemPrompt_PersonaWithSummaryOnly(t *testing.T) {
 }
 
 func TestBuildReadOnlySystemPrompt_PersonaWithSummaryOnly(t *testing.T) {
-	prompt := buildReadOnlySystemPrompt("ENV INFO", "Concise reviewer", true)
+	prompt := buildReadOnlySystemPrompt("ENV INFO", []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}, "Concise reviewer", true)
 
 	// Should contain both persona and summary-only instructions
 	if !strings.Contains(prompt, "YOUR PERSONA:") {

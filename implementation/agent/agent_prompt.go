@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 )
 
 // getEnvironmentInfo gathers runtime environment information.
@@ -36,122 +37,56 @@ The subagent will run independently and return its conclusion/summary.
 `, cwd, exePath, osInfo, archInfo)
 }
 
-// readFileDescription returns the description for read_file tool (without number prefix).
-func readFileDescription() string {
-	return `read_file
-   Description: Read the contents of a file
-   Parameters:
-     - path (string, required): The path to the file to read
-   How to call: Use read_file to view the contents of any file before making changes.
-   Example use case: Reading source files, configuration files, documentation`
+// toolDescription returns the text description for a tool by name.
+func toolDescription(name string) string {
+	allDefs := AllToolDefinitions()
+	if info, ok := allDefs[name]; ok {
+		return info.Description
+	}
+	return ""
 }
 
-// readLinesDescription returns the description for read_lines tool (without number prefix).
-func readLinesDescription() string {
-	return `read_lines
-   Description: Read a specific line range from a file
-   Parameters:
-     - path (string, required): The path to the file
-     - start (integer, required): The starting line number (1-indexed)
-     - end (integer, required): The ending line number (1-indexed)
-   How to call: Use read_lines when you only need to view a portion of a large file.
-   Example use case: Viewing lines 1-50 of a large source file, checking specific sections`
+// toolDescriptions returns a numbered list of tool descriptions for the given tool names.
+func toolDescriptions(names []string) string {
+	var parts []string
+	for i, name := range names {
+		desc := toolDescription(name)
+		if desc != "" {
+			parts = append(parts, fmt.Sprintf("%d. %s", i+1, desc))
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
-// viewImageDescription returns the description for view_image tool (without number prefix).
-func viewImageDescription() string {
-	return `view_image
-   Description: View a local image file. Reads the image from disk and sends it to a vision-capable model for analysis. Returns a description of the image contents.
-   Parameters:
-     - prompt (string, optional): Custom prompt or question to guide the vision analysis. When provided, this prompt is used instead of the default description prompt.
-     - path (string, required): Path to the image file to view
-   Supported formats: PNG, JPEG, WEBP, GIF
-   How to call: Use view_image when you need to see what's in an image file, read text from screenshots, analyze diagrams, etc.
-   Example use case: "What does this screenshot show?", "Read the text in this diagram"`
-}
+// buildToolListSection creates the "AVAILABLE TOOLS" section for the system prompt.
+func buildToolListSection(names []string, readOnly bool) string {
+	if readOnly {
+		return fmt.Sprintf(`AVAILABLE TOOLS:
 
-// todoDescription returns the description for todo tool (without number prefix).
-func todoDescription() string {
-	return `todo
-   Description: Manage a personal task list for tracking work-in-progress during development
-   Parameters:
-     - action (string, required): The action to perform (add, complete, remove, or list)
-     - id (integer, optional): Item ID (required for complete/remove)
-     - description (string, optional): Task description (required for add)
-   How to call: Use the todo tool to break down complex tasks into tracked sub-items. This helps you remember what to do between turns.
-   Example use case: Creating a checklist for a multi-step refactoring task`
-}
+%s`, toolDescriptions(names))
+	}
+	return fmt.Sprintf(`AVAILABLE TOOLS:
 
-// listFilesDescription returns the description for list_files tool (without number prefix).
-func listFilesDescription() string {
-	return `list_files
-   Description: List files and directories in a path, similar to the ls command
-   Parameters:
-     - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
-     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted, 'R' for recursive)
-   How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
-   Example use case: Listing directory contents with details, checking file sizes, viewing hidden files`
-}
-
-// grepDescription returns the description for grep tool (without number prefix).
-func grepDescription() string {
-	return `grep
-   Description: Search through file contents using grep-like pattern matching
-   Parameters:
-     - path (string, optional): Path to search (defaults to current directory if not specified)
-     - pattern (string, required): Pattern to search for (supports regex)
-     - flags (array, optional): List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive, '-f' for pattern file, '-a' for all including hidden, '-c' for count, '-v' for invert match, '-l' for filenames only)
-   How to call: Use grep to find specific patterns or text within files.
-   Example use case: Finding where a function is defined, searching for error messages, locating configuration values`
-}
-
-// gitLogDescription returns the description for git_log tool (without number prefix).
-func gitLogDescription() string {
-	return `git_log
-   Description: Show commit logs from a git repository
-   Parameters:
-     - path (string, optional): Path to the git repository (defaults to current directory)
-     - reference (string, optional): Git reference to view log from (branch name, tag, or commit hash; defaults to HEAD)
-     - count (integer, optional): Number of commits to display (defaults to 10)
-     - flags (array, optional): List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')
-   How to call: Use git_log to view commit history and understand changes in the repository.
-   Example use case: Reviewing recent changes, finding when a bug was introduced, understanding project history`
-}
-
-// gitShowDescription returns the description for git_show tool (without number prefix).
-func gitShowDescription() string {
-	return `git_show
-   Description: Show information about a git commit
-   Parameters:
-     - path (string, optional): Path to the git repository (defaults to current directory)
-     - commit (string, optional): Commit to show (defaults to HEAD)
-     - flags (array, optional): List of git show flags to control output (e.g., '--stat', '--patch', '--name-status')
-   How to call: Use git_show to examine the details of a specific commit, including its changes and metadata.
-   Example use case: Examining a specific commit's changes, reviewing what was modified in a particular update`
-}
-
-// gitDiffDescription returns the description for git_diff tool (without number prefix).
-func gitDiffDescription() string {
-	return `git_diff
-   Description: Show changes between commits, commit and working tree, etc.
-   Parameters:
-     - path (string, optional): Path to the git repository (defaults to current directory)
-     - reference1 (string, optional): First git reference for comparison (commit hash, branch, tag; omit for working tree)
-     - reference2 (string, optional): Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)
-     - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
-   How to call: Use git_diff to compare different versions of files, branches, or commits.
-   Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree`
+%s`, toolDescriptions(names))
 }
 
 // buildSystemPrompt builds the system prompt with tool definitions.
-// When readOnly is true, only read-only tools are included.
-func buildSystemPrompt(readOnly bool, persona string, summaryOnly bool) string {
+// When toolsList is non-empty, it overrides the defaults for the given mode.
+func buildSystemPrompt(readOnly bool, persona string, summaryOnly bool, toolsList []string) string {
 	// Get environment information
 	envInfo := getEnvironmentInfo()
+	toolNames := getToolNames(readOnly, false, toolsList)
 
 	if readOnly {
-		return buildReadOnlySystemPrompt(envInfo, persona, summaryOnly)
+		return buildReadOnlySystemPrompt(envInfo, toolNames, persona, summaryOnly)
 	}
+
+	return buildNormalSystemPrompt(envInfo, toolNames, persona, summaryOnly)
+}
+
+// buildNormalSystemPrompt builds the system prompt for normal (non-read-only) mode.
+func buildNormalSystemPrompt(envInfo string, toolNames []string, persona string, summaryOnly bool) string {
+	toolsSection := buildToolListSection(toolNames, false)
 
 	basePrompt := fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
 
@@ -169,62 +104,7 @@ EXAMPLE workflow:
 3. Execute the tool and report the result back as a tool message with the matching tool_call_id
 4. The API processes the result and may return another tool call or your final answer
 
-AVAILABLE TOOLS:
-
-1. bash
-   Description: Execute a bash command in the terminal
-   Parameters:
-     - command (string, required): The bash command to execute
-     - timeout (integer, optional): Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.
-   How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
-   Example use case: "ls -la", "cat file.txt", "npm install", "pip install -r requirements.txt"
-
-2. %s
-
-3. %s
-
-4. write_file
-   Description: Write content to a file
-   Parameters:
-     - path (string, required): The path to the file to write
-     - content (string, required): The content to write to the file
-   How to call: Use write_file to create new files or completely overwrite existing files.
-   Example use case: Creating new source files, writing configuration, saving output
-   Note: For multi-line content, use \n to represent newlines in the content parameter
-
-5. insert_lines
-   Description: Insert lines at a specific line number
-   Parameters:
-     - path (string, required): The path to the file
-     - line (integer, required): The line number where insertion should occur (1-indexed)
-     - lines (string, required): The lines to insert (use \n for newlines)
-   How to call: Use insert_lines to add new content without replacing existing content.
-   Example use case: Adding imports, inserting new functions, adding comments
-   Note: Inserting at line 1 adds at the beginning; inserting beyond file length appends
-
-6. replace_text
-   Description: Find and replace text in a file by searching for a pattern
-   Parameters:
-     - path (string, required): The path to the file to modify
-     - search (string, required): Text pattern to find (exact match, not regex)
-     - replace (string, required): Replacement text
-     - count (integer, optional): Number of occurrences to replace (default: 1, use -1 for all)
-   How to call: Use replace_text when you know the text to find but not the line numbers.
-   Example use case: Renaming variables, updating function names, fixing typos throughout a file
-7. move_text
-   Description: Move a block of text from one location to another. Extracts lines from a source file and inserts them at a target location (same file or different file). Automatically creates target file and directories if needed.
-   Parameters:
-     - source_path (string, required): Path to the source file to extract lines from
-     - source_start (integer, required): Starting line number in source file (1-indexed)
-     - source_end (integer, required): Ending line number in source file (1-indexed, inclusive)
-     - target_path (string, required): Path to the target file to insert lines into
-     - target_line (integer, required): Line number in target file to insert before (1-indexed)
-   How to call: Use move_text to move code blocks or text between files or within the same file.
-   Example use case: Moving a function from one file to another, reorganizing code sections
-
-8. %s
-
-9. %s
+%s
 
 TOOL CALLING BEST PRACTICES:
 1. Always read a file first (using read_file or read_lines) to understand its contents
@@ -250,7 +130,7 @@ Verification Checklist:
 3. Code compiles/builds without errors (for compiled languages)
 4. Code formatting and linting (e.g., gofmt, black, prettier, rustfmt, etc.)
 5. Changes align with user requirements
-6. No unintended side effects or broken dependencies`, envInfo, readFileDescription(), readLinesDescription(), viewImageDescription(), todoDescription())
+6. No unintended side effects or broken dependencies`, envInfo, toolsSection)
 
 	// Add persona section if provided
 	if persona != "" {
@@ -266,7 +146,9 @@ Verification Checklist:
 }
 
 // buildReadOnlySystemPrompt builds a system prompt for read-only mode.
-func buildReadOnlySystemPrompt(envInfo string, persona string, summaryOnly bool) string {
+func buildReadOnlySystemPrompt(envInfo string, toolNames []string, persona string, summaryOnly bool) string {
+	toolsSection := buildToolListSection(toolNames, true)
+
 	basePrompt := fmt.Sprintf(`You are a helpful coding assistant operating in READ-ONLY MODE. You have access only to the following read-only tools.
 
 %s
@@ -280,25 +162,7 @@ TOOL CALLING FORMAT:
 - You do NOT need to construct JSON manually - the tool calling API handles the formatting
 - Each tool has specific parameters that must be provided (marked as "required")
 
-AVAILABLE TOOLS:
-
-1. %s
-
-2. %s
-
-3. %s
-
-4. %s
-
-5. %s
-
-6. %s
-
-7. %s
-
-8. %s
-
-9. %s
+%s
 
 TOOL CALLING BEST PRACTICES:
 1. Use read_file, read_lines, and list_files to explore and read files
@@ -307,16 +171,7 @@ TOOL CALLING BEST PRACTICES:
 4. Remember: you cannot modify any files or execute commands
 
 NOTE: If the user asks you to write, modify, delete, or execute anything, explain that you are in read-only mode and cannot perform write operations.`,
-		envInfo,
-		readFileDescription(),
-		readLinesDescription(),
-		listFilesDescription(),
-		grepDescription(),
-		gitLogDescription(),
-		gitShowDescription(),
-		gitDiffDescription(),
-		viewImageDescription(),
-		todoDescription())
+		envInfo, toolsSection)
 
 	// Add persona section if provided
 	if persona != "" {

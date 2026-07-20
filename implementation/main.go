@@ -73,6 +73,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle list-tools flag
+	if cfg.ListTools {
+		displayTools()
+		os.Exit(0)
+	}
+
 	// Set build version for agent debug logging
 	version := gitHash
 	if gitDirty == "dirty" {
@@ -155,6 +161,8 @@ func displayHelp() {
 	fmt.Println("      --no-stream          Disable streaming output")
 	fmt.Println("  -h, --help               Show this help message")
 	fmt.Println("  -v, --version            Show version information")
+	fmt.Println("      --tools string       Comma-separated list of tool names to make available (overrides defaults for the mode)")
+	fmt.Println("      --list-tools          List available tools and exit")
 	fmt.Println()
 	fmt.Println("Interactive Commands:")
 	fmt.Println("  /stats       - Display runtime statistics")
@@ -190,6 +198,36 @@ func displayHelp() {
 	fmt.Println("  export CODING_AGENT_THEME=solarized")
 	fmt.Println("  coding-agent --theme light")
 }
+func displayTools() {
+	// Import agent package for tool definitions
+	fmt.Println("Available tools:")
+	fmt.Println()
+	// List all available tool names
+	names := []string{
+		"bash", "grep", "git_diff", "git_log", "git_show",
+		"insert_lines", "list_files", "move_text", "read_file",
+		"read_lines", "replace_text", "subagent", "todo",
+		"view_image", "write_file",
+	}
+	for _, name := range names {
+		fmt.Printf("  %s\n", name)
+	}
+	fmt.Println()
+	fmt.Println("Use --tools to specify a comma-separated list of tool names.")
+	fmt.Println("For example: --tools \"read_file,read_lines,bash\"")
+	fmt.Println()
+	fmt.Println("Default tools for normal mode:")
+	fmt.Println("  bash, grep, git_diff, git_log, git_show, insert_lines, list_files,")
+	fmt.Println("  move_text, read_file, read_lines, replace_text, todo, view_image, write_file")
+	fmt.Println()
+	fmt.Println("Default tools for read-only mode:")
+	fmt.Println("  read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, todo")
+	fmt.Println()
+	fmt.Println("Experimental tools (add with --experimental or include explicitly):")
+	fmt.Println("  subagent")
+}
+
+
 
 func runOneShotMode(cfg *config.Config) error {
 	var prompt string

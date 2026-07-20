@@ -154,7 +154,7 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	// Build system prompt, tools, and persona based on configuration
-	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly, cfg.Persona, cfg.SummaryOnly)
+	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly, cfg.Persona, cfg.SummaryOnly, cfg.Tools)
 
 	// Set read-only mode on tool executor
 	agent.toolExecutor.SetReadOnly(cfg.ReadOnly)
@@ -165,7 +165,7 @@ func NewAgent(cfg *config.Config) *Agent {
 	}
 
 	// Register tools with inference client
-	agent.inference.SetTools(buildTools(cfg.ReadOnly, cfg.Experimental))
+	agent.inference.SetTools(buildTools(cfg.ReadOnly, cfg.Experimental, cfg.Tools))
 
 	// Display read-only mode warning
 	if cfg.ReadOnly {
