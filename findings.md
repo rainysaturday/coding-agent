@@ -17,20 +17,8 @@ and maintainability improvements. Each item is tagged by severity.
 
 ## Bugs & Correctness Issues
 
-
 ## Robustness & Edge Cases
 
-### 8. 🟠 `read_lines`/preview code splits on byte length, not runes
-**Files:** `tools/utils.go` (`truncateString`, `truncateOutput`, `TruncateOutputByLen`),
-`agent/agent_format.go`
-
-Several truncation helpers slice `text[:maxLen]` by byte count. For UTF-8 content
-(e.g. CJK, emoji), this can split a multi-byte rune in the middle, producing
-invalid UTF-8 in output and tool results sent back to the LLM.
-
-**Fix:** Use `[]rune`-aware truncation or guard against cutting mid-rune.
-
----
 
 ### 9. 🟠 Subagent does not fully inherit parent configuration
 **File:** `tools/subagent.go` — `executeSubagent()` (lines ~46-107)
@@ -175,9 +163,9 @@ so unmarshalling always starts clean.
 
 | Priority | Item(s) |
 |----------|---------|
-| Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
-| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, ~~#6 signal close race~~ ✅ fixed,  ~~#7 compression first-message~~ ✅ fixed |
-| Clean up | #8-10 robustness, #11-18 maintainability |
+| Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed,  #3 file-permission loss ✅ fixed |
+| Next |  #4 vision token/system prompt ✅ fixed,  #5 dump filename ✅ fixed,  #6 signal close race ✅ fixed,  #7 compression first-message ✅ fixed |
+| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9-10 robustness,  #11-18 maintainability |
 
 ---
 

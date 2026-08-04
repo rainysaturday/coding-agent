@@ -58,7 +58,7 @@ func streamToolCallWithFullParams(tc *tools.ToolCall, callback StreamCallback) {
 		path := getToolParamStr("path", params)
 		search := getToolParamStr("search", params)
 		if len(search) > 30 {
-			search = search[:30] + "..."
+			search = tools.TruncateRunes(search, 30)
 		}
 		msg = fmt.Sprintf("\n%s[Replace] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
 	case "list_files":
@@ -179,7 +179,7 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 		path := getToolParamStr("path", params)
 		search := getToolParamStr("search", params)
 		if len(search) > 30 {
-			search = search[:30] + "..."
+			search = tools.TruncateRunes(search, 30)
 		}
 		msg = fmt.Sprintf("\n%s[Replacing] '%s' in: %s%s\n", colors.GetColor("cyan"), search, path, colors.GetColor("reset"))
 	case "move_text":
@@ -194,7 +194,7 @@ func streamStatus(toolName string, params map[string]interface{}, callback Strea
 	case "grep":
 		pattern := getToolParamStr("pattern", params)
 		if len(pattern) > 30 {
-			pattern = pattern[:30] + "..."
+			pattern = tools.TruncateRunes(pattern, 30)
 		}
 		msg = fmt.Sprintf("\n%s[Searching] for '%s'%s\n", colors.GetColor("cyan"), pattern, colors.GetColor("reset"))
 	case "git_log":

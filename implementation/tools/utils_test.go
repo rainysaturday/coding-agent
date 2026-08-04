@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ===== Tests for utility functions =====
@@ -324,5 +325,25 @@ func TestExecuteCtx_Bash_Cancelled(t *testing.T) {
 	// Should not panic
 	if result == nil {
 		t.Fatal("Expected non-nil result")
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	// A 3-byte CJK character should not be split in the middle.
+	cjk := "你好世界"
+	truncated := TruncateRunes(cjk, 2)
+	if truncated != "你好..." {
+		t.Errorf("TruncateRunes(%q, 2) = %q, want %q", cjk, truncated, "你好...")
+	}
+	if !utf8.ValidString(truncated) {
+		t.Errorf("TruncateRunes produced invalid UTF-8: %q", truncated)
+	}
+	// Short strings are returned unchanged.
+	if got := TruncateRunes("hi", 5); got != "hi" {
+		t.Errorf("TruncateRunes(%q, 5) = %q, want %q", "hi", got, "hi")
+	}
+	// ASCII still truncates with "...".
+	if got := TruncateRunes("hello world", 5); got != "hello..." {
+		t.Errorf("TruncateRunes(%q, 5) = %q, want %q", "hello world", got, "hello...")
 	}
 }

@@ -72,12 +72,10 @@ func truncateOutput(text string, maxLines int) string {
 	return text
 }
 
-// truncateString truncates a string to a maximum length, adding "..." if truncated.
+// truncateString truncates a string to a maximum number of runes, adding "..." if
+// truncated. It operates on runes so multi-byte UTF-8 characters are not split.
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
+	return TruncateRunes(s, maxLen)
 }
 
 // previewReplacement shows the first N lines of the content after replacement for verification.
@@ -181,13 +179,33 @@ func parseFlagValue(flag string) (name string, value string) {
 }
 
 // TruncateOutputByLen truncates text to a maximum number of characters for display purposes.
-// It adds a "[truncated]" suffix if the content was truncated.
+// It adds a "[truncated]" suffix if the content was truncated. Truncation is rune-aware
+// so multi-byte UTF-8 characters are not split in the middle.
 func TruncateOutputByLen(text string, maxLen int, suffix string) string {
 	if len(text) <= maxLen {
 		return text
 	}
-	return text[:maxLen] + "\n... [" + suffix + "]"
+	r := []rune(text)
+	if len(r) <= maxLen {
+		return text
+	}
+	return string(r[:maxLen]) + "\n... [" + suffix + "]"
 }
+
+// TruncateRunes truncates s to at most maxLen runes without splitting a
+// multi-byte UTF-8 character in the middle, appending "..." if truncated.
+// It is safe to use on arbitrary UTF-8 text (e.g. CJK, emoji).
+func TruncateRunes(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen]) + "..."
+}
+
 
 // isGitRepo checks if the given path is a git repository.
 func isGitRepo(path string) bool {
