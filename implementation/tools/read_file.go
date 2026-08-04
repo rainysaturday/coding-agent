@@ -4,6 +4,7 @@ package tools
 
 import (
 	"os"
+	"strconv"
 )
 
 const (
@@ -104,26 +105,10 @@ func formatReadFileBinaryError(path string) string {
 // formatFileSize formats a file size in bytes to a human-readable string.
 func formatFileSize(bytes int64) string {
 	if bytes < 1024 {
-		return formatInt(bytes) + " bytes"
+		return strconv.FormatInt(bytes, 10) + " bytes"
 	}
 	if bytes < 1024*1024 {
-		return formatInt(bytes/1024) + " KB"
+		return strconv.FormatInt(bytes/1024, 10) + " KB"
 	}
-	return formatInt(bytes/(1024*1024)) + " MB"
-}
-
-// formatInt converts an int to a string.
-func formatInt(n int64) string {
-	if n == 0 {
-		return "0"
-	}
-	if n < 0 {
-		return "-" + formatInt(-n)
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	return s
+	return strconv.FormatInt(bytes/(1024*1024), 10) + " MB"
 }
