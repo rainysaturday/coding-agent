@@ -59,12 +59,7 @@ func toolDescriptions(names []string) string {
 }
 
 // buildToolListSection creates the "AVAILABLE TOOLS" section for the system prompt.
-func buildToolListSection(names []string, readOnly bool) string {
-	if readOnly {
-		return fmt.Sprintf(`AVAILABLE TOOLS:
-
-%s`, toolDescriptions(names))
-	}
+func buildToolListSection(names []string) string {
 	return fmt.Sprintf(`AVAILABLE TOOLS:
 
 %s`, toolDescriptions(names))
@@ -86,7 +81,7 @@ func buildSystemPrompt(readOnly bool, persona string, summaryOnly bool, toolsLis
 
 // buildNormalSystemPrompt builds the system prompt for normal (non-read-only) mode.
 func buildNormalSystemPrompt(envInfo string, toolNames []string, persona string, summaryOnly bool) string {
-	toolsSection := buildToolListSection(toolNames, false)
+	toolsSection := buildToolListSection(toolNames)
 
 	basePrompt := fmt.Sprintf(`You are a helpful coding assistant. You have access to the following tools.
 
@@ -147,7 +142,7 @@ Verification Checklist:
 
 // buildReadOnlySystemPrompt builds a system prompt for read-only mode.
 func buildReadOnlySystemPrompt(envInfo string, toolNames []string, persona string, summaryOnly bool) string {
-	toolsSection := buildToolListSection(toolNames, true)
+	toolsSection := buildToolListSection(toolNames)
 
 	basePrompt := fmt.Sprintf(`You are a helpful coding assistant operating in READ-ONLY MODE. You have access only to the following read-only tools.
 
