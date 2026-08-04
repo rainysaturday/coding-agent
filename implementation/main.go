@@ -390,6 +390,22 @@ func outputResult(result *agent.Result, cfg *config.Config, duration time.Durati
 		}
 	}
 
+	// When streaming is enabled, the reasoning and final answer were already
+	// streamed to stdout by the RunStream callback, so don't print them again
+	// (this would duplicate the output). Only the summary is printed if verbose.
+	if cfg.Streaming {
+		if cfg.Verbose {
+			fmt.Printf("\n%s=== Summary ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+			fmt.Printf("  %sSteps executed:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Steps))
+			fmt.Printf("  %sTokens used:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), result.TokenUsage)
+			if result.Reasoning != "" {
+				fmt.Printf("  %sReasoning:%s %d chars\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Reasoning))
+			}
+			fmt.Printf("  %sDuration:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), duration)
+		}
+		return nil
+	}
+
 	if cfg.Quiet {
 		// Minimal output - just the final answer
 		if result.Reasoning != "" {

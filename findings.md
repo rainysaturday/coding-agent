@@ -1,394 +1,286 @@
-# Codebase Analysis Findings
+# Code Review Findings — Coding Agent Harness
 
-## Project Overview
+This document lists bugs and quality issues identified during a review of the Go
+codebase in `implementation/`. The project is a minimal coding-agent harness with
+an agent loop, LLM inference client, tool execution system, TUI, and configuration.
 
-This is a **Minimal Coding Agent Harness** written in Go (module `github.com/coding-agent/harness`, requires Go 1.25+). It provides a terminal-based coding assistant with a TUI, LLM inference support (including GitHub Copilot and GitHub Models), and a set of file/tool execution capabilities.
+All code compiles (`go build ./...`), passes `go vet ./...`, and all tests pass
+(`go test ./...`). The issues below are correctness concerns, robustness gaps,
+and maintainability improvements. Each item is tagged by severity.
+
+**Severity legend**
+- 🔴 **High** — likely to cause incorrect behavior, data loss, or a crash.
+- 🟠 **Medium** — edge-case correctness or robustness concern.
+- 🟢 **Low** — code quality, maintainability, or minor UX.
 
 ---
 
-## 1. Architecture
+## Bugs & Correctness Issues
 
-### Package Layout
+### 2. 🔴 `bufio.Scanner` 64KB default limit can abort large streaming responses
+**File:** `inference/stream.go` — `handleStreamResponse()` (line ~292)
+
+```go
+scanner := bufio.NewScanner(body)
 ```
-/workspace/
-  implementation/
-    main.go              - Entry point, CLI parsing, interactive & one-shot modes
-    agent/               - Core agent loop (agent.go, agent_context.go, agent_errors.go, agent_format.go, agent_prompt.go, agent_tools.go)
-    config/              - Configuration (config.go)
-    inference/           - LLM API client (inference.go, stream.go)
-    tools/               - Tool execution system (bash, file ops, git, grep, subagent, todo, view_image, etc.)
-    tui/                 - Terminal user interface (tui.go)
-    colors/              - ANSI color codes and theme support (colors.go, theme.go)
-    debug/               - Debug logging (debug.go)
-  requirements/          - Requirements documents (one per feature)
-  specifications/        - API specs (inference-api.md, mcp-server-integration.md)
+
+`bufio.Scanner` has a default maximum token size of **64KB**. A single SSE `data:`
+line that exceeds 64KB (e.g., a large tool-call `arguments` JSON blob or a large
+content chunk) makes the scanner fail with `bufio.ErrTooLong`, which is returned
+as a stream error and aborts the whole response.
+
+**Fix:** Increase the buffer, e.g. `scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)`.
+
+---
+
+### 3. 🔴 File write tools clobber the original file permission bits
+**Files:** `tools/write_file.go`, `tools/replace_text.go`, `tools/insert_lines.go`,
+`tools/move_text.go`
+
+Every write path calls `os.WriteFile(path, data, FilePermWrite)` where
+`FilePermWrite = 0644`. When a tool rewrites an existing file, the file's original
+mode is lost. For example, an executable script (0755) edited via
+`replace_text`/`insert_lines` silently becomes non-executable (0644).
+
+**Fix:** Before writing, `os.Stat` the target; if it exists, preserve its `Mode()`
+(and ownership if possible) instead of hard-coding `0644`.
+
+---
+
+### 4. 🟠 Vision requests are not included in token accounting or given a system prompt
+**File:** `agent/agent.go` — `handleViewImage()` (lines ~644-696)
+
+When `view_image` is used, a second inference request is made to describe the image:
+
+```go
+response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, "")
 ```
 
-### Dependencies
-- `golang.org/x/term` (required)
-- `golang.org/x/sys` (indirect)
-- **No other external dependencies** — adheres to requirement 024 (zero external dependencies beyond Go stdlib + x/term)
+- The `systemPrompt` is passed as `""`, so the vision model receives no system
+  context (tools, persona, read-only instructions, etc.).
+- The token usage of this vision request is never added to `Stats.InputTokens` /
+  `Stats.OutputTokens`, so reported token counts undercount actual API usage.
+- The image message is never added to the main conversation `context`; only the
+  text description is stored as a tool result.
 
-### Build System
-- Makefile with targets: `build`, `build-all`, `build-darwin-arm64`, `build-linux-amd64`, `build-windows-amd64`
-- Version injection via linker flags: `gitHash`, `gitDirty`, `buildTime`
-- Binary name: `coding-agent`
-
----
-
-## 2. Configuration (config/)
-
-### Config Structure
-- `Config` struct with fields for all modes, inference, API, output, theme, persona, timeouts, debug, etc.
-- Default values: model=`llama3`, maxTokens=64000, contextSize=128000, streaming=true, maxIterations=1000
-- Timeouts default to 24 hours
-
-### Config Sources (priority order: CLI > env > config file > defaults)
-1. CLI flags parsed in `ParseArgs()`
-2. Environment variables via `loadEnv()` (CODING_AGENT_* prefix)
-3. Config file (simple KEY=VALUE format, # comments)
-4. Defaults
-
-### Notable CLI Flags
-- `-p`/`--prompt`, `--stdin`, `--goal`, `--prompt-file`
-- `--model`, `--temperature`, `--max-tokens`, `--context-size`, `--max-iterations`
-- `--api-endpoint`, `--api-key`
-- `--read-only`, `--experimental`, `--debug`, `--persona`, `--theme`
-- `--summary-only`, `--no-stream`, `--load` (context loading), `--no-dump-on-exit`
+**Fix:** Pass the real system prompt, and accumulate the vision request's
+`InputTokens`/`OutputTokens` into `Stats` (and goal token counters).
 
 ---
 
-## 3. Agent (agent/)
+### 5. 🟠 `DumpContext` produces inconsistent filenames
+**File:** `agent/agent.go` — `DumpContext()` (lines ~723-772)
 
-### Core Loop (agent.go)
-- `Agent` struct manages context (messages), inference client, tool executor, stats, goals
-- `Run()` method: main loop with iteration limit, tool call execution, response handling
-- `RunStream()`: wraps `Run()` with streaming callback
-- Goal mode: injects goal check prompts, tracks goal achievement tokens/timing
-- Context compression: when context exceeds 80% of max, summarizes conversation
+The first dump is written to `coding-agent-context.json`, but every subsequent
+dump is written to `coding-agent-context-2.json`, `-3.json`, etc. (no `.json`
+suffix on the numbered variants). The naming is inconsistent, and the counter
+always starts at `2` regardless of what files already exist (it only skips
+collisions by incrementing), which can leave stale/garbage files.
 
-### Context Management (agent_context.go)
-- `getActualContextSizeUnlocked()`: Uses `lastTotalTokens` from API response + estimates for new tool results
-- `shouldCompress()`: triggers at 80% context usage
-- `compressContext()`: summarizes middle messages, preserves first user message + last 3
-- `LoadContext()`/`DumpContext()`: JSON serialization of conversation state
-- `recordIteration()`: snapshots full context for dump/history
-
-### System Prompt (agent_prompt.go)
-- Two variants: normal mode and read-only mode
-- Includes environment info (cwd, executable path, OS, architecture)
-- Lists all available tools with parameters, examples, best practices
-- Includes verification checklist for the LLM
-- Persona and summary-only mode instructions appended when configured
-
-### Tool Definitions (agent_tools.go)
-- Tool definitions in OpenAI `tools` format for LLM function calling
-- Normal mode: bash, read_file, write_file, read_lines, insert_lines, replace_text, move_text, todo, view_image
-- Read-only mode: read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image
-- Experimental mode adds `subagent` tool
-
-### Error Handling (agent_errors.go)
-- Exit codes: 0=success, 1=error, 2=usage, 3=auth, 4=context limit
-- `AuthError` and `ContextLimitError` types
-- Error classification by message content
-
-### Formatting (agent_format.go)
-- Tool call display formatting with ANSI colors
-- Streaming status messages for each tool
-- Result truncation for display (e.g., bash output shows last 5 lines)
+**Fix:** Use a consistent pattern (e.g. `coding-agent-context-1.json`, `-2.json` …)
+and scan existing files to pick the next available number.
 
 ---
 
-## 4. Inference (inference/)
+### 6. 🟠 Potential race/panic around `close(sigChan)` in interactive mode
+**File:** `main.go` — `runInteractiveMode()` (lines ~688-715, 750-760)
 
-### Client Design
-- OpenAI-compatible chat completions API
-- Supports streaming (SSE) and non-streaming modes
-- Retry logic (3 attempts) with backoff
-- Special handling for GitHub Copilot and GitHub Models endpoints
+The signal-handler goroutine ranges over `sigChan` while the main loop calls
+`signal.Stop(sigChan)` followed by `close(sigChan)` when exiting. Because
+`signal.Notify` delivers asynchronously, there is a small window where a pending
+signal could be delivered after `signal.Stop` but before/after `close`, writing to
+a closed channel and causing a panic. The `defer signal.Stop(sigChan)` inside the
+`for range` loop body is also misleading (defers accumulate and run only when the
+goroutine exits).
 
-### Endpoint Detection
-- Copilot: `githubcopilot.com` → `/chat/completions`
-- GitHub Models: `models.github.ai` → `/inference/chat/completions`
-- Default: `*/v1/chat/completions`
-
-### Message Handling
-- `Message` struct with Role, Content, Reasoning, ToolCalls, ToolCallId
-- Multi-modal support (images via ContentParts)
-- Custom `MarshalJSON()` for conditional content field (string vs array)
-- Tool call normalization: ensures `type` field is always populated
-
-### Streaming (stream.go)
-- SSE parsing with `data:` prefix and `[DONE]` terminator
-- Multi-line JSON blob accumulation
-- Tool call delta accumulation by index (merging partial deltas)
-- Token usage from both OpenAI format and llama.cpp timings format
-- Reasoning content split into separate stream
-
-### Response Parsing
-- Token usage from API response: `prompt_tokens`, `completion_tokens`, `total_tokens`
-- Fallback to llama.cpp `timings` format: `cache_n`, `prompt_n`, `predicted_n`
-- Tool call JSON argument parsing with error handling
-
-### Token Estimation
-- Heuristic-based: word count × 1.3, with code content multiplier (×1.2)
-- Used for context size estimation when no API response available
+**Fix:** Avoid closing a channel that `signal.Notify` may still target; use a
+`context`/done channel to shut down the handler goroutine and stop signals
+cleanly, and remove the in-loop `defer`.
 
 ---
 
-## 5. Tools (tools/)
+### 7. 🟠 `compressContext` assumes the first context message is the user prompt
+**File:** `agent/agent_context.go` — `compressContext()` (lines ~150-164)
 
-### Architecture
-- `ToolExecutor` struct with dispatch via `Execute()` switch statement
-- `ToolCall` and `ToolResult` types
-- `Stats` tracking (total/failed calls)
-- Read-only mode enforcement via `isReadOnlyTool()` map
-- Todo store (in-memory task list)
+```go
+firstUserMsg := messages[0]
+...
+summaryMessages := messages[1 : len(messages)-preserveCount]
+```
 
-### Implemented Tools (15 total)
-| Tool | File | Read-Only? | Description |
-|------|------|------------|-------------|
-| `bash` | bash.go | No | Execute commands with timeout/cancellation |
-| `read_file` | read_file.go | Yes | Read file contents |
-| `write_file` | write_file.go | No | Write content to files |
-| `read_lines` | read_lines.go | Yes | Read specific line range |
-| `insert_lines` | insert_lines.go | No | Insert lines at position |
-| `replace_text` | replace_text.go | No | Find and replace text |
-| `move_text` | move_text.go | No | Move text between files/locations |
-| `list_files` | list_files.go | Yes | Directory listing (ls-like) |
-| `grep` | grep.go | Yes | Pattern search in files |
-| `git_log` | git_log.go | Yes | View commit history |
-| `git_show` | git_show.go | Yes | View commit details |
-| `git_diff` | git_diff.go | Yes | Compare changes |
-| `subagent` | subagent.go | Conditional | Spawn subagent process |
-| `view_image` | view_image.go | Yes | Load image for vision analysis |
-| `todo` | todo.go | Partial (list/remove only) | Task management |
+The code tries to find the "first user message" (looping through if `messages[0]`
+isn't a user message), but the summary slice is always computed from `messages[1:]`.
+After a context load/restore (or a goal-injected message), the first real user
+message may not be `messages[0]`; it could then be *both* preserved (as
+`firstUserMsg`) and included in the summarized range — or dropped from the summary.
+
+**Fix:** Compute the summary slice based on the index of the message actually
+selected as `firstUserMsg`.
 
 ---
 
-## 6. TUI (tui/)
+## Robustness & Edge Cases
 
-### Features
-- Input prompt with raw mode character-by-character reading
-- History navigation (arrow keys, Ctrl+P/N)
-- Context size display with color-coded indicator
-- Streaming output with content type coloring (reasoning dimmed, goal magenta)
-- Tool call parameter updates in-place (ANSI cursor positioning)
-- Stats display
-- Command support (/stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off)
+### 8. 🟠 `read_lines`/preview code splits on byte length, not runes
+**Files:** `tools/utils.go` (`truncateString`, `truncateOutput`, `TruncateOutputByLen`),
+`agent/agent_format.go`
 
-### Signal Handling
-- Ctrl+C during input: cancels operation
-- Ctrl+C during execution: forwarded via cancelSignal channel
-- Context cancellation propagation
+Several truncation helpers slice `text[:maxLen]` by byte count. For UTF-8 content
+(e.g. CJK, emoji), this can split a multi-byte rune in the middle, producing
+invalid UTF-8 in output and tool results sent back to the LLM.
+
+**Fix:** Use `[]rune`-aware truncation or guard against cutting mid-rune.
 
 ---
 
-## 7. Colors & Theme (colors/)
+### 9. 🟠 Subagent does not fully inherit parent configuration
+**File:** `tools/subagent.go` — `executeSubagent()` (lines ~46-107)
 
-- ANSI color constants (reset, red, green, yellow, blue, magenta, cyan, dim)
-- Theme support: dark (default), light, solarized, gruvbox, darkula (defined in theme.go)
-- `GetColor()` function with theme-aware lookup + fallback to defaults
-- `SetTheme()`/`ApplyTheme()` at startup
+Only settings that exist as `CODING_AGENT_*` env vars (or `GITHUB_TOKEN`) are
+inherited. Configuration provided purely via CLI flags (e.g. `--model`,
+`--api-endpoint`, `--api-key`, `--max-tokens`, `--temperature`, `--persona` from
+the parent, `--tools`) is **not** forwarded to the subprocess. A subagent can
+therefore silently run against a different model/endpoint than its parent.
 
----
-
-## 8. Debug Logging (debug/)
-
-- `--debug` flag enables logging of all LLM conversation to file
-- `SessionSummary` tracks total messages, tokens, tool calls
-- Sensitive data redaction (API keys, tokens, secrets) via regex patterns
-- Timestamps on all log entries
-- Structured log format
+**Fix:** Forward the parent's resolved config (model, endpoint, key, max tokens,
+tools, persona, etc.) explicitly to the child process, or document the limitation.
 
 ---
 
-## 9. Issues Found
+### 10. 🟠 Endpoint detection relies on `strings.Contains`
+**Files:** `config/config.go` (`IsGitHubCopilotEndpoint`),
+`inference/inference.go` (`isGitHubCopilotEndpoint`, `isGitHubModelsEndpoint`)
 
-### CRITICAL ISSUES
+Endpoint type is inferred by substring matching on the URL. A custom proxy or
+gateway whose URL merely contains `githubcopilot.com` / `models.github.ai` would
+be misclassified and sent incompatible headers or a wrong path.
 
-#### C1. Stray `- prompt` Parameter in `git_diff` Text Description (agent_prompt.go)
-- **File**: `agent/agent_prompt.go` — `readOnlyOnlyToolDescriptions()` function
-- **Line**: ~101 (in the `git_diff` block)
-- **Description**: The `git_diff` tool description text includes a copy-pasted `- prompt` parameter from `view_image`:
-  ```
-  - prompt (string, optional): Custom prompt or question to guide the vision analysis.
-    When provided, this prompt is used instead of the default description prompt.
-  ```
-  The `git_diff` tool does NOT have a `prompt` parameter (confirmed by checking `git_diff.go`, `agent_tools.go` git_diff definition, and `tools.go` dispatcher).
-- **Impact**: The LLM reads this text description and may attempt to pass a `prompt` parameter when calling `git_diff`. Since the actual tool schema (in `agent_tools.go`) is correct (no `prompt` parameter), this would not cause a runtime error, but it misleads the LLM into thinking there's an extra parameter available. This wastes a potential tool call parameter slot and may confuse the model.
-- **Severity**: CRITICAL — The prompt text the LLM receives is inconsistent with the actual tool schema.
-- **Fix**: Remove the spurious `- prompt` line from the `git_diff` text description in `readOnlyOnlyToolDescriptions()`.
-
-#### C2. `lastTotalTokens` Reset During Compression May Underreport Context Size
-- **File**: `agent_context.go` (`compressContext()`)
-- **Description**: After compression, `lastTotalTokens` is set to `EstimateContextSize()` which is an estimate, not an authoritative API count.
-- **Status**: Design limitation — the estimate is the best available value until the next API response arrives.
+**Fix:** Compare against known hostnames/URL prefixes (or normalize the URL) rather
+than substring matching.
 
 ---
 
-### HIGH ISSUES
+## Code Quality & Maintainability
 
-#### H1. Subagent Tool Not Available in Read-Only Mode
-- **File**: `agent_tools.go` and `tools.go`
-- **Description**: `buildReadOnlyTools()` never includes `subagent` even with `--experimental`. The `isReadOnlyTool()` map in `tools.go` also doesn't include `subagent`.
-- **Status**: By design — subagent is inherently a write/execute operation. However, this means read-only mode cannot use subagents even with `--experimental`.
+### 11. 🟠 Tool lists are duplicated in three places
+**Files:** `agent/agent_tools.go` (`getToolNames`), `tools/tools.go`
+(`DefaultNormalTools`, `DefaultReadOnlyTools`), `main.go` (`displayTools`)
 
-#### H2. Missing `streamToolCallWithFullParams` / `streamStatus` Cases for Read-Only Tools
-- **File**: `agent/agent_format.go`
-- **Description**: The `streamToolCallWithFullParams()` and `streamStatus()` functions have explicit display formatting for write tools (`bash`, `read_file`, `write_file`, `insert_lines`, `replace_text`, `move_text`) but NOT for read-only tools (`list_files`, `grep`, `git_log`, `git_show`, `git_diff`). These tools fall through to the generic default case:
-  ```
-  [Tool: git_diff] (key: value, ...)
-  ```
-  instead of a descriptive message like:
-  ```
-  [Diff] ref1 ref2
-  ```
-  Meanwhile, `formatToolStatus()` DOES handle all these tools with specific formatting — making the streaming display inconsistent.
-- **Impact**: During streaming in read-only mode, tool calls are displayed with generic labels instead of descriptive ones. This is a user experience issue.
-- **Severity**: HIGH — affects all read-only tool usage display.
-- **Fix**: Add case statements for `list_files`, `grep`, `git_log`, `git_show`, `git_diff` in both `streamToolCallWithFullParams()` and `streamStatus()`.
+The set of default/read-only/experimental tool names is maintained independently in
+at least three locations (plus the read-only banner string in `agent.go`). Adding
+or removing a tool requires updating every copy, risking drift between the system
+prompt, the registered tools, and the help text.
+
+**Fix:** Centralize the canonical tool lists in one place (e.g. in `tools`) and have
+`agent` and `main` reference it.
 
 ---
 
-### MEDIUM ISSUES
+### 12. 🟢 `buildToolListSection` has a redundant `readOnly` parameter
+**File:** `agent/agent_prompt.go` — `buildToolListSection()` (lines ~62-71)
 
-#### M1. `--initial-token-timeout` CLI Flag Missing
-- **Files**: `config/config.go`, `implementation/main.go` (help text)
-- **Description**: The `InitialTokenTimeout` config field is fully implemented:
-  - Set in `DefaultConfig()` (24 hours)
-  - Parsed from config file via `initial_token_timeout` key
-  - Parsed from env var via `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`
-  - Validated in `Validate()` (minimum 10 seconds)
-  - Used in `NewInferenceClient()` for HTTP timeout
-  - Used in `handleStreamResponse()` for read deadline
-  - BUT there is NO `--initial-token-timeout` CLI flag in `ParseArgs()`.
-  - The help text in `main.go` does not mention it.
-  - The `implementation/README.md` (line 223) labels it as "future" despite the code fully supporting it via config file and env var.
-- **Impact**: Users who only use CLI flags cannot set the initial token timeout; they must use a config file or environment variable.
-- **Severity**: MEDIUM — workaround exists (config file or env var).
-- **Fix**: Add `--initial-token-timeout` case to the `ParseArgs()` switch statement and update the help text.
+Both branches of the `if readOnly` produce identical output; the parameter is dead.
 
-#### M2. Unknown Config Keys Print Warning but Continue
-- **File**: `config/config.go`
-- **Description**: Unknown config file keys print a warning to stderr but don't return an error.
-- **Status**: By design — allows forward-compatibility with future config keys.
+**Fix:** Remove the parameter and collapse the two branches.
 
 ---
 
-### LOW ISSUES
+### 13. 🟢 Dead code
+- `agent/agent_format.go` — `streamStatus()` (lines ~160-237) is defined but never called.
+- `tools/subagent.go` — `formatSubagentResult()` / `streamSubagentResult()`
+  (lines ~14-41) are never called (the subagent status is handled by
+  `formatToolStatus` in `agent_format.go`).
+- `tools/utils.go` — constants `MaxSubagentOutput`, `MaxSubagentMarkerLimit`,
+  `MaxSubagentResultDisplay` are unused.
 
-#### L1. Redundant Conditions in `isContextLimitError` (agent_errors.go)
-- **File**: `agent/agent_errors.go`
-- **Line**: ~54-55
-- **Description**: The function checks both `"maximum context length"` and `"maximum context length exceeded"`:
-  ```go
-  return strings.Contains(msg, "context size limit") ||
-      strings.Contains(msg, "maximum context length") ||
-      strings.Contains(msg, "maximum context length exceeded") ||  // <-- REDUNDANT
-      strings.Contains(msg, "maximum context length")              // <-- DUPLICATE
-  ```
-  The third check `"maximum context length exceeded"` is redundant because `"maximum context length"` (fourth check) is a substring of it. Additionally, the fourth check is a duplicate of the second.
-- **Impact**: No functional impact, just code quality.
-- **Severity**: LOW.
-- **Fix**: Remove the redundant/duplicate conditions.
-
-#### L2. Stale Comment in `subagent.go` (executeSubagentFromTool → ExecuteSubagent)
-- **File**: `tools/subagent.go`
-- **Line**: ~231
-- **Description**: The comment says `executeSubagentFromTool` but the function is named `ExecuteSubagent`:
-  ```go
-  // executeSubagentFromTool is the main entry point for the subagent tool.
-  // It's called by the tool executor and handles getting the binary path.
-  func ExecuteSubagent(params map[string]interface{}) *ToolResult {
-  ```
-  This appears to be a stale comment from a function rename.
-- **Impact**: None — cosmetic only.
-- **Severity**: LOW.
-- **Fix**: Update the comment to match the function name.
-
-#### L3. README Discrepancy: `--initial-token-timeout` Marked as "Future"
-- **File**: `implementation/README.md` (line 223)
-- **Description**: The README labels `--initial-token-timeout` as "future" despite the code fully supporting it via config file and env var.
-- **Impact**: Misleading documentation.
-- **Severity**: LOW.
-- **Fix**: Update the README to reflect current implementation status.
+**Fix:** Remove or wire up the dead code so it doesn't rot.
 
 ---
 
-## 10. Requirements Coverage
+### 14. 🟢 Error classification logic is duplicated
+**Files:** `agent/agent_errors.go` (`isAuthError`, `isContextLimitError`,
+`wrapError`) and `main.go` (`exitCodeForError`)
 
-### Fully Implemented (45/45 requirements)
-All 45 requirements files in `/workspace/requirements/` have been implemented:
+Both perform the same fragile string matching against error messages (e.g.
+`"401"`, `"403"`, `"context size limit"`). If one is updated, the other can drift,
+causing inconsistent exit codes.
 
-1. **001** - Go runtime ✓
-2. **002** - TUI input prompt ✓
-3. **003** - Runtime statistics ✓
-4. **004** - Bash tool ✓
-5. **005** - Read file tool ✓
-6. **006** - Write file tool ✓
-7. **007** - Inference backend ✓
-8. **008** - Context size ✓
-9. **009** - Context compression ✓
-10. **010** - Streaming inference ✓
-11. **011** - Read lines tool ✓
-12. **012** - Insert lines tool ✓
-13. **013** - Replace text tool ✓
-14. **014** - Tool calling format ✓
-15. **015** - Tool prefix prompt ✓
-16. **016** - Tool result context ✓
-17. **017** - TUI tool feedback ✓
-18. **018** - LLM error feedback ✓
-19. **019** - TUI history navigation ✓
-20. **020** - TUI Ctrl+C cancellation ✓
-21. **021** - TUI context size display ✓
-22. **022** - No user input echo ✓
-23. **023** - Versioning ✓
-24. **024** - Zero external dependencies ✓
-25. **025** - Non-interactive one-shot mode ✓
-26. **026** - Configurable max iterations ✓
-27. **027** - TUI reasoning token coloring ✓
-28. **028** - Debug flag ✓
-29. **029** - System prompt environment info ✓
-30. **030** - Patch tool (DEPRECATED - marked as removed) ✓
-31. **031** - GitHub Copilot backend ✓
-32. **032** - List files tool ✓
-33. **033** - Read-only mode ✓
-34. **034** - Grep tool ✓
-35. **035** - Git log tool ✓
-36. **036** - Git show tool ✓
-37. **037** - Git diff tool ✓
-38. **038** - Goal mode ✓
-39. **039** - Persona configuration ✓
-40. **040** - Subagent tool ✓
-41. **041** - View image tool ✓
-42. **042** - Theme support ✓
-43. **043** - Todo tool ✓
-44. **044** - Context dump/load ✓
-45. **045** - Move text tool ✓
-
-### Additional Observations
-- **MCP Server Integration** (`specifications/mcp-server-integration.md`) exists as a specification but is NOT implemented in code. This is a future feature.
-- **`--initial-token-timeout`** flag is NOT parsed in CLI but IS supported via config file and environment variable.
+**Fix:** Have `exitCodeForError` use the typed errors (`AuthError`,
+`ContextLimitError`) produced by `wrapError` rather than re-string-matching.
 
 ---
 
-## 11. Code Quality Summary
+### 15. 🟢 Invalid `--tools` names are silently ignored
+**Files:** `config/config.go`, `agent/agent_tools.go` (`buildTools`), `main.go`
 
-### Strengths
-- Clean package separation with clear responsibilities
-- Good use of Go idioms (context, mutexes, channels)
-- Comprehensive streaming support with content type separation
-- Well-structured tool execution system
-- Thorough error handling with typed errors
-- Debug logging with sensitive data redaction
-- Cross-platform build support (macOS, Linux, Windows)
-- Extensive test coverage (multiple test files per package)
+If a user passes `--tools "read_file,not_a_tool"`, the unknown name is silently
+skipped when building tool definitions, so the model is told about a tool that
+isn't registered (or a tool is missing) with no warning.
 
-### Weaknesses
-- **Prompt/schema inconsistency**: The LLM-readable text description for `git_diff` includes a non-existent `prompt` parameter (copy-paste error from `view_image`), while the actual JSON schema is correct.
-- **Incomplete CLI flag**: `--initial-token-timeout` is implemented in config file and env var but missing from CLI flag parsing and help text.
-- **Inconsistent streaming display**: Read-only tools (`list_files`, `grep`, `git_log`, `git_show`, `git_diff`) lack specific display formatting in `streamToolCallWithFullParams()` and `streamStatus()`.
-- **Redundant error check conditions**: `isContextLimitError()` has duplicate/redundant string checks.
-- **Stale documentation comments**: `subagent.go` has a comment referencing a non-existent function name.
-- **Context compression accuracy**: Token counting after compression uses estimates (inherent design limitation).
+**Fix:** Validate tool names against `tools.AllToolNames()` and return an error
+(or at least warn) for unknown entries.
+
+---
+
+### 16. 🟢 Re-entrancy risk: callbacks invoked while holding `Agent.mu`
+**File:** `agent/agent.go` — `Run()` (e.g. `reportContextSize` at line ~437, and
+`a.stats.Iterations` updates)
+
+Several callbacks (context-size reporting, stream callbacks) are dispatched while
+`a.mu` is held. If a callback ever re-enters the agent (e.g. the TUI triggering a
+`/compress`), it could deadlock. The code is mostly careful to copy state before
+dispatching, but the pattern is fragile.
+
+**Fix:** Capture the needed values under the lock, release the lock, then invoke
+callbacks.
+
+---
+
+### 17. 🟢 Custom `formatInt` reimplements `strconv`
+**File:** `tools/read_file.go` — `formatInt()` (lines ~115-129)
+
+`formatInt` is a hand-rolled decimal formatter used only by `formatFileSize`.
+This duplicates the stdlib (`strconv.FormatInt` / `strconv.Itoa`) for no benefit.
+
+**Fix:** Use `strconv.FormatInt(n, 10)` and delete `formatInt`.
+
+---
+
+### 18. 🟢 `handleStreamResponse` reuses a `chunk` struct with manual field reset
+**File:** `inference/stream.go` (lines ~372-380)
+
+The `chunk` variable is reused across loop iterations, and fields are reset
+manually before each `json.Unmarshal`. Adding a new field to the chunk struct
+later risks stale-data bugs (the reset list must be kept in sync).
+
+**Fix:** Declare a fresh struct per iteration (or reset via `chunk = struct{...}{}`)
+so unmarshalling always starts clean.
+
+---
+
+## Minor UX / Notes
+
+- **One-shot mode "Thinking Complete" separator** (`main.go` ~291-295): prints the
+  `--- Thinking Complete ---` banner before the first normal chunk even when the
+  model never produced reasoning, so it can appear spuriously.
+- **`view_image` 20MB limit**: base64 encoding inflates the data URI ~1.33× and it
+  is sent inline in the request; large images can produce very large requests and
+  token estimates. Consider downscaling or an explicit size cap on the data URI.
+- **`git_*` tools pass user-supplied `reference`/`commit` strings directly to git**
+  (no shell, so no injection), but unusual references can still cause surprising
+  git behavior; consider validating the reference format.
+
+---
+
+## Summary of Recommended Priorities
+
+| Priority | Item(s) |
+|----------|---------|
+| Fix first | ~~#1 duplicate output~~ ✅ fixed, #2 scanner 64KB limit, #3 file-permission loss |
+| Next | #4 vision token/system prompt, #5 dump filename, #6 signal close race, #7 compression first-message |
+| Clean up | #8-10 robustness, #11-18 maintainability |
+
+---
+
+*Review performed against `implementation/` as of the current working tree.
+Build: `go build ./...` OK · `go vet ./...` OK · `go test ./...` all passing.*
