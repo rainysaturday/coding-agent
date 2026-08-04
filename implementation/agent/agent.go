@@ -765,18 +765,19 @@ func (a *Agent) DumpContext() (string, error) {
 		},
 		Iterations: a.iterationHistory,
 	}
-	// Determine filename in temp directory
-	basePath := filepath.Join(os.TempDir(), "coding-agent-context.json")
-	filePath := basePath
-
-	// Ensure unique filename if it already exists
-	counter := 2
+	// Determine filename in temp directory using a consistent numbered pattern
+	// (coding-agent-context-1.json, -2.json, ...) and scan for the first
+	// available number so no stale/garbage files are created.
+	dir := os.TempDir()
+	base := "coding-agent-context"
+	counter := 1
+	filePath := filepath.Join(dir, fmt.Sprintf("%s-%d.json", base, counter))
 	for {
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
 			break
 		}
-		filePath = fmt.Sprintf("%s-%d.json", filepath.Join(os.TempDir(), "coding-agent-context"), counter)
 		counter++
+		filePath = filepath.Join(dir, fmt.Sprintf("%s-%d.json", base, counter))
 	}
 
 	// Marshal to JSON with indentation for readability

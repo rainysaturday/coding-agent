@@ -17,19 +17,6 @@ and maintainability improvements. Each item is tagged by severity.
 
 ## Bugs & Correctness Issues
 
-### 5. 🟠 `DumpContext` produces inconsistent filenames
-**File:** `agent/agent.go` — `DumpContext()` (lines ~723-772)
-
-The first dump is written to `coding-agent-context.json`, but every subsequent
-dump is written to `coding-agent-context-2.json`, `-3.json`, etc. (no `.json`
-suffix on the numbered variants). The naming is inconsistent, and the counter
-always starts at `2` regardless of what files already exist (it only skips
-collisions by incrementing), which can leave stale/garbage files.
-
-**Fix:** Use a consistent pattern (e.g. `coding-agent-context-1.json`, `-2.json` …)
-and scan existing files to pick the next available number.
-
----
 
 ### 6. 🟠 Potential race/panic around `close(sigChan)` in interactive mode
 **File:** `main.go` — `runInteractiveMode()` (lines ~688-715, 750-760)
@@ -226,7 +213,7 @@ so unmarshalling always starts clean.
 | Priority | Item(s) |
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
-| Next | ~~#4 vision token/system prompt~~ ✅ fixed, #5 dump filename, #6 signal close race, #7 compression first-message |
+| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, #6 signal close race, #7 compression first-message |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 
 ---
