@@ -227,7 +227,7 @@ func (ic *InferenceClient) isCopilotEndpoint() bool {
 
 // isGitHubModelsEndpoint checks if the endpoint is a GitHub Models URL.
 func (ic *InferenceClient) isGitHubModelsEndpoint() bool {
-	return strings.Contains(ic.endpoint, "models.github.ai")
+	return config.IsGitHubModelsEndpoint(ic.endpoint)
 }
 
 // buildURL constructs the full API URL based on the endpoint type.

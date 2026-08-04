@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,8 +13,33 @@ import (
 // points to a GitHub Copilot API.  This is a shared utility to avoid
 // duplicating the detection logic across packages (see also
 // InferenceClient.isCopilotEndpoint in inference/inference.go).
+//
+// Detection is based on the URL host rather than a raw substring match,
+// which avoids false positives from unrelated strings (e.g. an attacker
+// hosting a service at "githubcopilot.com.evil.example").
 func IsGitHubCopilotEndpoint(endpoint string) bool {
-	return strings.Contains(endpoint, "githubcopilot.com")
+	return isHostOrSubdomain(endpoint, "githubcopilot.com")
+}
+
+// IsGitHubModelsEndpoint checks whether the given API endpoint URL points
+// to a GitHub Models API (models.github.ai).
+func IsGitHubModelsEndpoint(endpoint string) bool {
+	return isHostOrSubdomain(endpoint, "github.ai")
+}
+
+// isHostOrSubdomain reports whether the endpoint's host equals domain or
+// is a subdomain of it. Any existing scheme or path is ignored. Malformed
+// URLs are treated as not matching.
+func isHostOrSubdomain(endpoint, domain string) bool {
+	if !strings.HasPrefix(domain, ".") {
+		domain = "." + domain
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == strings.TrimPrefix(domain, ".") || strings.HasSuffix(host, domain)
 }
 
 // Config holds all configuration for the agent.
