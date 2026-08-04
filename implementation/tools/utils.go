@@ -38,7 +38,6 @@ func WriteFilePreservePerm(path string, data []byte) error {
 	return os.WriteFile(path, data, mode)
 }
 
-
 // countLines counts the number of lines in text.
 // A line is defined as text terminated by a newline character.
 // An empty string has 0 lines. Text without a trailing newline still counts as a line.
@@ -199,7 +198,6 @@ func TruncateRunes(s string, maxLen int) string {
 	}
 	return string(r[:maxLen]) + "..."
 }
-
 
 // isGitRepo checks if the given path is a git repository.
 func isGitRepo(path string) bool {

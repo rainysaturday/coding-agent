@@ -64,7 +64,6 @@ func main() {
 		}
 	}
 
-
 	// Export the resolved configuration to CODING_AGENT_* env vars so spawned
 	// subagents inherit the same settings (model, endpoint, key, tokens, tools,
 	// etc.) even when they were provided via CLI flags rather than the environment.
@@ -160,7 +159,6 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 		os.Setenv("CODING_AGENT_PERSONA", cfg.Persona)
 	}
 }
-
 
 func displayVersion() {
 	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
@@ -276,8 +274,6 @@ func displayTools() {
 	fmt.Println("Experimental tools (add with --experimental or include explicitly):")
 	fmt.Println("  subagent")
 }
-
-
 
 func runOneShotMode(cfg *config.Config) error {
 	var prompt string

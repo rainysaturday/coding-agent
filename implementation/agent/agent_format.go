@@ -155,7 +155,6 @@ func formatParamValue(value interface{}) string {
 	}
 }
 
-
 // streamResult streams a tool result status message with color.
 // If callback is nil, prints to stdout instead.
 func streamResult(toolName string, result *tools.ToolResult, callback StreamCallback) {

@@ -179,7 +179,6 @@ Second final output`
 	}
 }
 
-
 // ===== Tests for getExecutablePath function =====
 
 func TestGetExecutablePath(t *testing.T) {
@@ -313,7 +312,6 @@ func TestSubagentToolDefinition(t *testing.T) {
 		t.Error("Persona parameter not found in subagent tool definition")
 	}
 }
-
 
 // ===== Tests for subagent error handling =====
 

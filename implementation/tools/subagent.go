@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.
 // Configuration is inherited from the parent process via environment variables and CLI flags.

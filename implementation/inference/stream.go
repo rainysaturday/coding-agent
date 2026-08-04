@@ -283,6 +283,27 @@ func (ss *streamState) buildStreamResponse() *Response {
 	}
 }
 
+// sseChunk is a single parsed SSE data payload from a streaming response.
+// It is a named type so each loop iteration can allocate a fresh, zero-valued
+// instance instead of reusing one struct and manually resetting its fields
+// (which risks stale data if a new field is added later).
+type sseChunk struct {
+	Choices []struct {
+		Delta        Message `json:"delta"`
+		FinishReason string  `json:"finish_reason"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+	Timings struct {
+		CacheN     int `json:"cache_n"`
+		PromptN    int `json:"prompt_n"`
+		PredictedN int `json:"predicted_n"`
+	} `json:"timings"`
+}
+
 // handleStreamResponse processes a streaming response from the LLM API.
 // It reads SSE lines, accumulates content, reasoning, and tool calls,
 // and returns a complete Response.
@@ -297,49 +318,20 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	var jsonBuffer strings.Builder
 	inJSON := false
 
-	// Declare chunk for JSON parsing - used for both single-line and multi-line SSE
-	// Uses Message struct to support both reasoning and reasoning_content fields
-	var chunk struct {
-		Choices []struct {
-			Delta        Message `json:"delta"`
-			FinishReason string  `json:"finish_reason"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-		Timings struct {
-			CacheN     int `json:"cache_n"`
-			PromptN    int `json:"prompt_n"`
-			PredictedN int `json:"predicted_n"`
-		} `json:"timings"`
-	}
-
 	for scanner.Scan() {
 		line := scanner.Text()
+
+		// Allocate a fresh, zero-valued chunk for each SSE payload so no stale
+		// fields leak between iterations (json.Unmarshal does not clear existing
+		// slice values, so reusing a struct requires error-prone manual resets).
+		chunk := sseChunk{}
 
 		// Handle SSE data lines
 		if strings.HasPrefix(line, "data: ") {
 			// If we were accumulating multi-line JSON, flush and process it first
 			if inJSON && jsonBuffer.Len() > 0 {
 				inJSON = false
-				var bufferChunk struct {
-					Choices []struct {
-						Delta        Message `json:"delta"`
-						FinishReason string  `json:"finish_reason"`
-					} `json:"choices"`
-					Usage struct {
-						PromptTokens     int `json:"prompt_tokens"`
-						CompletionTokens int `json:"completion_tokens"`
-						TotalTokens      int `json:"total_tokens"`
-					} `json:"usage"`
-					Timings struct {
-						CacheN     int `json:"cache_n"`
-						PromptN    int `json:"prompt_n"`
-						PredictedN int `json:"predicted_n"`
-					} `json:"timings"`
-				}
+				var bufferChunk sseChunk
 				if err := json.Unmarshal([]byte(jsonBuffer.String()), &bufferChunk); err != nil {
 					// On parse failure, keep the buffer and continue accumulating.
 					// The next chunk may complete the JSON. Only reset if we see a
@@ -372,16 +364,6 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 				ss.streamEnded = true
 				break
 			}
-
-			// Reset chunk before unmarshaling to prevent stale data from persisting
-			// json.Unmarshal does not clear existing slice values, so we must reset manually.
-			chunk.Choices = nil
-			chunk.Usage.PromptTokens = 0
-			chunk.Usage.CompletionTokens = 0
-			chunk.Usage.TotalTokens = 0
-			chunk.Timings.CacheN = 0
-			chunk.Timings.PromptN = 0
-			chunk.Timings.PredictedN = 0
 
 			// Try to parse as complete JSON first
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {

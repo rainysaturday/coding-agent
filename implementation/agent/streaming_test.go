@@ -29,7 +29,6 @@ func TestRunStream(t *testing.T) {
 	}
 }
 
-
 func TestStreamResult_Callback(t *testing.T) {
 	var received []inference.StreamingChunk
 
