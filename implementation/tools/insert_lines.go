@@ -75,7 +75,7 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 		}
 	}
 
-	if err := os.WriteFile(path, []byte(output), FilePermWrite); err != nil {
+	if err := WriteFilePreservePerm(path, []byte(output)); err != nil {
 		return &ToolResult{
 			Success: false,
 			Error:   formatFileError(err, path),

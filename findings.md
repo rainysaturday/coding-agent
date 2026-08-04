@@ -17,19 +17,6 @@ and maintainability improvements. Each item is tagged by severity.
 
 ## Bugs & Correctness Issues
 
-### 3. 🔴 File write tools clobber the original file permission bits
-**Files:** `tools/write_file.go`, `tools/replace_text.go`, `tools/insert_lines.go`,
-`tools/move_text.go`
-
-Every write path calls `os.WriteFile(path, data, FilePermWrite)` where
-`FilePermWrite = 0644`. When a tool rewrites an existing file, the file's original
-mode is lost. For example, an executable script (0755) edited via
-`replace_text`/`insert_lines` silently becomes non-executable (0644).
-
-**Fix:** Before writing, `os.Stat` the target; if it exists, preserve its `Mode()`
-(and ownership if possible) instead of hard-coding `0644`.
-
----
 
 ### 4. 🟠 Vision requests are not included in token accounting or given a system prompt
 **File:** `agent/agent.go` — `handleViewImage()` (lines ~644-696)
@@ -260,7 +247,7 @@ so unmarshalling always starts clean.
 
 | Priority | Item(s) |
 |----------|---------|
-| Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, #3 file-permission loss |
+| Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
 | Next | #4 vision token/system prompt, #5 dump filename, #6 signal close race, #7 compression first-message |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 

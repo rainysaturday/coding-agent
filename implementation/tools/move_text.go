@@ -144,7 +144,7 @@ func (te *ToolExecutor) executeSameFileMove(mp *moveTextParams, movedLines []str
 	finalLines = append(finalLines, remainingLines[insertIdx:]...)
 
 	output := joinLines(finalLines)
-	if err := os.WriteFile(mp.sourcePath, []byte(output), FilePermWrite); err != nil {
+	if err := WriteFilePreservePerm(mp.sourcePath, []byte(output)); err != nil {
 		return &ToolResult{Success: false, Error: formatFileError(err, mp.sourcePath)}
 	}
 
@@ -160,7 +160,7 @@ func (te *ToolExecutor) executeSameFileMove(mp *moveTextParams, movedLines []str
 func (te *ToolExecutor) executeCrossFileMove(mp *moveTextParams, movedLines []string, movedContent string, linesMoved int, remainingLines []string) *ToolResult {
 	// Write modified source file
 	sourceOutput := joinLines(remainingLines)
-	if err := os.WriteFile(mp.sourcePath, []byte(sourceOutput), FilePermWrite); err != nil {
+	if err := WriteFilePreservePerm(mp.sourcePath, []byte(sourceOutput)); err != nil {
 		return &ToolResult{Success: false, Error: formatFileError(err, mp.sourcePath)}
 	}
 
@@ -189,7 +189,7 @@ func (te *ToolExecutor) executeCrossFileMove(mp *moveTextParams, movedLines []st
 	finalTargetLines = append(finalTargetLines, targetLines[insertIdx:]...)
 
 	targetOutput := joinLines(finalTargetLines)
-	if err := os.WriteFile(mp.targetPath, []byte(targetOutput), FilePermWrite); err != nil {
+	if err := WriteFilePreservePerm(mp.targetPath, []byte(targetOutput)); err != nil {
 		return &ToolResult{Success: false, Error: formatFileError(err, mp.targetPath)}
 	}
 

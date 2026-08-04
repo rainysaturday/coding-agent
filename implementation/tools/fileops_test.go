@@ -897,3 +897,39 @@ func TestFormatFileSize(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFilePreservePerm(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "script.sh")
+
+	// Create an executable file.
+	if err := os.WriteFile(testFile, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	// Rewrite it via the preserving helper.
+	if err := WriteFilePreservePerm(testFile, []byte("#!/bin/sh\n# changed\n")); err != nil {
+		t.Fatalf("WriteFilePreservePerm failed: %v", err)
+	}
+
+	info, err := os.Stat(testFile)
+	if err != nil {
+		t.Fatalf("failed to stat file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0755 {
+		t.Errorf("permissions after rewrite = %v, want %v (execute bit should be preserved)", got, os.FileMode(0755))
+	}
+
+	// A brand-new file should default to FilePermWrite (0644).
+	newFile := filepath.Join(tmpDir, "new.txt")
+	if err := WriteFilePreservePerm(newFile, []byte("hello")); err != nil {
+		t.Fatalf("WriteFilePreservePerm on new file failed: %v", err)
+	}
+	info, err = os.Stat(newFile)
+	if err != nil {
+		t.Fatalf("failed to stat new file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != FilePermWrite {
+		t.Errorf("new file permissions = %v, want %v", got, FilePermWrite)
+	}
+}

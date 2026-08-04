@@ -32,6 +32,19 @@ const (
 	MaxSubagentResultDisplay = 200
 )
 
+// WriteFilePreservePerm writes data to path, preserving the file's existing
+// permission bits if the file already exists. New files default to FilePermWrite.
+// This prevents tools from silently stripping permissions (e.g. removing the
+// execute bit) from files they rewrite in place.
+func WriteFilePreservePerm(path string, data []byte) error {
+	mode := FilePermWrite
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode()
+	}
+	return os.WriteFile(path, data, mode)
+}
+
+
 // countLines counts the number of lines in text.
 // A line is defined as text terminated by a newline character.
 // An empty string has 0 lines. Text without a trailing newline still counts as a line.

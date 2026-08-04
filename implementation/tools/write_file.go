@@ -4,7 +4,6 @@ package tools
 
 import (
 	"fmt"
-	"os"
 )
 
 // executeWriteFile writes to a file.
@@ -32,7 +31,7 @@ func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	err := os.WriteFile(path, []byte(content), FilePermWrite)
+	err := WriteFilePreservePerm(path, []byte(content))
 	if err != nil {
 		return &ToolResult{
 			Success: false,
