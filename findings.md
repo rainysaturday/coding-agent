@@ -17,22 +17,6 @@ and maintainability improvements. Each item is tagged by severity.
 
 ## Bugs & Correctness Issues
 
-### 2. 🔴 `bufio.Scanner` 64KB default limit can abort large streaming responses
-**File:** `inference/stream.go` — `handleStreamResponse()` (line ~292)
-
-```go
-scanner := bufio.NewScanner(body)
-```
-
-`bufio.Scanner` has a default maximum token size of **64KB**. A single SSE `data:`
-line that exceeds 64KB (e.g., a large tool-call `arguments` JSON blob or a large
-content chunk) makes the scanner fail with `bufio.ErrTooLong`, which is returned
-as a stream error and aborts the whole response.
-
-**Fix:** Increase the buffer, e.g. `scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)`.
-
----
-
 ### 3. 🔴 File write tools clobber the original file permission bits
 **Files:** `tools/write_file.go`, `tools/replace_text.go`, `tools/insert_lines.go`,
 `tools/move_text.go`
@@ -276,7 +260,7 @@ so unmarshalling always starts clean.
 
 | Priority | Item(s) |
 |----------|---------|
-| Fix first | ~~#1 duplicate output~~ ✅ fixed, #2 scanner 64KB limit, #3 file-permission loss |
+| Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, #3 file-permission loss |
 | Next | #4 vision token/system prompt, #5 dump filename, #6 signal close race, #7 compression first-message |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 

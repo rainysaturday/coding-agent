@@ -290,6 +290,10 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 	ss := newStreamState(callback, ic.maxDisplayWidth)
 
 	scanner := bufio.NewScanner(body)
+	// Increase the scanner's maximum token size beyond the default 64KB limit so
+	// that large SSE data lines (e.g. big tool-call argument JSON blobs) do not
+	// cause bufio.ErrTooLong and abort the whole response.
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	var jsonBuffer strings.Builder
 	inJSON := false
 
