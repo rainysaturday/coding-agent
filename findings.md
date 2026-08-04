@@ -17,28 +17,6 @@ and maintainability improvements. Each item is tagged by severity.
 
 ## Bugs & Correctness Issues
 
-
-### 4. 🟠 Vision requests are not included in token accounting or given a system prompt
-**File:** `agent/agent.go` — `handleViewImage()` (lines ~644-696)
-
-When `view_image` is used, a second inference request is made to describe the image:
-
-```go
-response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, "")
-```
-
-- The `systemPrompt` is passed as `""`, so the vision model receives no system
-  context (tools, persona, read-only instructions, etc.).
-- The token usage of this vision request is never added to `Stats.InputTokens` /
-  `Stats.OutputTokens`, so reported token counts undercount actual API usage.
-- The image message is never added to the main conversation `context`; only the
-  text description is stored as a tool result.
-
-**Fix:** Pass the real system prompt, and accumulate the vision request's
-`InputTokens`/`OutputTokens` into `Stats` (and goal token counters).
-
----
-
 ### 5. 🟠 `DumpContext` produces inconsistent filenames
 **File:** `agent/agent.go` — `DumpContext()` (lines ~723-772)
 
@@ -248,7 +226,7 @@ so unmarshalling always starts clean.
 | Priority | Item(s) |
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
-| Next | #4 vision token/system prompt, #5 dump filename, #6 signal close race, #7 compression first-message |
+| Next | ~~#4 vision token/system prompt~~ ✅ fixed, #5 dump filename, #6 signal close race, #7 compression first-message |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 
 ---

@@ -671,11 +671,33 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 	}
 	msg.SetImageContent(visionPrompt, viewExtra.DataURI, "auto")
 
-	// Send to inference for vision analysis
-	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, "")
+	// Send to inference for vision analysis. Pass the agent's system prompt so
+	// the vision model gets the same system context (persona, read-only rules,
+	// tool guidance, etc.) as the main conversation.
+	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, a.systemPrompt)
 	if err != nil {
 		return fmt.Sprintf("Tool 'view_image' loaded the image but vision analysis failed: %v", err)
 	}
+
+	// Account for the vision request's token usage so reported stats reflect the
+	// actual API usage (this request is separate from the main conversation).
+	a.mu.Lock()
+	if response.InputTokens > 0 && response.OutputTokens > 0 {
+		a.stats.InputTokens += response.InputTokens
+		a.stats.OutputTokens += response.OutputTokens
+		if a.goalActive {
+			a.goalInputTokens += response.InputTokens
+			a.goalOutputTokens += response.OutputTokens
+		}
+	} else if response.TokenUsage > 0 {
+		a.stats.InputTokens += response.TokenUsage / 2
+		a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
+		if a.goalActive {
+			a.goalInputTokens += response.TokenUsage / 2
+			a.goalOutputTokens += response.TokenUsage - response.TokenUsage/2
+		}
+	}
+	a.mu.Unlock()
 
 	description := response.Content
 	if description == "" {

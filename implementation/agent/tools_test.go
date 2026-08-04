@@ -152,12 +152,16 @@ func TestHandleViewImage_CustomPrompt(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var reqBody map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err == nil {
-			if messages, ok := reqBody["messages"].([]interface{}); ok && len(messages) > 0 {
-				if msg, ok := messages[0].(map[string]interface{}); ok {
-					if content, ok := msg["content"].([]interface{}); ok && len(content) > 0 {
-						if textPart, ok := content[0].(map[string]interface{}); ok {
-							if text, ok := textPart["text"].(string); ok {
-								receivedPrompt = text
+			if messages, ok := reqBody["messages"].([]interface{}); ok {
+				for _, m := range messages {
+					if msg, ok := m.(map[string]interface{}); ok {
+						if content, ok := msg["content"].([]interface{}); ok {
+							for _, part := range content {
+								if textPart, ok := part.(map[string]interface{}); ok {
+									if text, ok := textPart["text"].(string); ok && text != "" {
+										receivedPrompt = text
+									}
+								}
 							}
 						}
 					}
@@ -202,12 +206,16 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var reqBody map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&reqBody); err == nil {
-			if messages, ok := reqBody["messages"].([]interface{}); ok && len(messages) > 0 {
-				if msg, ok := messages[0].(map[string]interface{}); ok {
-					if content, ok := msg["content"].([]interface{}); ok && len(content) > 0 {
-						if textPart, ok := content[0].(map[string]interface{}); ok {
-							if text, ok := textPart["text"].(string); ok {
-								receivedPrompt = text
+			if messages, ok := reqBody["messages"].([]interface{}); ok {
+				for _, m := range messages {
+					if msg, ok := m.(map[string]interface{}); ok {
+						if content, ok := msg["content"].([]interface{}); ok {
+							for _, part := range content {
+								if textPart, ok := part.(map[string]interface{}); ok {
+									if text, ok := textPart["text"].(string); ok && text != "" {
+										receivedPrompt = text
+									}
+								}
 							}
 						}
 					}
