@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +53,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
 		os.Exit(2)
 	}
+
+	// Export the resolved configuration to CODING_AGENT_* env vars so spawned
+	// subagents inherit the same settings (model, endpoint, key, tokens, tools,
+	// etc.) even when they were provided via CLI flags rather than the environment.
+	exportResolvedConfigToEnv(cfg)
 
 	// Apply theme (CLI flag overrides env var; default is "dark")
 	if cfg.Theme != "" {
@@ -104,6 +110,46 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// exportResolvedConfigToEnv exports the parent's resolved configuration to the
+// CODING_AGENT_* environment variables so spawned subagents inherit the same
+// settings (model, endpoint, key, max tokens, temperature, tools, read-only,
+// etc.) even when they were provided via CLI flags rather than the environment.
+// The subagent's config parser reads these vars, and executeSubagent forwards
+// the tool-related ones as explicit CLI flags.
+func exportResolvedConfigToEnv(cfg *config.Config) {
+	if cfg.Model != "" {
+		os.Setenv("CODING_AGENT_MODEL", cfg.Model)
+	}
+	if cfg.Temperature != nil {
+		os.Setenv("CODING_AGENT_TEMPERATURE", strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64))
+	}
+	if cfg.MaxTokens > 0 {
+		os.Setenv("CODING_AGENT_MAX_TOKENS", strconv.Itoa(cfg.MaxTokens))
+	}
+	if cfg.APIEndpoint != "" {
+		os.Setenv("CODING_AGENT_API_ENDPOINT", cfg.APIEndpoint)
+	}
+	if cfg.APIKey != "" {
+		os.Setenv("CODING_AGENT_API_KEY", cfg.APIKey)
+	}
+	if len(cfg.Tools) > 0 {
+		os.Setenv("CODING_AGENT_TOOLS", strings.Join(cfg.Tools, ","))
+	}
+	if cfg.ReadOnly {
+		os.Setenv("CODING_AGENT_READ_ONLY", "true")
+	}
+	if cfg.Experimental {
+		os.Setenv("CODING_AGENT_EXPERIMENTAL", "true")
+	}
+	if cfg.Theme != "" {
+		os.Setenv("CODING_AGENT_THEME", cfg.Theme)
+	}
+	if cfg.Persona != "" {
+		os.Setenv("CODING_AGENT_PERSONA", cfg.Persona)
+	}
+}
+
 
 func displayVersion() {
 	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))

@@ -20,19 +20,6 @@ and maintainability improvements. Each item is tagged by severity.
 ## Robustness & Edge Cases
 
 
-### 9. 🟠 Subagent does not fully inherit parent configuration
-**File:** `tools/subagent.go` — `executeSubagent()` (lines ~46-107)
-
-Only settings that exist as `CODING_AGENT_*` env vars (or `GITHUB_TOKEN`) are
-inherited. Configuration provided purely via CLI flags (e.g. `--model`,
-`--api-endpoint`, `--api-key`, `--max-tokens`, `--temperature`, `--persona` from
-the parent, `--tools`) is **not** forwarded to the subprocess. A subagent can
-therefore silently run against a different model/endpoint than its parent.
-
-**Fix:** Forward the parent's resolved config (model, endpoint, key, max tokens,
-tools, persona, etc.) explicitly to the child process, or document the limitation.
-
----
 
 ### 10. 🟠 Endpoint detection relies on `strings.Contains`
 **Files:** `config/config.go` (`IsGitHubCopilotEndpoint`),
@@ -165,7 +152,7 @@ so unmarshalling always starts clean.
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed,  #3 file-permission loss ✅ fixed |
 | Next |  #4 vision token/system prompt ✅ fixed,  #5 dump filename ✅ fixed,  #6 signal close race ✅ fixed,  #7 compression first-message ✅ fixed |
-| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9-10 robustness,  #11-18 maintainability |
+| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9 subagent config ✅ fixed,  #10 robustness,  #11-18 maintainability |
 
 ---
 
