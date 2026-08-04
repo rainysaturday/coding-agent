@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ToolResult represents the result of a tool execution.
@@ -284,4 +285,28 @@ func IsValidToolName(name string) bool {
 		}
 	}
 	return false
+}
+
+// ValidateToolNames checks that every name in names is a known tool.
+// It returns an error listing any unknown tool names so callers can reject
+// invalid --tools lists instead of silently ignoring them.
+func ValidateToolNames(names []string) error {
+	known := make(map[string]bool, len(AllToolNames()))
+	for _, n := range AllToolNames() {
+		known[n] = true
+	}
+	var unknown []string
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		if !known[n] {
+			unknown = append(unknown, n)
+		}
+	}
+	if len(unknown) > 0 {
+		return fmt.Errorf("unknown tool name(s): %s (available: %s)",
+			strings.Join(unknown, ", "), strings.Join(AllToolNames(), ", "))
+	}
+	return nil
 }

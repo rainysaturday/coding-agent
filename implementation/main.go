@@ -55,6 +55,16 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Validate any user-supplied --tools list so unknown names are reported
+	// rather than silently ignored.
+	if len(cfg.Tools) > 0 {
+		if err := tools.ValidateToolNames(cfg.Tools); err != nil {
+			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+			os.Exit(2)
+		}
+	}
+
+
 	// Export the resolved configuration to CODING_AGENT_* env vars so spawned
 	// subagents inherit the same settings (model, endpoint, key, tokens, tools,
 	// etc.) even when they were provided via CLI flags rather than the environment.
