@@ -6,39 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/coding-agent/harness/colors"
 )
 
-// formatSubagentResult formats the subagent result for display in the TUI.
-func formatSubagentResult(result *ToolResult) string {
-	if result.Success {
-		output := result.Output
-		if len(output) > 200 {
-			output = output[:200] + "\n... [subagent output truncated]"
-		}
-		return fmt.Sprintf("%s[Subagent] Task completed\nOutput:\n%s%s\n", colors.GetColor("cyan"), output, colors.GetColor("reset"))
-	}
-	return fmt.Sprintf("%s[Subagent] Failed: %s%s\n", colors.GetColor("red"), result.Error, colors.GetColor("reset"))
-}
-
-// streamSubagentResult streams a subagent result status message.
-func streamSubagentResult(result *ToolResult, callback func(chunk interface{})) {
-	status := formatSubagentResult(result)
-	if callback != nil {
-		// Create a streaming chunk with the status
-		chunk := struct {
-			Text        string
-			ContentType int
-		}{
-			Text:        status,
-			ContentType: 0, // Normal content type
-		}
-		callback(chunk)
-	} else {
-		fmt.Print(status)
-	}
-}
 
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.

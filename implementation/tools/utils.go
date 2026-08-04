@@ -24,12 +24,6 @@ const (
 	MaxDisplayOutput = 500
 	// MaxToolOutput is the maximum number of characters for tool result output (used by grep, git_log, git_show, git_diff).
 	MaxToolOutput = 1000
-	// MaxSubagentOutput is the maximum number of characters for subagent tool result output.
-	MaxSubagentOutput = 5000
-	// MaxSubagentMarkerLimit is the maximum number of characters for subagent marker extraction.
-	MaxSubagentMarkerLimit = 10000
-	// MaxSubagentResultDisplay is the maximum number of characters for subagent result display.
-	MaxSubagentResultDisplay = 200
 )
 
 // WriteFilePreservePerm writes data to path, preserving the file's existing

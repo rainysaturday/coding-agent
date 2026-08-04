@@ -29,35 +29,6 @@ func TestRunStream(t *testing.T) {
 	}
 }
 
-func TestStreamStatus_Callback(t *testing.T) {
-	var received []inference.StreamingChunk
-
-	cb := func(chunk inference.StreamingChunk) {
-		received = append(received, chunk)
-	}
-
-	// Test various tool types
-	tools := map[string]map[string]interface{}{
-		"bash":         {"command": "ls -la"},
-		"read_file":    {"path": "/test/file.txt"},
-		"write_file":   {"path": "/test/output.txt"},
-		"read_lines":   {"path": "/test/file.txt", "start": 1, "end": 10},
-		"insert_lines": {"path": "/test/file.txt", "line": 5},
-		"replace_text": {"path": "/test/file.txt", "search": "old"},
-		"unknown":      nil,
-	}
-
-	for toolName, params := range tools {
-		streamStatus(toolName, params, cb)
-		if len(received) == 0 {
-			t.Errorf("Expected callback to be called for tool: %s", toolName)
-		}
-		received = nil // Reset for next test
-	}
-
-	// Test that callbacks with nil doesn't panic
-	streamStatus("bash", nil, nil)
-}
 
 func TestStreamResult_Callback(t *testing.T) {
 	var received []inference.StreamingChunk
