@@ -86,7 +86,7 @@ func TestIsContextLimitError(t *testing.T) {
 }
 
 func TestWrapError_Nil(t *testing.T) {
-	result := wrapError(nil)
+	result := WrapError(nil)
 	if result != nil {
 		t.Errorf("Expected nil, got %v", result)
 	}
@@ -94,7 +94,7 @@ func TestWrapError_Nil(t *testing.T) {
 
 func TestWrapError_AuthError(t *testing.T) {
 	err := fmt.Errorf("API authentication failed (HTTP 401)")
-	wrapped := wrapError(err)
+	wrapped := WrapError(err)
 
 	_, ok := wrapped.(*AuthError)
 	if !ok {
@@ -104,7 +104,7 @@ func TestWrapError_AuthError(t *testing.T) {
 
 func TestWrapError_ContextLimitError(t *testing.T) {
 	err := fmt.Errorf("maximum context length exceeded")
-	wrapped := wrapError(err)
+	wrapped := WrapError(err)
 
 	_, ok := wrapped.(*ContextLimitError)
 	if !ok {
@@ -114,7 +114,7 @@ func TestWrapError_ContextLimitError(t *testing.T) {
 
 func TestWrapError_OtherError(t *testing.T) {
 	err := fmt.Errorf("some other error")
-	wrapped := wrapError(err)
+	wrapped := WrapError(err)
 
 	if wrapped != err {
 		t.Errorf("Expected same error, got %v", wrapped)

@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -362,21 +363,20 @@ func runOneShotMode(cfg *config.Config) error {
 }
 
 // exitCodeForError returns the appropriate exit code for an error.
+// Classification is delegated to the agent package's WrapError, which maps
+// error text onto typed errors (AuthError / ContextLimitError) in a single
+// place, so the string matching isn't duplicated here.
 func exitCodeForError(err error) int {
 	if err == nil {
 		return agent.ExitSuccess
 	}
-	msg := err.Error()
-	// Check for context size limit errors
-	if strings.Contains(msg, "context size limit") ||
-		strings.Contains(msg, "maximum context length") {
+	wrapped := agent.WrapError(err)
+	var ctxErr *agent.ContextLimitError
+	if errors.As(wrapped, &ctxErr) {
 		return agent.ExitContextLimit
 	}
-	// Check for authentication errors
-	if strings.Contains(msg, "authentication failed") ||
-		strings.Contains(msg, "401") ||
-		strings.Contains(msg, "403") ||
-		strings.Contains(msg, "API authentication") {
+	var authErr *agent.AuthError
+	if errors.As(wrapped, &authErr) {
 		return agent.ExitAuthError
 	}
 	return agent.ExitError

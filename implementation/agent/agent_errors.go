@@ -42,6 +42,7 @@ func isAuthError(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "authentication failed") ||
+		strings.Contains(msg, "API authentication") ||
 		strings.Contains(msg, "401") ||
 		strings.Contains(msg, "403") ||
 		strings.Contains(msg, "Authorization") ||
@@ -58,8 +59,10 @@ func isContextLimitError(err error) bool {
 		strings.Contains(msg, "maximum context length")
 }
 
-// wrapError wraps errors with appropriate typed errors for exit codes.
-func wrapError(err error) error {
+// WrapError wraps errors with appropriate typed errors for exit codes.
+// Callers can inspect the result with errors.As to distinguish auth and
+// context-limit failures without re-matching on error text.
+func WrapError(err error) error {
 	if err == nil {
 		return nil
 	}
