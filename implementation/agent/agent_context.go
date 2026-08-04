@@ -147,21 +147,26 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	startTime := time.Now()
 
 	// First user message is always preserved
+	firstUserIdx := 0
 	firstUserMsg := messages[0]
 	// Ensure we actually have a user message as the first message.
-	// If the first message is not a user message (e.g., assistant added programmatically),
-	// find the first user message or use the first message as fallback.
+	// If the first message is not a user message (e.g., assistant added
+	// programmatically, a goal-injected message, or a loaded context), find the
+	// first real user message so the summary range starts after it. Otherwise use
+	// the first message as fallback.
 	if firstUserMsg.Role != "user" {
-		for _, msg := range messages {
+		for i, msg := range messages {
 			if msg.Role == "user" {
 				firstUserMsg = msg
+				firstUserIdx = i
 				break
 			}
 		}
 	}
 
-	// Messages to summarize: everything between first user msg and last N preserved messages
-	summaryMessages := messages[1 : len(messages)-preserveCount]
+	// Messages to summarize: everything after the first user msg (exclusive) and
+	// before the last N preserved messages.
+	summaryMessages := messages[firstUserIdx+1 : len(messages)-preserveCount]
 
 	// Filter summary messages to remove orphaned tool results (tool messages without
 	// a preceding assistant message that made the tool call). These can occur if the

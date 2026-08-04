@@ -18,26 +18,6 @@ and maintainability improvements. Each item is tagged by severity.
 ## Bugs & Correctness Issues
 
 
-### 7. 🟠 `compressContext` assumes the first context message is the user prompt
-**File:** `agent/agent_context.go` — `compressContext()` (lines ~150-164)
-
-```go
-firstUserMsg := messages[0]
-...
-summaryMessages := messages[1 : len(messages)-preserveCount]
-```
-
-The code tries to find the "first user message" (looping through if `messages[0]`
-isn't a user message), but the summary slice is always computed from `messages[1:]`.
-After a context load/restore (or a goal-injected message), the first real user
-message may not be `messages[0]`; it could then be *both* preserved (as
-`firstUserMsg`) and included in the summarized range — or dropped from the summary.
-
-**Fix:** Compute the summary slice based on the index of the message actually
-selected as `firstUserMsg`.
-
----
-
 ## Robustness & Edge Cases
 
 ### 8. 🟠 `read_lines`/preview code splits on byte length, not runes
@@ -196,7 +176,7 @@ so unmarshalling always starts clean.
 | Priority | Item(s) |
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
-| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, ~~#6 signal close race~~ ✅ fixed, #7 compression first-message |
+| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, ~~#6 signal close race~~ ✅ fixed,  ~~#7 compression first-message~~ ✅ fixed |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 
 ---
