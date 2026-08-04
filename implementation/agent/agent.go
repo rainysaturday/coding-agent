@@ -433,9 +433,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// context size to be overestimated on subsequent calls.
 		a.toolResultMsgsSinceLastAPI = make(map[int]bool)
 
-		// Report context size to TUI with real token count (while holding lock)
-		a.reportContextSize(a.contextSizeCallback, a.getActualContextSizeUnlocked(), a.maxContextSize)
+		// Capture callback and values under the lock, then dispatch below it.
+		// Invoking user callbacks while holding a.mu risks re-entrancy deadlocks.
+		ctxSizeCallback := a.contextSizeCallback
+		actualSize := a.getActualContextSizeUnlocked()
+		maxContext := a.maxContextSize
 		a.mu.Unlock()
+
+		// Report context size to TUI with real token count
+		a.reportContextSize(ctxSizeCallback, actualSize, maxContext)
 
 		// Log assistant response if debug is enabled
 		if a.debugLogger != nil {
