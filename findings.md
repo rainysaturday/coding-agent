@@ -18,23 +18,6 @@ and maintainability improvements. Each item is tagged by severity.
 ## Bugs & Correctness Issues
 
 
-### 6. 🟠 Potential race/panic around `close(sigChan)` in interactive mode
-**File:** `main.go` — `runInteractiveMode()` (lines ~688-715, 750-760)
-
-The signal-handler goroutine ranges over `sigChan` while the main loop calls
-`signal.Stop(sigChan)` followed by `close(sigChan)` when exiting. Because
-`signal.Notify` delivers asynchronously, there is a small window where a pending
-signal could be delivered after `signal.Stop` but before/after `close`, writing to
-a closed channel and causing a panic. The `defer signal.Stop(sigChan)` inside the
-`for range` loop body is also misleading (defers accumulate and run only when the
-goroutine exits).
-
-**Fix:** Avoid closing a channel that `signal.Notify` may still target; use a
-`context`/done channel to shut down the handler goroutine and stop signals
-cleanly, and remove the in-loop `defer`.
-
----
-
 ### 7. 🟠 `compressContext` assumes the first context message is the user prompt
 **File:** `agent/agent_context.go` — `compressContext()` (lines ~150-164)
 
@@ -213,7 +196,7 @@ so unmarshalling always starts clean.
 | Priority | Item(s) |
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed, ~~#3 file-permission loss~~ ✅ fixed |
-| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, #6 signal close race, #7 compression first-message |
+| Next | ~~#4 vision token/system prompt~~ ✅ fixed, ~~#5 dump filename~~ ✅ fixed, ~~#6 signal close race~~ ✅ fixed, #7 compression first-message |
 | Clean up | #8-10 robustness, #11-18 maintainability |
 
 ---

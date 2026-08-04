@@ -645,48 +645,28 @@ func runInteractiveMode(cfg *config.Config) error {
 		tuiInstance.SetContextSize(size, max)
 	})
 
-	// signalState holds the current signal handling state, protected by a mutex.
-	// This prevents race conditions during signal handler recreation.
+	// signalState holds the current root context state, protected by a mutex.
+	// This prevents race conditions during context recreation. Signal delivery
+	// for the interactive loop is handled separately by the prompt-aware handler.
 	type signalState struct {
-		rootCtx     context.Context
-		rootCancel  context.CancelFunc
-		sigChan     chan os.Signal
-		handlerDone chan struct{} // Closed when the signal handler goroutine exits
+		rootCtx    context.Context
+		rootCancel context.CancelFunc
 	}
 
 	var sigMu sync.Mutex
-	st := &signalState{
-		handlerDone: make(chan struct{}),
-	}
+	st := &signalState{}
 
-	// initSignalHandler sets up the root context and signal handler goroutine.
-	// Must be called with sigMu held.
+	// initSignalHandler sets up the root context. Must be called with sigMu held.
 	initSignalHandler := func(s *signalState) {
 		s.rootCtx, s.rootCancel = context.WithCancel(context.Background())
-		s.sigChan = make(chan os.Signal, 1)
-		signal.Notify(s.sigChan, syscall.SIGINT, syscall.SIGTERM)
-		s.handlerDone = make(chan struct{})
 	}
 	initSignalHandler(st)
 
-	// recreateSignalState shuts down the old signal handler and creates a fresh
-	// context and handler. Must be called when rootCtx is cancelled. Thread-safe.
+	// recreateSignalState creates a fresh root context when the current one is
+	// cancelled. Must be called with sigMu held. Thread-safe.
 	recreateSignalState := func() {
 		sigMu.Lock()
 		defer sigMu.Unlock()
-
-		// Stop signal delivery to the old channel and close it.
-		signal.Stop(st.sigChan)
-		close(st.sigChan)
-
-		// Wait briefly for the old handler to exit
-		select {
-		case <-st.handlerDone:
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-
-		// Create fresh state
 		initSignalHandler(st)
 	}
 
@@ -701,31 +681,34 @@ func runInteractiveMode(cfg *config.Config) error {
 
 	// Start the prompt-aware signal handler goroutine.
 	// This goroutine runs for the lifetime of interactive mode.
+	// done is closed to shut down the prompt-aware signal handler goroutine.
+	// sigChan is deliberately never closed: signal.Notify may still target it,
+	// and sending on a closed channel would panic.
+	done := make(chan struct{})
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		for range sigChan {
-			// Ensure cleanup when interactive mode exits (defer after goroutine start)
-			defer func() {
-				signal.Stop(sigChan)
-				// Don't close sigChan here - it may already be closed in the main loop error path.
-				// Closing twice would panic. The goroutine will exit via process termination.
-			}()
-			promptMu.Lock()
-			isPrompting := atPrompt
-			promptMu.Unlock()
-
-			if isPrompting {
-				// Signal during prompt input - let TUI handle it via its raw mode
-				// The TUI will detect the Ctrl+C byte directly
-				continue
-			}
-
-			// Signal during agent execution - cancel the operation
+		for {
 			select {
-			case cancelSignal <- struct{}{}:
-			default:
-				// Already signalling cancellation
+			case <-sigChan:
+				promptMu.Lock()
+				isPrompting := atPrompt
+				promptMu.Unlock()
+
+				if isPrompting {
+					// Signal during prompt input - let TUI handle it via its raw mode
+					// The TUI will detect the Ctrl+C byte directly
+					continue
+				}
+
+				// Signal during agent execution - cancel the operation
+				select {
+				case cancelSignal <- struct{}{}:
+				default:
+					// Already signalling cancellation
+				}
+			case <-done:
+				return
 			}
 		}
 	}()
@@ -768,11 +751,11 @@ func runInteractiveMode(cfg *config.Config) error {
 					fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				}
 				signal.Stop(sigChan)
-				close(sigChan)
+				close(done)
 				return nil
 			}
 			signal.Stop(sigChan)
-			close(sigChan)
+			close(done)
 			return err
 		}
 
