@@ -21,7 +21,7 @@ and maintainability improvements. Each item is tagged by severity.
 
 
 
-### 10. 🟠 Endpoint detection relies on `strings.Contains`
+### 10. 🟠 Endpoint detection relies on `strings.Contains` ✅ fixed
 **Files:** `config/config.go` (`IsGitHubCopilotEndpoint`),
 `inference/inference.go` (`isGitHubCopilotEndpoint`, `isGitHubModelsEndpoint`)
 
@@ -30,7 +30,8 @@ gateway whose URL merely contains `githubcopilot.com` / `models.github.ai` would
 be misclassified and sent incompatible headers or a wrong path.
 
 **Fix:** Compare against known hostnames/URL prefixes (or normalize the URL) rather
-than substring matching.
+than substring matching. **Implemented:** host-based detection via `net/url`
+(`isHostOrSubdomain`) with shared helpers in `config` and strengthened tests.
 
 ---
 
@@ -152,7 +153,7 @@ so unmarshalling always starts clean.
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed,  #3 file-permission loss ✅ fixed |
 | Next |  #4 vision token/system prompt ✅ fixed,  #5 dump filename ✅ fixed,  #6 signal close race ✅ fixed,  #7 compression first-message ✅ fixed |
-| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9 subagent config ✅ fixed,  #10 robustness,  #11-18 maintainability |
+| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9 subagent config ✅ fixed,  #10 endpoint detection ✅ fixed,  #11-18 maintainability |
 
 ---
 
