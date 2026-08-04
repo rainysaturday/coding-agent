@@ -245,16 +245,10 @@ func displayHelp() {
 	fmt.Println("  coding-agent --theme light")
 }
 func displayTools() {
-	// Import agent package for tool definitions
 	fmt.Println("Available tools:")
 	fmt.Println()
 	// List all available tool names
-	names := []string{
-		"bash", "grep", "git_diff", "git_log", "git_show",
-		"insert_lines", "list_files", "move_text", "read_file",
-		"read_lines", "replace_text", "subagent", "todo",
-		"view_image", "write_file",
-	}
+	names := tools.AllToolNames()
 	for _, name := range names {
 		fmt.Printf("  %s\n", name)
 	}
@@ -263,11 +257,10 @@ func displayTools() {
 	fmt.Println("For example: --tools \"read_file,read_lines,bash\"")
 	fmt.Println()
 	fmt.Println("Default tools for normal mode:")
-	fmt.Println("  bash, grep, git_diff, git_log, git_show, insert_lines, list_files,")
-	fmt.Println("  move_text, read_file, read_lines, replace_text, todo, view_image, write_file")
+	fmt.Println("  " + strings.Join(tools.DefaultNormalTools(), ", "))
 	fmt.Println()
 	fmt.Println("Default tools for read-only mode:")
-	fmt.Println("  read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, todo")
+	fmt.Println("  " + strings.Join(tools.DefaultReadOnlyTools(), ", "))
 	fmt.Println()
 	fmt.Println("Experimental tools (add with --experimental or include explicitly):")
 	fmt.Println("  subagent")

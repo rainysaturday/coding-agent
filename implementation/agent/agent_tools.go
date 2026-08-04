@@ -1,9 +1,13 @@
 package agent
 
-import "github.com/coding-agent/harness/inference"
+import (
+	"github.com/coding-agent/harness/inference"
+	"github.com/coding-agent/harness/tools"
+)
 
 // getToolNames returns the list of tool names to use based on config.
 // If toolsList is non-empty, it overrides the defaults for the given mode.
+// The default lists are the canonical ones defined in the tools package.
 func getToolNames(readOnly bool, experimental bool, toolsList []string) []string {
 	if len(toolsList) > 0 {
 		// User-specified tool list overrides everything
@@ -11,41 +15,15 @@ func getToolNames(readOnly bool, experimental bool, toolsList []string) []string
 	}
 
 	if readOnly {
-		return []string{
-			"read_file",
-			"read_lines",
-			"list_files",
-			"grep",
-			"git_log",
-			"git_show",
-			"git_diff",
-			"view_image",
-			"todo",
-		}
+		return tools.DefaultReadOnlyTools()
 	}
 
 	// Normal mode defaults
-	names := []string{
-		"bash",
-		"read_file",
-		"read_lines",
-		"write_file",
-		"insert_lines",
-		"replace_text",
-		"move_text",
-		"list_files",
-		"grep",
-		"git_log",
-		"git_show",
-		"git_diff",
-		"view_image",
-		"todo",
-	}
-
+	names := tools.DefaultNormalTools()
 	if experimental {
-		names = append(names, "subagent")
+		// Copy so we don't mutate the package's default slice.
+		names = append(append([]string{}, names...), "subagent")
 	}
-
 	return names
 }
 
