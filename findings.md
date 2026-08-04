@@ -37,7 +37,7 @@ than substring matching. **Implemented:** host-based detection via `net/url`
 
 ## Code Quality & Maintainability
 
-### 11. 🟠 Tool lists are duplicated in three places
+### 11. 🟠 Tool lists are duplicated in three places ✅ fixed
 **Files:** `agent/agent_tools.go` (`getToolNames`), `tools/tools.go`
 (`DefaultNormalTools`, `DefaultReadOnlyTools`), `main.go` (`displayTools`)
 
@@ -51,7 +51,7 @@ prompt, the registered tools, and the help text.
 
 ---
 
-### 12. 🟢 `buildToolListSection` has a redundant `readOnly` parameter
+### 12. 🟢 `buildToolListSection` has a redundant `readOnly` parameter ✅ fixed
 **File:** `agent/agent_prompt.go` — `buildToolListSection()` (lines ~62-71)
 
 Both branches of the `if readOnly` produce identical output; the parameter is dead.
@@ -60,7 +60,7 @@ Both branches of the `if readOnly` produce identical output; the parameter is de
 
 ---
 
-### 13. 🟢 Dead code
+### 13. 🟢 Dead code ✅ fixed
 - `agent/agent_format.go` — `streamStatus()` (lines ~160-237) is defined but never called.
 - `tools/subagent.go` — `formatSubagentResult()` / `streamSubagentResult()`
   (lines ~14-41) are never called (the subagent status is handled by
@@ -72,7 +72,7 @@ Both branches of the `if readOnly` produce identical output; the parameter is de
 
 ---
 
-### 14. 🟢 Error classification logic is duplicated
+### 14. 🟢 Error classification logic is duplicated ✅ fixed
 **Files:** `agent/agent_errors.go` (`isAuthError`, `isContextLimitError`,
 `wrapError`) and `main.go` (`exitCodeForError`)
 
@@ -85,7 +85,7 @@ causing inconsistent exit codes.
 
 ---
 
-### 15. 🟢 Invalid `--tools` names are silently ignored
+### 15. 🟢 Invalid `--tools` names are silently ignored ✅ fixed
 **Files:** `config/config.go`, `agent/agent_tools.go` (`buildTools`), `main.go`
 
 If a user passes `--tools "read_file,not_a_tool"`, the unknown name is silently
@@ -97,7 +97,7 @@ isn't registered (or a tool is missing) with no warning.
 
 ---
 
-### 16. 🟢 Re-entrancy risk: callbacks invoked while holding `Agent.mu`
+### 16. 🟢 Re-entrancy risk: callbacks invoked while holding `Agent.mu` ✅ fixed
 **File:** `agent/agent.go` — `Run()` (e.g. `reportContextSize` at line ~437, and
 `a.stats.Iterations` updates)
 
@@ -111,7 +111,7 @@ callbacks.
 
 ---
 
-### 17. 🟢 Custom `formatInt` reimplements `strconv`
+### 17. 🟢 Custom `formatInt` reimplements `strconv` ✅ fixed
 **File:** `tools/read_file.go` — `formatInt()` (lines ~115-129)
 
 `formatInt` is a hand-rolled decimal formatter used only by `formatFileSize`.
@@ -121,7 +121,7 @@ This duplicates the stdlib (`strconv.FormatInt` / `strconv.Itoa`) for no benefit
 
 ---
 
-### 18. 🟢 `handleStreamResponse` reuses a `chunk` struct with manual field reset
+### 18. 🟢 `handleStreamResponse` reuses a `chunk` struct with manual field reset ✅ fixed
 **File:** `inference/stream.go` (lines ~372-380)
 
 The `chunk` variable is reused across loop iterations, and fields are reset
@@ -153,7 +153,8 @@ so unmarshalling always starts clean.
 |----------|---------|
 | Fix first | #1 duplicate output ✅ fixed, #2 scanner 64KB limit ✅ fixed,  #3 file-permission loss ✅ fixed |
 | Next |  #4 vision token/system prompt ✅ fixed,  #5 dump filename ✅ fixed,  #6 signal close race ✅ fixed,  #7 compression first-message ✅ fixed |
-| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9 subagent config ✅ fixed,  #10 endpoint detection ✅ fixed,  #11-18 maintainability |
+| Clean up |  #8 UTF-8 truncation ✅ fixed,  #9 subagent config ✅ fixed,  #10 endpoint detection ✅ fixed,  #11 tool list dedup ✅ fixed,  #12 redundant param ✅ fixed,  #13 dead code ✅ fixed |
+| Wrap up |  #14 error classification ✅ fixed,  #15 validate --tools ✅ fixed,  #16 callback re-entrancy ✅ fixed,  #17 strconv ✅ fixed,  #18 chunk reset ✅ fixed |
 
 ---
 
