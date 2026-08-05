@@ -166,7 +166,17 @@ func (a *Agent) compressContext(ctx context.Context) error {
 
 	// Messages to summarize: everything after the first user msg (exclusive) and
 	// before the last N preserved messages.
-	summaryMessages := messages[firstUserIdx+1 : len(messages)-preserveCount]
+	// Clamp the range so we never slice past the end or produce start > end. This
+	// guards against the case where the first user message sits within the last
+	// preserveCount messages (e.g. a goal-injected or loaded context), which would
+	// otherwise trigger a slice-bounds panic. If the range is empty, the summary is
+	// simply a no-op over the (non-existent) middle section.
+	start := firstUserIdx + 1
+	end := len(messages) - preserveCount
+	if start > end {
+		start = end
+	}
+	summaryMessages := messages[start:end]
 
 	// Filter summary messages to remove orphaned tool results (tool messages without
 	// a preceding assistant message that made the tool call). These can occur if the
