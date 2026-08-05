@@ -245,16 +245,37 @@ func (ic *InferenceClient) buildURL() string {
 
 // InferenceRequest sends a request to the inference backend (non-streaming).
 func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
-	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, nil)
+	return ic.request(ctx, messages, systemPrompt, nil, true)
+}
+
+// InferenceRequestNoTools is like InferenceRequest but omits the registered tool
+// definitions and tool_choice from the request body. It is used for vision/image
+// analysis calls that should not advertise function calling (some endpoints/models
+// reject requests with a tools array when they do not support tools).
+func (ic *InferenceClient) InferenceRequestNoTools(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
+	return ic.request(ctx, messages, systemPrompt, nil, false)
 }
 
 // InferenceRequestStream sends a request with a streaming callback.
 func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
-	return ic.InferenceRequestWithCallbackTyped(ctx, messages, systemPrompt, callback)
+	return ic.request(ctx, messages, systemPrompt, callback, true)
+}
+
+// InferenceRequestStreamNoTools is like InferenceRequestStream but omits the
+// registered tool definitions and tool_choice from the request body.
+func (ic *InferenceClient) InferenceRequestStreamNoTools(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
+	return ic.request(ctx, messages, systemPrompt, callback, false)
 }
 
 // InferenceRequestWithCallbackTyped sends a request with a typed streaming callback that supports reasoning content.
 func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
+	return ic.request(ctx, messages, systemPrompt, callback, true)
+}
+
+// request is the shared implementation for all inference requests. When
+// includeTools is false, the registered tool definitions and tool_choice are
+// omitted from the request body.
+func (ic *InferenceClient) request(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType, includeTools bool) (*Response, error) {
 	// Build the request
 	reqBody := &RequestBody{
 		Model:       ic.model,
@@ -265,7 +286,7 @@ func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context
 	}
 
 	// Add tools if registered
-	if len(ic.tools) > 0 {
+	if includeTools && len(ic.tools) > 0 {
 		reqBody.Tools = ic.tools
 		reqBody.ToolChoice = "auto"
 	}

@@ -677,10 +677,12 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 	}
 	msg.SetImageContent(visionPrompt, viewExtra.DataURI, "auto")
 
-	// Send to inference for vision analysis. Pass the agent's system prompt so
-	// the vision model gets the same system context (persona, read-only rules,
-	// tool guidance, etc.) as the main conversation.
-	response, err := a.inference.InferenceRequest(ctx, []*inference.Message{msg}, a.systemPrompt)
+	// Send to inference for vision analysis. Use the no-tools request path and an
+	// empty system prompt so the vision model only receives the image plus the
+	// description prompt. Sending the full agent system prompt and tool
+	// definitions wastes tokens and can cause pure vision models to attempt tool
+	// calling instead of describing the image.
+	response, err := a.inference.InferenceRequestNoTools(ctx, []*inference.Message{msg}, "")
 	if err != nil {
 		return fmt.Sprintf("Tool 'view_image' loaded the image but vision analysis failed: %v", err)
 	}
