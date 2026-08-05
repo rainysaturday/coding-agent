@@ -182,7 +182,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 	case "git_diff":
 		result = te.executeGitDiff(ctx, tc.Parameters)
 	case "subagent":
-		result = ExecuteSubagent(tc.Parameters)
+		result = ExecuteSubagent(ctx, tc.Parameters)
 	case "view_image":
 		result = te.executeViewImage(tc.Parameters)
 	case "todo":

@@ -1,17 +1,25 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// defaultSubagentTimeout is the maximum time a subagent may run before it is
+// killed. Subagents can legitimately take a while (multiple LLM round-trips),
+// but they must be bounded so a hung subprocess cannot block the parent forever.
+const defaultSubagentTimeout = 5 * time.Minute
 
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.
 // Configuration is inherited from the parent process via environment variables and CLI flags.
-func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResult {
+// The provided ctx is propagated to the child so cancellation or timeout kills it.
+func executeSubagent(ctx context.Context, params map[string]interface{}, binaryPath string) *ToolResult {
 	prompt, ok := params["prompt"].(string)
 	if !ok || prompt == "" {
 		return &ToolResult{
@@ -71,8 +79,12 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 
 	// Debug settings are inherited via environment variables automatically
 
-	// Build the command with inherited environment
-	cmd := exec.Command(binaryPath, args...)
+	// Build the command with inherited environment. Use a child context that
+	// respects both the parent cancellation and the subagent timeout so a hung
+	// subagent cannot block the parent forever and is killed when cancelled.
+	childCtx, cancel := context.WithTimeout(ctx, defaultSubagentTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(childCtx, binaryPath, args...)
 
 	// Set working directory to current directory
 	cwd, err := os.Getwd()
@@ -101,6 +113,12 @@ func executeSubagent(params map[string]interface{}, binaryPath string) *ToolResu
 		errorMsg = stderr.String()
 		if errorMsg == "" {
 			errorMsg = err.Error()
+		}
+		// Surface timeout/cancellation clearly so it isn't mistaken for a normal failure.
+		if childCtx.Err() == context.DeadlineExceeded {
+			errorMsg = "subagent timed out after " + defaultSubagentTimeout.String() + ": " + errorMsg
+		} else if childCtx.Err() == context.Canceled {
+			errorMsg = "subagent was cancelled: " + errorMsg
 		}
 	}
 
@@ -254,7 +272,9 @@ func extractSummary(output string) string {
 
 // ExecuteSubagent is the main entry point for the subagent tool.
 // It's called by the tool executor and handles getting the binary path.
-func ExecuteSubagent(params map[string]interface{}) *ToolResult {
+// The provided ctx is propagated to the subprocess so cancellation or timeout
+// kills it rather than leaving an orphaned process.
+func ExecuteSubagent(ctx context.Context, params map[string]interface{}) *ToolResult {
 	// Try to find the coding-agent binary
 	binaryPath := getExecutablePath()
 
@@ -281,5 +301,5 @@ func ExecuteSubagent(params map[string]interface{}) *ToolResult {
 		}
 	}
 
-	return executeSubagent(params, binaryPath)
+	return executeSubagent(ctx, params, binaryPath)
 }

@@ -13,7 +13,7 @@ import (
 // ===== Tests for persona configuration =====
 
 func TestExecuteSubagent_MissingPrompt(t *testing.T) {
-	result := ExecuteSubagent(map[string]interface{}{})
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{})
 	if result.Success {
 		t.Error("Expected failure when prompt is missing")
 	}
@@ -23,7 +23,7 @@ func TestExecuteSubagent_MissingPrompt(t *testing.T) {
 }
 
 func TestExecuteSubagent_InvalidPrompt(t *testing.T) {
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": 0, // Invalid type
 	})
 	if result.Success {
@@ -35,7 +35,7 @@ func TestExecuteSubagent_InvalidPrompt(t *testing.T) {
 }
 
 func TestExecuteSubagent_EmptyPrompt(t *testing.T) {
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": "",
 	})
 	if result.Success {
@@ -50,7 +50,7 @@ func TestExecuteSubagent_WithPersona(t *testing.T) {
 	// This test verifies the function accepts persona parameter without error
 	// We can't actually run the subagent without a valid binary, but we can
 	// verify the parameter handling
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt":  "Test task",
 		"persona": "Expert Go developer",
 	})
@@ -66,7 +66,7 @@ func TestExecuteSubagent_WithPersonaAndReadOnly(t *testing.T) {
 	os.Setenv("CODING_AGENT_READ_ONLY", "true")
 	defer os.Unsetenv("CODING_AGENT_READ_ONLY")
 
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": "List files",
 	})
 	// Verify no panic occurred
@@ -220,7 +220,7 @@ Test output from fake binary"
 	defer os.Setenv("PATH", origPath)
 
 	// Now ExecuteSubagent should find the binary
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": "Test task",
 	})
 
@@ -272,7 +272,7 @@ echo "Processed with persona: $7"
 
 	// Test with persona - this will fail because the real binary is found first
 	// via getExecutablePath(), but we can still verify the function doesn't panic
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt":  "Test task",
 		"persona": "Expert Go developer",
 	})
@@ -324,7 +324,7 @@ func TestSubagentError_NoBinary(t *testing.T) {
 	os.Setenv("PATH", tmpDir)
 	defer os.Setenv("PATH", origPath)
 
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": "Test task",
 	})
 
@@ -422,7 +422,7 @@ func TestSubagentWithMultiplePersonas(t *testing.T) {
 
 	for _, persona := range personas {
 		// Each persona should be accepted without error
-		result := ExecuteSubagent(map[string]interface{}{
+		result := ExecuteSubagent(context.Background(), map[string]interface{}{
 			"prompt":  "Test task",
 			"persona": persona,
 		})
@@ -505,7 +505,7 @@ echo "This should not appear"
 	_ = ctx
 
 	// For now, just verify the function doesn't panic
-	result := ExecuteSubagent(map[string]interface{}{
+	result := ExecuteSubagent(context.Background(), map[string]interface{}{
 		"prompt": "Slow task",
 	})
 
