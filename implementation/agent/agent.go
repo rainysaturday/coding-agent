@@ -388,9 +388,15 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 
 		// Add assistant response to context for continuity
 		a.mu.Lock()
+		// If the model refused (content-policy or other), surface the refusal text
+		// rather than adding an empty assistant message.
+		assistantContent := response.Content
+		if assistantContent == "" && response.Refusal != "" {
+			assistantContent = "[Model refusal] " + response.Refusal
+		}
 		assistantMsg := &inference.Message{
 			Role:      "assistant",
-			Content:   response.Content,
+			Content:   assistantContent,
 			ToolCalls: response.APIToolCalls,
 		}
 		// Preserve reasoning content in the same property used by the inference server
@@ -527,6 +533,9 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// First, save the assistant response
 		a.mu.Lock()
 		assistantResponse := response.Content
+		if assistantResponse == "" && response.Refusal != "" {
+			assistantResponse = "[Model refusal] " + response.Refusal
+		}
 		streamCallback := a.streamCallback
 		a.mu.Unlock()
 

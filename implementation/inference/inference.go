@@ -64,6 +64,7 @@ type Message struct {
 	ReasoningContent string         `json:"reasoning_content,omitempty"` // llama.cpp
 	ToolCallId       string         `json:"tool_call_id,omitempty"`      // For tool call output messages
 	ToolCalls        []*APIToolCall `json:"tool_calls,omitempty"`        // For assistant messages with tool calls
+	Refusal          string         `json:"refusal,omitempty"`           // Content-policy or other refusal from the model
 }
 
 // ContentPart represents a single part of multi-modal message content.
@@ -165,6 +166,7 @@ type Response struct {
 	Content              string            // The actual response text (does NOT include reasoning)
 	Reasoning            string            // Reasoning content from the model (from whichever field the server used)
 	ReasoningContentType string            // Which reasoning field the server used: "reasoning" or "reasoning_content"
+	Refusal              string            // Content-policy or other refusal from the model (if any)
 	ToolCalls            []*tools.ToolCall // Parsed tool calls compatible with tool executor
 	APIToolCalls         []*APIToolCall    // Raw tool calls from API for reference
 	TokenUsage           int
@@ -538,6 +540,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 
 	message := respBody.Choices[0].Message
 	content := message.Content
+	refusal := message.Refusal
 
 	// Determine which reasoning field the server used and set ReasoningContentType accordingly
 	var reasoning string
@@ -599,6 +602,7 @@ func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
 		Content:              content,
 		Reasoning:            reasoning,
 		ReasoningContentType: reasoningContentType,
+		Refusal:              refusal,
 		ToolCalls:            toolCalls,
 		APIToolCalls:         apiToolCalls,
 		TokenUsage:           tokenUsage,

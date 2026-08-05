@@ -119,6 +119,39 @@ func TestHandleResponse_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestHandleResponse_Refusal(t *testing.T) {
+	mockResponse := `{
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "",
+				"refusal": "I cannot assist with that request."
+			},
+			"finish_reason": "stop"
+		}],
+		"usage": {
+			"prompt_tokens": 10,
+			"completion_tokens": 5,
+			"total_tokens": 15
+		}
+	}`
+
+	body := io.NopCloser(strings.NewReader(mockResponse))
+	client := NewInferenceClient(config.DefaultConfig())
+
+	resp, err := client.handleResponse(body)
+	if err != nil {
+		t.Fatalf("handleResponse() error: %v", err)
+	}
+
+	if resp.Content != "" {
+		t.Errorf("Expected empty content for refusal, got %q", resp.Content)
+	}
+	if resp.Refusal != "I cannot assist with that request." {
+		t.Errorf("Expected refusal text to be propagated, got %q", resp.Refusal)
+	}
+}
+
 func TestHandleResponse_EmptyChoices(t *testing.T) {
 	mockResponse := `{"choices": []}`
 

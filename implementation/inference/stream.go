@@ -23,6 +23,7 @@ type accumulatedToolCall struct {
 type streamState struct {
 	fullContent     strings.Builder
 	fullReasoning   strings.Builder
+	fullRefusal     strings.Builder
 	reasoningType   string
 	totalTokens     int
 	inputTokens     int
@@ -216,6 +217,15 @@ func (ss *streamState) processDelta(delta Message) {
 			})
 		}
 	}
+	if delta.Refusal != "" {
+		ss.fullRefusal.WriteString(delta.Refusal)
+		if ss.callback != nil {
+			ss.callback(StreamingChunk{
+				Text:        delta.Refusal,
+				ContentType: StreamingContentTypeNormal,
+			})
+		}
+	}
 	for i := range delta.ToolCalls {
 		ss.processToolCallDelta(delta.ToolCalls[i])
 	}
@@ -275,6 +285,7 @@ func (ss *streamState) buildStreamResponse() *Response {
 		Content:              content,
 		Reasoning:            ss.fullReasoning.String(),
 		ReasoningContentType: ss.reasoningType,
+		Refusal:              ss.fullRefusal.String(),
 		ToolCalls:            toolCalls,
 		APIToolCalls:         apiToolCalls,
 		TokenUsage:           ss.totalTokens,
