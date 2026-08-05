@@ -158,6 +158,36 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 	if cfg.Persona != "" {
 		os.Setenv("CODING_AGENT_PERSONA", cfg.Persona)
 	}
+	if cfg.ContextSize > 0 {
+		os.Setenv("CODING_AGENT_CONTEXT_SIZE", strconv.Itoa(cfg.ContextSize))
+	}
+	if cfg.MaxIterations > 0 {
+		os.Setenv("CODING_AGENT_MAX_ITERATIONS", strconv.Itoa(cfg.MaxIterations))
+	}
+	if cfg.InitialTokenTimeout > 0 {
+		os.Setenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT", strconv.Itoa(cfg.InitialTokenTimeout))
+	}
+	if cfg.ConnectionTimeout > 0 {
+		os.Setenv("CODING_AGENT_CONNECTION_TIMEOUT", strconv.Itoa(cfg.ConnectionTimeout))
+	}
+	if cfg.ReadTimeout > 0 {
+		os.Setenv("CODING_AGENT_READ_TIMEOUT", strconv.Itoa(cfg.ReadTimeout))
+	}
+	// Streaming defaults to true; export it whenever it differs from the default
+	// so subagents honor a parent that disabled streaming via CLI flag.
+	os.Setenv("CODING_AGENT_STREAMING", strconv.FormatBool(cfg.Streaming))
+	os.Setenv("CODING_AGENT_DEBUG", strconv.FormatBool(cfg.Debug))
+	if cfg.DebugLog != "" {
+		os.Setenv("CODING_AGENT_DEBUG_LOG", cfg.DebugLog)
+	}
+	os.Setenv("CODING_AGENT_DEBUG_VERBOSE", strconv.FormatBool(cfg.DebugVerbose))
+	os.Setenv("CODING_AGENT_DEBUG_VERBOSE_VERBOSE", strconv.FormatBool(cfg.DebugVerboseVerbose))
+	if cfg.SummaryOnly {
+		os.Setenv("CODING_AGENT_SUMMARY_ONLY", "true")
+	}
+	if cfg.Goal != "" {
+		os.Setenv("CODING_AGENT_GOAL", cfg.Goal)
+	}
 }
 
 func displayVersion() {
