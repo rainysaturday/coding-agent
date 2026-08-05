@@ -1,10 +1,45 @@
 package inference
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/coding-agent/harness/config"
 )
+
+func TestMessageMarshalJSON_EmptyContentOmitsField(t *testing.T) {
+	// Assistant message with only tool_calls should serialize content as null/omitted.
+	msg := &Message{
+		Role: "assistant",
+		ToolCalls: []*APIToolCall{
+			{ID: "call_1", Type: "function", Function: FunctionCall{Name: "bash", Arguments: "{\"command\":\"ls\"}"}},
+		},
+	}
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Unexpected error marshaling: %v", err)
+	}
+	s := string(jsonData)
+	if strings.Contains(s, `"content":""`) {
+		t.Errorf("Expected content field to be omitted/null for tool-call-only message, got: %s", s)
+	}
+	if !strings.Contains(s, `"tool_calls"`) {
+		t.Errorf("Expected tool_calls to be present, got: %s", s)
+	}
+}
+
+func TestMessageMarshalJSON_WithContent(t *testing.T) {
+	msg := &Message{Role: "assistant", Content: "Hello"}
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("Unexpected error marshaling: %v", err)
+	}
+	s := string(jsonData)
+	if !strings.Contains(s, `"content":"Hello"`) {
+		t.Errorf("Expected content field to be present, got: %s", s)
+	}
+}
 
 func TestBuildMessages_WithSystemPrompt(t *testing.T) {
 	cfg := config.DefaultConfig()

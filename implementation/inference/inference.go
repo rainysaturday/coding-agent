@@ -107,6 +107,11 @@ func (m *Message) MarshalJSON() ([]byte, error) {
 	// Set content based on whether we have multi-modal parts
 	if len(m.ContentParts) > 0 {
 		aux.Content = m.ContentParts
+	} else if m.Content == "" {
+		// Emit null (omitted via omitempty) rather than an empty string. Several
+		// OpenAI-compatible servers expect content:null for assistant messages
+		// that only carry tool_calls, and reject content:"".
+		aux.Content = nil
 	} else {
 		aux.Content = m.Content
 	}
