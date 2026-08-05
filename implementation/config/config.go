@@ -533,10 +533,11 @@ func loadEnv(cfg *Config) {
 		}
 	}
 
-	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a Copilot URL
+	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a GitHub
+	// Copilot or GitHub Models URL (both accept GitHub tokens).
 	if cfg.APIKey == "" {
 		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
-			if IsGitHubCopilotEndpoint(cfg.APIEndpoint) {
+			if IsGitHubCopilotEndpoint(cfg.APIEndpoint) || IsGitHubModelsEndpoint(cfg.APIEndpoint) {
 				cfg.APIKey = val
 			}
 		}

@@ -564,3 +564,57 @@ func TestParseArgs_GoalWithPersonaAndPrompt(t *testing.T) {
 		t.Errorf("Expected persona 'Test expert', got %q", cfg.Persona)
 	}
 }
+
+// ===== Tests for GITHUB_TOKEN fallback =====
+
+func TestParseArgs_GitHubTokenFallbackCopilot(t *testing.T) {
+	os.Setenv("GITHUB_TOKEN", "ghu_testtoken")
+	os.Setenv("CODING_AGENT_API_ENDPOINT", "https://api.githubcopilot.com")
+	defer func() {
+		os.Unsetenv("GITHUB_TOKEN")
+		os.Unsetenv("CODING_AGENT_API_ENDPOINT")
+	}()
+
+	cfg, err := ParseArgs([]string{"--prompt", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.APIKey != "ghu_testtoken" {
+		t.Errorf("Expected GITHUB_TOKEN to be used as API key for Copilot endpoint, got %q", cfg.APIKey)
+	}
+}
+
+func TestParseArgs_GitHubTokenFallbackModels(t *testing.T) {
+	os.Setenv("GITHUB_TOKEN", "ghp_testtoken")
+	os.Setenv("CODING_AGENT_API_ENDPOINT", "https://models.github.ai")
+	defer func() {
+		os.Unsetenv("GITHUB_TOKEN")
+		os.Unsetenv("CODING_AGENT_API_ENDPOINT")
+	}()
+
+	cfg, err := ParseArgs([]string{"--prompt", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.APIKey != "ghp_testtoken" {
+		t.Errorf("Expected GITHUB_TOKEN to be used as API key for GitHub Models endpoint, got %q", cfg.APIKey)
+	}
+}
+
+func TestParseArgs_GitHubTokenIgnoredForNonGitHubEndpoint(t *testing.T) {
+	os.Setenv("GITHUB_TOKEN", "ghp_shouldnotapply")
+	os.Setenv("CODING_AGENT_API_ENDPOINT", "https://api.openai.com")
+	defer func() {
+		os.Unsetenv("GITHUB_TOKEN")
+		os.Unsetenv("CODING_AGENT_API_ENDPOINT")
+	}()
+
+	cfg, err := ParseArgs([]string{"--prompt", "test"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.APIKey == "ghp_shouldnotapply" {
+		t.Error("Expected GITHUB_TOKEN NOT to be used as API key for a non-GitHub endpoint")
+	}
+}
+
