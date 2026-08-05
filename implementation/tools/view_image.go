@@ -39,12 +39,19 @@ func (te *ToolExecutor) executeViewImage(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	// Validate file size (max 20MB to prevent memory issues)
-	const maxImageSize = 20 * 1024 * 1024 // 20 MB
+	// Validate file size. The limit is intentionally conservative because the
+	// file is base64-encoded inline in the vision request (~4/3x the raw size),
+	// and many inference servers enforce request-body size limits. A 10 MB image
+	// becomes ~13.3 MB of base64, which is far more likely to be accepted than a
+	// 20 MB image (~27 MB base64) that could be rejected at request time.
+	const maxImageSize = 10 * 1024 * 1024 // 10 MB
 	if len(data) > maxImageSize {
 		return &ToolResult{
 			Success: false,
-			Error:   fmt.Sprintf("image file too large: %d bytes (max %d bytes)", len(data), maxImageSize),
+			Error: fmt.Sprintf(
+				"image file too large: %d bytes (max %d bytes). The image is base64-encoded inline (~4/3x size) in the vision request; downscale/compress the image and retry.",
+				len(data), maxImageSize,
+			),
 		}
 	}
 
