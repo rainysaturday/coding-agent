@@ -432,10 +432,11 @@ func (ic *InferenceClient) request(ctx context.Context, messages []*Message, sys
 			return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(body))
 		}
 
-		// Success - handle response
-		defer resp.Body.Close()
-
-		// Handle streaming or non-streaming response
+		// Success - handle response. Close the body explicitly on every return
+		// path rather than deferring inside the loop (a function-scoped defer
+		// inside a retry loop is fragile and easy to leak).
+		var respOut *Response
+		var respErr error
 		if ic.streaming {
 			// Set read deadline to prevent hanging on slow/stalled streams.
 			// http.Response.Body implements SetReadDeadline for network connections,
@@ -443,9 +444,12 @@ func (ic *InferenceClient) request(ctx context.Context, messages []*Message, sys
 			if rc, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
 				_ = rc.SetReadDeadline(time.Now().Add(ic.timeout))
 			}
-			return ic.handleStreamResponse(resp.Body, callback)
+			respOut, respErr = ic.handleStreamResponse(resp.Body, callback)
+		} else {
+			respOut, respErr = ic.handleResponse(resp.Body)
 		}
-		return ic.handleResponse(resp.Body)
+		resp.Body.Close()
+		return respOut, respErr
 	}
 
 	return nil, lastErr
