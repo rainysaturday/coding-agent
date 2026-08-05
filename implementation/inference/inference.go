@@ -233,14 +233,20 @@ func (ic *InferenceClient) isGitHubModelsEndpoint() bool {
 // buildURL constructs the full API URL based on the endpoint type.
 // Copilot uses /chat/completions, GitHub Models uses /inference/chat/completions,
 // and all other endpoints use the default /v1/chat/completions.
+// A trailing slash (and, for the default path, a trailing /v1) is stripped from
+// the configured endpoint first so callers may provide either
+// "https://api.openai.com" or "https://api.openai.com/v1" without producing a
+// doubled "/v1/v1" path segment.
 func (ic *InferenceClient) buildURL() string {
+	base := strings.TrimRight(ic.endpoint, "/")
 	if ic.isCopilotEndpoint() {
-		return ic.endpoint + "/chat/completions"
+		return base + "/chat/completions"
 	}
 	if ic.isGitHubModelsEndpoint() {
-		return ic.endpoint + "/inference/chat/completions"
+		return base + "/inference/chat/completions"
 	}
-	return ic.endpoint + "/v1/chat/completions"
+	base = strings.TrimSuffix(base, "/v1")
+	return base + "/v1/chat/completions"
 }
 
 // InferenceRequest sends a request to the inference backend (non-streaming).

@@ -101,10 +101,24 @@ func TestBuildURL_CustomEndpoint(t *testing.T) {
 	cfg.APIEndpoint = "https://api.openai.com/v1"
 	client := NewInferenceClient(cfg)
 
+	// A trailing /v1 should be normalized so the path is not doubled.
 	url := client.buildURL()
-	expected := "https://api.openai.com/v1/v1/chat/completions"
+	expected := "https://api.openai.com/v1/chat/completions"
 	if url != expected {
 		t.Errorf("Expected buildURL() to return %q for custom endpoint, got %q", expected, url)
+	}
+}
+
+func TestBuildURL_TrailingSlash(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = "http://localhost:8080/"
+	client := NewInferenceClient(cfg)
+
+	// A trailing slash should be stripped before appending the path.
+	url := client.buildURL()
+	expected := "http://localhost:8080/v1/chat/completions"
+	if url != expected {
+		t.Errorf("Expected buildURL() to return %q for trailing-slash endpoint, got %q", expected, url)
 	}
 }
 
