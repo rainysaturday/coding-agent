@@ -490,6 +490,19 @@ func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt strin
 				tc.Type = "function"
 			}
 		}
+		// Deep-copy ContentParts (multi-modal images/text) so the no-mutation
+		// guarantee extends to this slice as well.
+		if len(msg.ContentParts) > 0 {
+			normalized.ContentParts = make([]ContentPart, len(msg.ContentParts))
+			for i, part := range msg.ContentParts {
+				cpy := part
+				if part.ImageURL != nil {
+					imgCpy := *part.ImageURL
+					cpy.ImageURL = &imgCpy
+				}
+				normalized.ContentParts[i] = cpy
+			}
+		}
 		result = append(result, &normalized)
 	}
 
