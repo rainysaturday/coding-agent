@@ -57,6 +57,7 @@ func (a *Agent) ClearContext() {
 	a.context = make([]*inference.Message, 0)
 	a.lastTotalTokens = 0
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+	a.assistantMsgsSinceLastAPI = make(map[int]bool)
 }
 
 // AddUserMessage adds a user message to the context.
@@ -79,6 +80,40 @@ func (a *Agent) AddAssistantMessage(message string) {
 	})
 }
 
+// recordTokenUsageUnlocked updates the token stats (and goal-scoped counters)
+// from an API response. Must be called while holding a.mu.
+//
+// When the API returns only a total token count, input/output are split evenly
+// as a heuristic since the API did not break them down. This fallback is shared
+// by the main conversation and the vision/image request paths.
+func (a *Agent) recordTokenUsageUnlocked(response *inference.Response) {
+	if response == nil {
+		return
+	}
+	if response.InputTokens > 0 && response.OutputTokens > 0 {
+		// Use actual API input/output token counts
+		a.stats.InputTokens += response.InputTokens
+		a.stats.OutputTokens += response.OutputTokens
+		if a.goalActive {
+			a.goalInputTokens += response.InputTokens
+			a.goalOutputTokens += response.OutputTokens
+		}
+		return
+	}
+	if response.TokenUsage > 0 {
+		// API didn't split input/output — use total token count, split evenly.
+		input := response.TokenUsage / 2
+		output := response.TokenUsage - input
+		a.stats.InputTokens += input
+		a.stats.OutputTokens += output
+		if a.goalActive {
+			a.goalInputTokens += input
+			a.goalOutputTokens += output
+		}
+	}
+}
+
+
 // GetContextSize returns the current context size.
 // Uses total_tokens from the last API response as the authoritative count.
 func (a *Agent) GetContextSize() int {
@@ -100,12 +135,23 @@ func (a *Agent) GetActualContextSize() int {
 // Must be called while holding a.mu.
 func (a *Agent) getActualContextSizeUnlocked() int {
 	if a.lastTotalTokens > 0 {
-		// Only count tool messages added AFTER the last API call.
-		// Messages before the API call were already included in total_tokens.
+		// Only count messages added AFTER the last API call (tool results and
+		// their preceding assistant tool-call messages). Messages before the API
+		// call were already included in total_tokens.
 		delta := 0
 		for idx, msg := range a.context {
 			if msg.Role == "tool" && a.toolResultMsgsSinceLastAPI[idx] {
 				delta += 3 + inference.EstimateTokens(msg.Content)
+			}
+			if a.assistantMsgsSinceLastAPI[idx] {
+				// Assistant tool-call message: role prefix + text + tool call args.
+				delta += 3 + inference.EstimateTokens(msg.Content)
+				for _, tc := range msg.ToolCalls {
+					if tc != nil {
+						delta += inference.EstimateTokens(tc.Function.Name)
+						delta += inference.EstimateTokens(tc.Function.Arguments)
+					}
+				}
 			}
 		}
 		return a.lastTotalTokens + delta
@@ -249,6 +295,7 @@ func (a *Agent) compressContext(ctx context.Context) error {
 
 	// Reset tool result tracking since the context has been rebuilt.
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+	a.assistantMsgsSinceLastAPI = make(map[int]bool)
 
 	// Preserve cumulative token stats. The stats represent the total tokens used
 	// across the entire session. We should NOT overwrite them with the compressed

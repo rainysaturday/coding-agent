@@ -58,6 +58,11 @@ type Agent struct {
 	// are tool-result messages added AFTER the last API call.
 	// Messages before this index were already included in lastTotalTokens.
 	toolResultMsgsSinceLastAPI map[int]bool
+	// assistantMsgsSinceLastAPI is the set of indices in context that are
+	// assistant messages (carrying tool calls) added AFTER the last API call.
+	// They are tracked alongside tool results so the pending-token delta in
+	// getActualContextSizeUnlocked accounts for them too.
+	assistantMsgsSinceLastAPI map[int]bool
 }
 
 // Stats represents agent statistics.
@@ -145,6 +150,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		toolExecutor:               tools.NewToolExecutor(),
 		context:                    make([]*inference.Message, 0),
 		toolResultMsgsSinceLastAPI: make(map[int]bool),
+		assistantMsgsSinceLastAPI:  make(map[int]bool),
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
@@ -398,40 +404,25 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 			}
 		}
 		a.context = append(a.context, assistantMsg)
+		// Track this assistant message (which may carry tool calls) so the
+		// context-size delta accounts for it until the next API response.
+		a.assistantMsgsSinceLastAPI[len(a.context)-1] = true
 		a.mu.Unlock()
 
 		// Update token stats with accurate values from API
 		a.mu.Lock()
-		if response.InputTokens > 0 && response.OutputTokens > 0 {
-			// Use actual API input/output token counts
-			a.stats.InputTokens += response.InputTokens
-			a.stats.OutputTokens += response.OutputTokens
-			// Track goal-specific tokens
-			if a.goalActive {
-				a.goalInputTokens += response.InputTokens
-				a.goalOutputTokens += response.OutputTokens
-			}
-		} else if response.TokenUsage > 0 {
-			// API didn't split input/output — use total token count from API
-			// TokenUsage comes from total_tokens or predicted_n (both from the API)
-			a.stats.InputTokens += response.TokenUsage / 2
-			a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
-			// Track goal-specific tokens
-			if a.goalActive {
-				a.goalInputTokens += response.TokenUsage / 2
-				a.goalOutputTokens += response.TokenUsage - response.TokenUsage/2
-			}
-		}
+		a.recordTokenUsageUnlocked(response)
 
 		// Store total_tokens as the authoritative baseline for context size.
 		// This is the exact count the API used: system prompt + messages + tools + completion.
 		// We only estimate deltas for new messages added after this response (e.g., tool results).
 		a.lastTotalTokens = response.TokenUsage
 
-		// Reset tool result tracking since the API response already accounts for
-		// all messages currently in context. Keeping stale indices would cause
-		// context size to be overestimated on subsequent calls.
+		// Reset tool result and assistant tracking since the API response already
+		// accounts for all messages currently in context. Keeping stale indices
+		// would cause context size to be overestimated on subsequent calls.
 		a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+		a.assistantMsgsSinceLastAPI = make(map[int]bool)
 
 		// Capture callback and values under the lock, then dispatch below it.
 		// Invoking user callbacks while holding a.mu risks re-entrancy deadlocks.
@@ -690,21 +681,7 @@ func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) s
 	// Account for the vision request's token usage so reported stats reflect the
 	// actual API usage (this request is separate from the main conversation).
 	a.mu.Lock()
-	if response.InputTokens > 0 && response.OutputTokens > 0 {
-		a.stats.InputTokens += response.InputTokens
-		a.stats.OutputTokens += response.OutputTokens
-		if a.goalActive {
-			a.goalInputTokens += response.InputTokens
-			a.goalOutputTokens += response.OutputTokens
-		}
-	} else if response.TokenUsage > 0 {
-		a.stats.InputTokens += response.TokenUsage / 2
-		a.stats.OutputTokens += response.TokenUsage - response.TokenUsage/2
-		if a.goalActive {
-			a.goalInputTokens += response.TokenUsage / 2
-			a.goalOutputTokens += response.TokenUsage - response.TokenUsage/2
-		}
-	}
+	a.recordTokenUsageUnlocked(response)
 	a.mu.Unlock()
 
 	description := response.Content
@@ -861,6 +838,7 @@ func (a *Agent) LoadContext(path string) error {
 	// Reset token tracking baseline
 	a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
+	a.assistantMsgsSinceLastAPI = make(map[int]bool)
 
 	return nil
 }
