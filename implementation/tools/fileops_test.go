@@ -473,7 +473,6 @@ func TestExecute_ReadLines_ByteCap(t *testing.T) {
 	}
 }
 
-
 func TestExecute_InsertLines_ToEmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "empty.txt")
@@ -567,7 +566,6 @@ func TestExecute_InsertLines_TrailingNewlineNoExtraBlank(t *testing.T) {
 		t.Errorf("Expected exactly 'a\\nb\\n' (no extra blank line), got: %q", got)
 	}
 }
-
 
 func TestExecute_ReplaceText_EmptySearch(t *testing.T) {
 	tmpDir := t.TempDir()

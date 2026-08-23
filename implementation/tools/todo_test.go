@@ -122,7 +122,6 @@ func TestTodoStore_ListReturnsCopy(t *testing.T) {
 	}
 }
 
-
 func TestFormatList_Empty(t *testing.T) {
 	result := FormatList([]*TodoItem{})
 	if result != "(no todo items)" {

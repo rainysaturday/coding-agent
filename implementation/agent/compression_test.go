@@ -189,7 +189,6 @@ func TestGroupAssistantToolMessages(t *testing.T) {
 	}
 }
 
-
 func TestSummarizeMessageLine_IncludesToolCalls(t *testing.T) {
 	// An assistant message with tool_calls but empty Content must serialize the
 	// tool-call name/arguments so the summarizer does not lose the structure.

@@ -113,7 +113,6 @@ func (a *Agent) recordTokenUsageUnlocked(response *inference.Response) {
 	}
 }
 
-
 // GetContextSize returns the current context size.
 // Uses total_tokens from the last API response as the authoritative count.
 func (a *Agent) GetContextSize() int {

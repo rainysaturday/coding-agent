@@ -91,7 +91,6 @@ data: [DONE]`
 	}
 }
 
-
 func TestHandleStreamResponse_WithCallbacks(t *testing.T) {
 	var chunks []StreamingChunk
 	callback := func(chunk StreamingChunk) {
