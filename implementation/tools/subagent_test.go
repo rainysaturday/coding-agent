@@ -513,3 +513,38 @@ echo "This should not appear"
 		t.Fatal("Expected result, got nil")
 	}
 }
+
+// TestExtractSummary_QuietOutputShortAnswer verifies that, for the actual
+// --quiet child output shape "[Reasoning]\n<reasoning>\n\n<short answer>", the
+// summary is the subagent's final answer and NOT its reasoning block (N2).
+func TestExtractSummary_QuietOutputShortAnswer(t *testing.T) {
+	// ANSI-colored reasoning header, 3 reasoning lines, blank line, 1-line answer.
+	output := "\x1b[90m[Reasoning]\nreason line 1\nreason line 2\nreason line 3\x1b[0m\n\n\x1b[36mDone.\x1b[0m\n"
+	summary := extractSummary(output)
+	if summary != "Done." {
+		t.Errorf("Expected summary 'Done.', got %q", summary)
+	}
+}
+
+// TestExtractSummary_QuietOutputMultilineAnswer verifies that a 3+ line final
+// answer is returned alone (not merged with the preceding reasoning block).
+func TestExtractSummary_QuietOutputMultilineAnswer(t *testing.T) {
+	output := "[Reasoning]\nreason line 1\nreason line 2\nreason line 3\n\nFinal answer line 1\nFinal answer line 2\nFinal answer line 3\n"
+	summary := extractSummary(output)
+	if strings.Contains(summary, "reason line") {
+		t.Errorf("Summary should not include reasoning, got %q", summary)
+	}
+	if !strings.Contains(summary, "Final answer line 1") {
+		t.Errorf("Expected final answer in summary, got %q", summary)
+	}
+}
+
+// TestExtractSummary_StripsANSICodes verifies that ANSI escapes do not leak
+// into the returned summary.
+func TestExtractSummary_StripsANSICodes(t *testing.T) {
+	output := "\x1b[36mHere is the \x1b[31manswer\x1b[0m\n"
+	summary := extractSummary(output)
+	if strings.Contains(summary, "\x1b[") {
+		t.Errorf("Expected no ANSI escapes in summary, got %q", summary)
+	}
+}

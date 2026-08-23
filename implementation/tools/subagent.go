@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -161,12 +162,35 @@ func getExecutablePath() string {
 	return exe
 }
 
+// ansiEscapeRe matches ANSI CSI escape sequences (e.g. "\x1b[31m") so color
+// codes from the subagent's piped stdout do not leak into the parent's context.
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// stripANSI removes ANSI escape sequences from s.
+func stripANSI(s string) string {
+	return ansiEscapeRe.ReplaceAllString(s, "")
+}
+
 // extractSummary extracts the meaningful summary from the subagent output.
 // It tries to find the final output or the last meaningful text block.
 func extractSummary(output string) string {
 	// If output is empty, return placeholder
 	if output == "" {
 		return "(No output from subagent)"
+	}
+
+	// Strip ANSI escape sequences so color codes don't leak into the summary.
+	cleaned := stripANSI(output)
+
+	// In --quiet mode the child's stdout is "[Reasoning]\n<reasoning>\n\n<final
+	// answer>". The reasoning is the subagent's internal deliberation, not its
+	// conclusion, so drop that section and keep only what follows the blank line
+	// after it (the final answer).
+	if idx := strings.Index(cleaned, "[Reasoning]"); idx != -1 {
+		after := cleaned[idx+len("[Reasoning]"):]
+		if blank := strings.Index(after, "\n\n"); blank != -1 {
+			cleaned = after[blank+2:]
+		}
 	}
 
 	// Strategy 1: Try to extract text after known section markers.
@@ -189,8 +213,8 @@ func extractSummary(output string) string {
 
 	// Try markers first — these give the most precise extraction
 	for _, sm := range markers {
-		if idx := strings.Index(output, sm.marker); idx != -1 {
-			after := output[idx+len(sm.marker):]
+		if idx := strings.Index(cleaned, sm.marker); idx != -1 {
+			after := cleaned[idx+len(sm.marker):]
 			summary := strings.TrimSpace(after)
 
 			// Count non-empty lines to verify this is a real section, not a false match
@@ -210,44 +234,35 @@ func extractSummary(output string) string {
 
 	// Strategy 2: Look for the last substantial paragraph (multiple lines).
 	// This handles output without explicit markers.
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(cleaned, "\n")
 
-	// Find the last significant paragraph — defined as a block of 3+ related lines
-	// that are not separators, headers, or tool output artifacts.
+	// Find the LAST significant paragraph — defined as a block of 3+ related lines
+	// that are not separators, headers, or tool output artifacts. Only the final
+	// block is returned (scanning backwards and stopping at the first one found),
+	// so an earlier block such as a reasoning section is not mistaken for the
+	// subagent's conclusion.
 	var lastParagraph []string
 	currentBlock := make([]string, 0, 10)
 
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 
-		// Skip empty lines and separators
-		if line == "" || strings.HasPrefix(line, "===") || strings.HasPrefix(line, "---") {
+		// Skip empty lines, separators, and very short lines (headers/artifacts).
+		if line == "" || strings.HasPrefix(line, "===") || strings.HasPrefix(line, "---") || len(line) < 5 {
 			if len(currentBlock) >= 3 {
-				// Found a substantial block, save it
+				// Found the last substantial block — stop scanning.
 				lastParagraph = append(lastParagraph, currentBlock...)
-				currentBlock = make([]string, 0, 10)
-			} else {
-				currentBlock = make([]string, 0, 10)
+				break
 			}
-			continue
-		}
-
-		// Skip very short lines (likely headers or artifacts)
-		if len(line) < 5 {
-			if len(currentBlock) >= 3 {
-				lastParagraph = append(lastParagraph, currentBlock...)
-				currentBlock = make([]string, 0, 10)
-			} else {
-				currentBlock = make([]string, 0, 10)
-			}
+			currentBlock = make([]string, 0, 10)
 			continue
 		}
 
 		currentBlock = append(currentBlock, line)
 	}
 
-	// Check the last accumulated block
-	if len(currentBlock) >= 3 {
+	// Check the final accumulated block (output ending directly in a block).
+	if len(lastParagraph) == 0 && len(currentBlock) >= 3 {
 		lastParagraph = append(lastParagraph, currentBlock...)
 	}
 
@@ -262,12 +277,13 @@ func extractSummary(output string) string {
 		}
 	}
 
-	// Strategy 3: Fall back to the raw output (trimmed) with length limit.
-	if len(output) > 5000 {
-		return output[:5000] + "\n... [output truncated]"
+	// Strategy 3: Fall back to the cleaned output (trimmed) with length limit.
+	cleaned = strings.TrimSpace(cleaned)
+	if len(cleaned) > 5000 {
+		return cleaned[:5000] + "\n... [output truncated]"
 	}
 
-	return output
+	return cleaned
 }
 
 // ExecuteSubagent is the main entry point for the subagent tool.
