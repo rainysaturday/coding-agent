@@ -41,7 +41,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 
 ## Issues Found
 
-### N1. High — Streaming refusal is still dropped in the common single-line SSE case (incomplete fix)
+### N1. High — Streaming refusal is still dropped in the common single-line SSE case (incomplete fix) — [Fixed in `a6f0ce3`]
 
 - **File:** `implementation/inference/stream.go`
 - **Introduced by:** `da87c16` ("surface model refusals instead of silently dropping them")
@@ -66,7 +66,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
   `ss.fullRefusal` and emit a `StreamingChunk` for it — or route inline deltas through
   `processDelta` so the two paths can't diverge again. Add a streaming-refusal test.
 
-### N2. High — `extractSummary` returns the subagent's reasoning instead of its final answer (regression)
+### N2. High — `extractSummary` returns the subagent's reasoning instead of its final answer (regression) — [Fixed in `b1debd3`]
 
 - **File:** `implementation/tools/subagent.go` (`extractSummary`, lines 166-273)
 - **Introduced by:** `4d06709` (M5 "Improve extractSummary with more markers and paragraph parsing").
@@ -90,7 +90,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
   section and ANSI escapes before extraction. Add a unit test covering the actual
   `--quiet` output shape.
 
-### N3. High — `compressContext` leaves an orphaned tool message at the head of the preserved window
+### N3. High — `compressContext` leaves an orphaned tool message at the head of the preserved window — [Fixed in `c51d160`]
 
 - **File:** `implementation/agent/agent_context.go` (`groupAssistantToolMessages`, lines 322-363)
 - **Provenance:** **Pre-existing** (byte-identical at merge-base `47fc764`), but live in
@@ -113,7 +113,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 - **Fix:** Drop (or re-home) a leading tool message whose assistant is not in the
   preserved window — symmetric to the summary-side filter added in M4.
 
-### N4. Medium — `grep` flags are silently dropped (documented flags never applied)
+### N4. Medium — `grep` flags are silently dropped (documented flags never applied) — [Fixed in `ba01b16`]
 
 - **File:** `implementation/tools/utils.go` (`parseFlagsParamToMap`, lines 212-234)
 - **Provenance:** **Pre-existing** at merge-base, still live in HEAD (unchanged by this
@@ -129,7 +129,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 - **Fix:** Accept the documented `-x` forms (strip a leading `-`) or change the schema/
   prompt to single-char flags; keep the two in sync. Add a parser unit test.
 
-### N5. Low — Subagent output carries ANSI color codes into the parent's context
+### N5. Low — Subagent output carries ANSI color codes into the parent's context — [Fixed in `c3eea4a`]
 
 - **Files:** `implementation/main.go` (`outputResult` Quiet branch, ~354-361); `implementation/colors/colors.go` (`GetColor`)
 - **Provenance:** Pre-existing; made more likely to surface by the N2 rewrite.
@@ -141,7 +141,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 - **Fix:** Disable colors when stdout is not a TTY (or in `--quiet`/`--summary-only`
   piped mode), and/or strip ANSI escapes in `extractSummary`.
 
-### N6. Low — `insert_lines` splits the inserted text inconsistently with `splitLines`
+### N6. Low — `insert_lines` splits the inserted text inconsistently with `splitLines` — [Fixed in `a16aa2c`]
 
 - **File:** `implementation/tools/insert_lines.go` (~line 39)
 - **Provenance:** Pre-existing; `d9701af` ("Use shared splitLines() helper in
@@ -152,7 +152,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
   inserted, inconsistent with how the file's existing content is handled.
 - **Fix:** Use `splitLines` (or equivalent trailing-empty strip) for the inserted text.
 
-### N7. Low — `replace_text` with `count=0` replaces all occurrences but reports "0 time(s)"
+### N7. Low — `replace_text` with `count=0` replaces all occurrences but reports "0 time(s)" — [Not valid — see note in Summary]
 
 - **File:** `implementation/tools/replace_text.go` (~lines 78-90)
 - **Provenance:** Pre-existing at merge-base.
@@ -164,7 +164,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 - **Fix:** Treat `count == 0` as "replace all" (or reject it) and set
   `replacementsMade` to the actual number.
 
-### N8. Low — `read_lines` no longer bounds output by byte size (size guard removed)
+### N8. Low — `read_lines` no longer bounds output by byte size (size guard removed) — [Fixed in `50b9fa8`]
 
 - **File:** `implementation/tools/read_lines.go` (`maxReadLinesBlock`, lines 12, 66)
 - **Introduced by:** `979b140` ("remove file size limit, add line block limit").
@@ -177,7 +177,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
 - **Fix:** Keep a byte-size cap on the returned output (and/or the file read), or
   document the trade-off explicitly.
 
-### N9. Low — `TodoStore.List()` returns the live internal slice
+### N9. Low — `TodoStore.List()` returns the live internal slice — [Fixed in `96a0d5a`]
 
 - **File:** `implementation/tools/todo.go` (lines 77-82)
 - **Provenance:** Pre-existing.
@@ -187,7 +187,7 @@ and a **live functional bug in the grep tool** (N4). Details below.
   store's backing array.
 - **Fix:** Return a copy (or expose items read-only).
 
-### N10. Low — Compression summary prompt drops tool-call information
+### N10. Low — Compression summary prompt drops tool-call information — [Fixed in `1d5e937`]
 
 - **File:** `implementation/agent/agent_context.go` (lines 245-248)
 - **Provenance:** Pre-existing.
@@ -255,16 +255,27 @@ Spot-checked in final state (behavior-preserving or correct fixes):
 
 | # | Severity | Issue | Status |
 |---|----------|-------|--------|
-| N1 | High | Streaming refusal dropped in inline SSE path — `da87c16` fix incomplete | Open |
-| N2 | High | `extractSummary` returns reasoning instead of final answer — regression from `4d06709` | Open |
-| N3 | High | Orphaned leading tool message after compression (M4 only fixed summary side) | Open |
-| N4 | Medium | Documented grep flags silently dropped by `len==1` parser | Open |
-| N5 | Low | ANSI color codes leak from subagent output into parent context | Open |
-| N6 | Low | `insert_lines` inserted-text split inconsistent with `splitLines` | Open |
-| N7 | Low | `replace_text count=0` replaces all but reports 0 | Open |
-| N8 | Low | `read_lines` byte-size guard removed; output bytes unbounded | Open |
-| N9 | Low | `TodoStore.List()` returns live internal slice | Open |
-| N10 | Low | Compression summary prompt omits tool-call info | Open |
+| N1 | High | Streaming refusal dropped in inline SSE path — `da87c16` fix incomplete | Fixed (`a6f0ce3`) |
+| N2 | High | `extractSummary` returns reasoning instead of final answer — regression from `4d06709` | Fixed (`b1debd3`) |
+| N3 | High | Orphaned leading tool message after compression (M4 only fixed summary side) | Fixed (`c51d160`) |
+| N4 | Medium | Documented grep flags silently dropped by `len==1` parser | Fixed (`ba01b16`) |
+| N5 | Low | ANSI color codes leak from subagent output into parent context | Fixed (`c3eea4a`) |
+| N6 | Low | `insert_lines` inserted-text split inconsistent with `splitLines` | Fixed (`a16aa2c`) |
+| N7 | Low | `replace_text count=0` replaces all but reports 0 | Not valid — see note below |
+| N8 | Low | `read_lines` byte-size guard removed; output bytes unbounded | Fixed (`50b9fa8`) |
+| N9 | Low | `TodoStore.List()` returns live internal slice | Fixed (`96a0d5a`) |
+| N10 | Low | Compression summary prompt omits tool-call info | Fixed (`1d5e937`) |
+
+> **N7 note:** After re-verification, this finding is **not reproducible as described**.
+> `strings.Replace(s, old, new, 0)` (Go) replaces **zero** occurrences — it returns the
+> string unchanged, it does *not* replace all occurrences (verified with a test). With
+> `count == 0`, `executeReplaceText` therefore replaces nothing and reports "0 time(s)",
+> which is consistent behavior (a no-op), not a "file fully rewritten but reports 0" bug.
+> No code change was required.
+>
+> Each fixed issue was reproduced first (N1–N4 via temporary tests), fixed, and verified
+> with a permanent regression test. `go build ./...`, `go vet ./...`, and `go test ./...`
+> all pass.
 
 The same issues are also tracked in `findings.md` (section "New Findings — Review of
 the Fix Commits"), where they are documented alongside the 13 previously resolved
