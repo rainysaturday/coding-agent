@@ -3,7 +3,10 @@ package colors
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // ANSI color codes (default/dark theme — used as fallback before any theme is applied)
@@ -25,6 +28,20 @@ const (
 
 // currentTheme holds the currently active theme; nil means defaults are in use.
 var currentTheme *Theme
+
+// enabled controls whether GetColor returns ANSI escape sequences. Colors are
+// disabled when stdout is not a terminal (e.g. a subagent's piped stdout), so
+// escape codes do not leak into captured output such as subagent summaries.
+var enabled = true
+
+// SetEnabled controls whether color output is enabled.
+func SetEnabled(e bool) { enabled = e }
+
+// AutoDetect enables colors only when stdout is a terminal and the NO_COLOR
+// convention is not set. It should be called once at startup before any output.
+func AutoDetect() {
+	enabled = term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
+}
 
 // SetTheme sets the active theme by name. Returns an error if the theme is unknown.
 func SetTheme(name string) error {
@@ -64,6 +81,11 @@ func GetCurrentTheme() *Theme {
 // Supported slots: "reset", "dim", "red", "green", "yellow", "blue", "magenta", "cyan".
 // If no theme is active or the slot is unknown, the built-in default is returned.
 func GetColor(slot string) string {
+	// When color output is disabled, return an empty string for every slot so
+	// callers emit plain text with no ANSI escape sequences.
+	if !enabled {
+		return ""
+	}
 	if currentTheme != nil {
 		switch slot {
 		case "reset":

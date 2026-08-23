@@ -304,3 +304,17 @@ func fieldValue(theme Theme, field string) string {
 	}
 	return ""
 }
+
+func TestGetColor_DisabledReturnsEmpty(t *testing.T) {
+	// With colors disabled, GetColor returns empty strings so no ANSI escapes
+	// leak into piped output.
+	SetEnabled(false)
+	defer SetEnabled(true)
+
+	if got := GetColor("red"); got != "" {
+		t.Errorf("Expected empty color when disabled, got %q", got)
+	}
+	if got := GetColor("reset"); got != "" {
+		t.Errorf("Expected empty reset when disabled, got %q", got)
+	}
+}

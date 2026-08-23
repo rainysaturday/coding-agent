@@ -48,6 +48,11 @@ func init() {
 }
 
 func main() {
+	// Disable colors when stdout is not a TTY (or NO_COLOR is set) so ANSI
+	// escape codes do not leak into captured/piped output (e.g. a subagent's
+	// summary that is fed back into the parent's message history).
+	colors.AutoDetect()
+
 	// Parse command-line arguments
 	cfg, err := config.ParseArgs(os.Args[1:])
 	if err != nil {
