@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,3 +189,26 @@ func TestGroupAssistantToolMessages(t *testing.T) {
 	}
 }
 
+
+func TestSummarizeMessageLine_IncludesToolCalls(t *testing.T) {
+	// An assistant message with tool_calls but empty Content must serialize the
+	// tool-call name/arguments so the summarizer does not lose the structure.
+	tc := &inference.APIToolCall{ID: "call_1", Type: "function", Function: inference.FunctionCall{Name: "grep", Arguments: "{\"pattern\":\"x\"}"}}
+	msg := &inference.Message{Role: "assistant", ToolCalls: []*inference.APIToolCall{tc}}
+	line := summarizeMessageLine(msg)
+	if line == "" {
+		t.Fatal("Expected tool-call info in summarized assistant message")
+	}
+	if !strings.Contains(line, "grep") {
+		t.Errorf("Expected tool name 'grep' in serialized line, got %q", line)
+	}
+	if !strings.Contains(line, "tool_call") {
+		t.Errorf("Expected 'tool_call' marker in serialized line, got %q", line)
+	}
+
+	// Plain text messages are unchanged.
+	plain := &inference.Message{Role: "assistant", Content: "hello"}
+	if got := summarizeMessageLine(plain); got != "hello" {
+		t.Errorf("Expected plain text unchanged, got %q", got)
+	}
+}

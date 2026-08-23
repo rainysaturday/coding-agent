@@ -244,7 +244,7 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	// Build summary prompt
 	summaryReq := fmt.Sprintf("Summarize the following conversation history concisely, preserving key information, decisions, and results:\n\n")
 	for _, msg := range filteredSummary {
-		summaryReq += fmt.Sprintf("%s: %s\n\n", msg.Role, msg.Content)
+		summaryReq += fmt.Sprintf("%s: %s\n\n", msg.Role, summarizeMessageLine(msg))
 	}
 	summaryReq += "\nProvide a concise summary that captures all essential information."
 
@@ -314,6 +314,22 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// summarizeMessageLine serializes a message for the compression summary prompt.
+// Assistant messages that carry tool_calls often have empty Content; their
+// tool-call names/arguments are appended so the summarizer does not lose the
+// tool-call structure (which would otherwise appear as a bare "assistant: ").
+func summarizeMessageLine(msg *inference.Message) string {
+	line := msg.Content
+	if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+		for _, tc := range msg.ToolCalls {
+			if tc != nil {
+				line += fmt.Sprintf(" [tool_call: %s(%s)]", tc.Function.Name, tc.Function.Arguments)
+			}
+		}
+	}
+	return line
 }
 
 // groupAssistantToolMessages takes a slice of messages and reorders them so that
