@@ -347,3 +347,39 @@ func TestTruncateRunes(t *testing.T) {
 		t.Errorf("TruncateRunes(%q, 5) = %q, want %q", "hello world", got, "hello...")
 	}
 }
+
+func TestParseFlagsParamToMap(t *testing.T) {
+	// Documented dash-prefixed forms (e.g. "-n", "-r") must be accepted.
+	params := map[string]interface{}{
+		"flags": []interface{}{"-n", "-r", "-i"},
+	}
+	flags := parseFlagsParamToMap(params)
+	if !flags["n"] {
+		t.Error("Expected flag 'n' to be set for '-n'")
+	}
+	if !flags["r"] {
+		t.Error("Expected flag 'r' to be set for '-r'")
+	}
+	if !flags["i"] {
+		t.Error("Expected flag 'i' to be set for '-i'")
+	}
+
+	// Bare single-char forms should still work.
+	params = map[string]interface{}{"flags": []string{"l", "a"}}
+	flags = parseFlagsParamToMap(params)
+	if !flags["l"] || !flags["a"] {
+		t.Errorf("Expected bare single-char flags to be set, got %v", flags)
+	}
+
+	// Multi-char flags (used by other tools) are intentionally not matched here.
+	params = map[string]interface{}{"flags": []interface{}{"oneline", "stat"}}
+	flags = parseFlagsParamToMap(params)
+	if len(flags) != 0 {
+		t.Errorf("Expected no single-char flags from multi-char flags, got %v", flags)
+	}
+
+	// Missing flags param yields an empty map.
+	if got := parseFlagsParamToMap(map[string]interface{}{}); len(got) != 0 {
+		t.Errorf("Expected empty map without flags param, got %v", got)
+	}
+}

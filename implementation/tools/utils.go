@@ -209,6 +209,8 @@ func isGitRepo(path string) bool {
 
 // parseFlagsParamToMap extracts flags from the "flags" parameter and stores them in a map[string]bool.
 // This is used by tools like grep and list_files that use single-char flags.
+// The documented flag forms are dash-prefixed (e.g. "-n", "-r"), so a leading
+// "-" is stripped before matching the single-character flag key.
 func parseFlagsParamToMap(params map[string]interface{}) map[string]bool {
 	flags := make(map[string]bool)
 	if flagsParam, ok := params["flags"]; ok {
@@ -216,15 +218,17 @@ func parseFlagsParamToMap(params map[string]interface{}) map[string]bool {
 		case []interface{}:
 			for _, f := range v {
 				if flagStr, ok := f.(string); ok {
-					if len(flagStr) == 1 {
-						flags[flagStr] = true
+					name := strings.TrimPrefix(flagStr, "-")
+					if len(name) == 1 {
+						flags[name] = true
 					}
 				}
 			}
 		case []string:
 			for _, flagStr := range v {
-				if len(flagStr) == 1 {
-					flags[flagStr] = true
+				name := strings.TrimPrefix(flagStr, "-")
+				if len(name) == 1 {
+					flags[name] = true
 				}
 			}
 		}
