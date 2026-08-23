@@ -35,7 +35,10 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 	}
 
 	insertLine := int(lineNum)
-	newLines := strings.Split(insertLines, "\n")
+	// Use splitLines (which strips a trailing empty element) so inserted text
+	// ending in a newline is handled consistently with the file's existing
+	// content, rather than inserting an extra empty line.
+	newLines := splitLines(insertLines)
 
 	// Read existing content or create empty
 	var existingLines []string

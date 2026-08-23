@@ -514,6 +514,32 @@ func TestExecute_InsertLines_AtEnd(t *testing.T) {
 	}
 }
 
+func TestExecute_InsertLines_TrailingNewlineNoExtraBlank(t *testing.T) {
+	// Inserted text ending in a newline should not create an extra empty line.
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	os.WriteFile(testFile, []byte(""), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "insert_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"line":  1.0,
+			"lines": "a\nb\n", // trailing newline
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	content, _ := os.ReadFile(testFile)
+	got := string(content)
+	if got != "a\nb\n" {
+		t.Errorf("Expected exactly 'a\\nb\\n' (no extra blank line), got: %q", got)
+	}
+}
+
+
 func TestExecute_ReplaceText_EmptySearch(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test.txt")
