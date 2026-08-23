@@ -413,6 +413,9 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					ss.reasoningType = "reasoning_content"
 				}
 			}
+			if delta.Refusal != "" {
+				ss.fullRefusal.WriteString(delta.Refusal)
+			}
 
 			// Accumulate tool calls from streaming delta
 			for i := range delta.ToolCalls {
@@ -439,6 +442,14 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			if delta.Content != "" && callback != nil {
 				callback(StreamingChunk{
 					Text:        delta.Content,
+					ContentType: StreamingContentTypeNormal,
+				})
+			}
+
+			// Stream refusal content (content-policy refusals) like normal text
+			if delta.Refusal != "" && callback != nil {
+				callback(StreamingChunk{
+					Text:        delta.Refusal,
 					ContentType: StreamingContentTypeNormal,
 				})
 			}

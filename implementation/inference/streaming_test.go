@@ -56,6 +56,42 @@ data: [DONE]`
 	}
 }
 
+func TestHandleStreamResponse_RefusalInline(t *testing.T) {
+	// A single-line SSE chunk carrying delta.refusal exercises the inline
+	// single-line-JSON path, which previously dropped the refusal.
+	var chunks []StreamingChunk
+	callback := func(chunk StreamingChunk) {
+		chunks = append(chunks, chunk)
+	}
+
+	sseStream := `data: {"choices": [{"delta": {"refusal": "I cannot answer that."}}]}
+data: [DONE]`
+
+	body := io.NopCloser(strings.NewReader(sseStream))
+	client := NewInferenceClient(config.DefaultConfig())
+
+	resp, err := client.handleStreamResponse(body, callback)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+
+	if resp.Refusal != "I cannot answer that." {
+		t.Errorf("Expected refusal 'I cannot answer that.', got %q", resp.Refusal)
+	}
+
+	// The refusal should also be emitted as a normal streaming chunk.
+	found := false
+	for _, c := range chunks {
+		if c.Text == "I cannot answer that." {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Expected a streaming chunk carrying the refusal text")
+	}
+}
+
+
 func TestHandleStreamResponse_WithCallbacks(t *testing.T) {
 	var chunks []StreamingChunk
 	callback := func(chunk StreamingChunk) {
