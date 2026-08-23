@@ -327,9 +327,20 @@ func (a *Agent) groupAssistantToolMessages(messages []*inference.Message) []*inf
 	// Build groups: each group starts with a non-tool message, followed by its
 	// tool results (if the preceding message was an assistant with tool calls).
 	var groups [][]*inference.Message
-	currentGroup := []*inference.Message{messages[0]}
 
-	for i := 1; i < len(messages); i++ {
+	// A leading tool message has no assistant in the preserved window to attach
+	// to (its assistant was summarized/dropped). Drop it so we don't emit an
+	// orphaned tool result, which OpenAI-compatible APIs reject with a 400.
+	start := 0
+	if messages[0].Role == "tool" {
+		start = 1
+	}
+	if start >= len(messages) {
+		return []*inference.Message{}
+	}
+	currentGroup := []*inference.Message{messages[start]}
+
+	for i := start + 1; i < len(messages); i++ {
 		msg := messages[i]
 		if msg.Role == "tool" {
 			// Tool results should be grouped with the preceding assistant message.

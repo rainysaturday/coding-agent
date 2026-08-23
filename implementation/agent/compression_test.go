@@ -163,4 +163,28 @@ func TestGroupAssistantToolMessages(t *testing.T) {
 	if len(result) != 0 {
 		t.Errorf("Expected empty, got %d", len(result))
 	}
+
+	// A preserved window that starts with a tool result (its assistant was
+	// summarized/dropped) must drop the orphaned leading tool message.
+	tc := &inference.APIToolCall{ID: "call_1", Type: "function", Function: inference.FunctionCall{Name: "grep", Arguments: "{}"}}
+	leading := agent.groupAssistantToolMessages([]*inference.Message{
+		{Role: "tool", Content: "orphan result", ToolCallId: "call_1"},
+		{Role: "assistant", ToolCalls: []*inference.APIToolCall{tc}},
+		{Role: "tool", Content: "kept result", ToolCallId: "call_1"},
+	})
+	if len(leading) != 2 {
+		t.Fatalf("Expected 2 messages after dropping orphaned leading tool, got %d", len(leading))
+	}
+	if leading[0].Role != "assistant" || leading[1].Role != "tool" {
+		t.Errorf("Expected [assistant, tool] after grouping, got [%s, %s]", leading[0].Role, leading[1].Role)
+	}
+
+	// A window consisting solely of an orphaned tool result should become empty.
+	onlyOrphan := agent.groupAssistantToolMessages([]*inference.Message{
+		{Role: "tool", Content: "orphan only", ToolCallId: "call_1"},
+	})
+	if len(onlyOrphan) != 0 {
+		t.Errorf("Expected empty result for a lone orphaned tool, got %d", len(onlyOrphan))
+	}
 }
+
