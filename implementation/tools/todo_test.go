@@ -103,6 +103,26 @@ func TestTodoStore_List(t *testing.T) {
 	}
 }
 
+func TestTodoStore_ListReturnsCopy(t *testing.T) {
+	store := NewTodoStore()
+	store.Add("First")
+
+	// Mutating the returned slice must not affect the store's internal slice.
+	items := store.List()
+	items = append(items, &TodoItem{ID: 99, Description: "Injected"})
+	if len(store.List()) != 1 {
+		t.Errorf("Appending to returned list mutated the store: got %d items", len(store.List()))
+	}
+
+	// Mutating returned item fields must not affect the store's items.
+	items = store.List()
+	items[0].Completed = true
+	if store.List()[0].Completed {
+		t.Error("Mutating a returned item leaked into the store")
+	}
+}
+
+
 func TestFormatList_Empty(t *testing.T) {
 	result := FormatList([]*TodoItem{})
 	if result != "(no todo items)" {

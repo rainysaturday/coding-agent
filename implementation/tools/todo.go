@@ -74,11 +74,18 @@ func (ts *TodoStore) Remove(id int) *TodoItem {
 	return nil
 }
 
-// List returns all todo items.
+// List returns a copy of all todo items. A copy is returned so callers cannot
+// append to or mutate the store's internal slice (or its items) without holding
+// the lock, which would race subsequent store operations.
 func (ts *TodoStore) List() []*TodoItem {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	return ts.items
+	items := make([]*TodoItem, len(ts.items))
+	for i, item := range ts.items {
+		cp := *item
+		items[i] = &cp
+	}
+	return items
 }
 
 // CountPending returns the number of non-completed items.
