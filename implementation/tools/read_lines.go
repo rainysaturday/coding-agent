@@ -11,6 +11,12 @@ import (
 // maxReadLinesBlock is the maximum number of lines that read_lines will return at once.
 const maxReadLinesBlock = 5000
 
+// maxReadLinesBytes bounds the size of the returned output. Even within the line
+// limit, a file with very long lines (minified/JSON, wide logs) could otherwise
+// return an unbounded number of bytes and blow up memory and the model context.
+// This keeps read_lines symmetric with read_file's 20KB cap.
+const maxReadLinesBytes = 20 * 1024 // 20KB
+
 // executeReadLines reads specific lines from a file.
 func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolResult {
 	path, ok := params["path"].(string)
@@ -115,11 +121,31 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 
 	selectedLines := lines[startIdx:endIdx]
 
-	// Format output with line numbers
+	// Format output with line numbers, bounding the total output bytes so long
+	// lines cannot cause an unbounded result. Lines are truncated rune-safely
+	// when they would push the output past the cap.
 	var output strings.Builder
 	for i, line := range selectedLines {
 		lineNum := startIdx + i + 1
-		output.WriteString(fmt.Sprintf("%d: %s\n", lineNum, line))
+		prefix := fmt.Sprintf("%d: ", lineNum)
+		if output.Len()+len(prefix)+len(line) <= maxReadLinesBytes {
+			output.WriteString(prefix)
+			output.WriteString(line)
+			output.WriteString("\n")
+			continue
+		}
+		// This line would exceed the cap. Fill remaining budget with a
+		// rune-safe prefix of the line, then add a truncation marker and stop.
+		remaining := maxReadLinesBytes - output.Len()
+		if remaining > 0 {
+			output.WriteString(prefix)
+			r := []rune(line)
+			if avail := remaining - output.Len(); avail > 0 && avail < len(r) {
+				output.WriteString(string(r[:avail]))
+			}
+		}
+		output.WriteString("... [output truncated due to size]")
+		break
 	}
 
 	return &ToolResult{

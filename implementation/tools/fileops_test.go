@@ -445,6 +445,35 @@ func TestExecute_ReadLines_TooManyLines(t *testing.T) {
 	}
 }
 
+func TestExecute_ReadLines_ByteCap(t *testing.T) {
+	// A file with few lines but very long lines must not return unbounded output.
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "wide.txt")
+	// One very long line (well over the 20KB cap) plus a trailing short line.
+	longLine := strings.Repeat("x", 50*1024)
+	os.WriteFile(testFile, []byte(longLine+"\ntail\n"), 0644)
+
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "read_lines",
+		Parameters: map[string]interface{}{
+			"path":  testFile,
+			"start": 1.0,
+			"end":   2.0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if len(result.Output) > maxReadLinesBytes+len("... [output truncated due to size]") {
+		t.Errorf("Output exceeded byte cap: got %d bytes", len(result.Output))
+	}
+	if !strings.Contains(result.Output, "output truncated due to size") {
+		t.Error("Expected a truncation marker in the output")
+	}
+}
+
+
 func TestExecute_InsertLines_ToEmptyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "empty.txt")
