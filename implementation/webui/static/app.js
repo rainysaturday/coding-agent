@@ -4,7 +4,15 @@
 
   var SESSION_KEY = "codingAgentSession";
   var THEME_KEY = "codingAgentTheme";
+  // Critical: the session id must be consistent across ALL requests (state,
+  // SSE, chat, command, cancel). The backend treats an empty id as "create a
+  // fresh session", so an empty id would silently split every request onto a
+  // different session and no streamed events would ever reach this tab.
   var session = localStorage.getItem(SESSION_KEY) || "";
+  if (!session) {
+    session = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    try { localStorage.setItem(SESSION_KEY, session); } catch (e) {}
+  }
 
   // DOM refs
   var form = document.getElementById("chat-form");
@@ -279,21 +287,37 @@
 
   // ---- SSE ----
 
+  // Strip ANSI/CSI escape sequences that the agent embeds in tool-call and
+  // tool-result messages (e.g. "\x1b[0;36m[Bash] ls\x1b[0m").
+  function stripAnsi(s) {
+    return String(s).replace(/\x1b\[[0-9;]*m/g, "");
+  }
+
   function handleChunk(c) {
     if (c.isToolCall) {
-      // Tool call header from streaming prefix "[Tool Call] name"
+      // Streaming tool-call notifications come as "[Tool Call] name" followed by
+      // "[Tool Call] name (key: value, ...)" param updates. Keep one live card
+      // per tool and update its parameters as the arguments accumulate.
       var text = c.text.replace(/^\[Tool Call\]\s*/, "").trim();
       if (text) {
-        streamBuf = null;
-        var card = toolCard(text, "");
-        streamBuf = card;
+        var m = text.match(/^(\S+)\s*(?:\((.*)\))?$/);
+        var name = m ? m[1] : text;
+        var args = (m && m[2] !== undefined) ? m[2] : "";
+        if (streamBuf && streamBuf.classList.contains("msg-tool") && streamBuf._toolName === name) {
+          var paramsEl = streamBuf.querySelector(".tool-params");
+          if (paramsEl) { paramsEl.textContent = args; }
+          scrollBottom();
+        } else {
+          streamBuf = toolCard(name, args);
+          streamBuf._toolName = name;
+        }
       }
       return;
     }
     if (c.contentType === 1) { // reasoning
       var rb = output.querySelector(".msg-reasoning[data-reasoning='1']");
       if (!rb) { var r = reasoningBlock(); rb = r.details; rb._body = r.body; }
-      rb._body.textContent += c.text;
+      rb._body.textContent += stripAnsi(c.text);
       scrollBottom();
       return;
     }
@@ -304,7 +328,7 @@
         streamBuf.appendChild(el("div", "msg-body"));
         output.appendChild(streamBuf);
       }
-      streamBuf.lastElementChild.textContent += c.text;
+      streamBuf.lastElementChild.textContent += stripAnsi(c.text);
       scrollBottom();
       return;
     }
@@ -322,7 +346,7 @@
       streamBuf.appendChild(el("div", "msg-body"));
       output.appendChild(streamBuf);
     }
-    streamBuf.lastElementChild.textContent += c.text;
+    streamBuf.lastElementChild.textContent += stripAnsi(c.text);
     scrollBottom();
   }
 
