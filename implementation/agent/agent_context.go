@@ -126,7 +126,6 @@ func (a *Agent) GetMaxContextSize() int {
 	return a.maxContextSize
 }
 
-
 // GetActualContextSize returns the exact total_tokens from the last API response,
 // which is the authoritative count of everything the API processed:
 // system prompt + messages + tools + completion.

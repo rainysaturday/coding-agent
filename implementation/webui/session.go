@@ -27,24 +27,24 @@ type sseMessage struct {
 // Session represents one browser session: it owns an *agent.Agent and a hub of
 // SSE subscribers. Runs are serialized with a run mutex to preserve context.
 type Session struct {
-	ID       string
-	agent    *agent.Agent
-	cfg      *config.Config
-	mu       sync.Mutex // guards subscribers, history, running
-	subs     map[*subscriber]struct{}
-	history  []string
-	maxHist  int
-	running  bool
+	ID        string
+	agent     *agent.Agent
+	cfg       *config.Config
+	mu        sync.Mutex // guards subscribers, history, running
+	subs      map[*subscriber]struct{}
+	history   []string
+	maxHist   int
+	running   bool
 	runCancel context.CancelFunc
-	theme    string
+	theme     string
 }
 
 // SessionManager creates, tracks, and reaps sessions.
 type SessionManager struct {
-	cfg       *config.Config
-	mu        sync.Mutex
-	sessions  map[string]*Session
-	theme     string
+	cfg      *config.Config
+	mu       sync.Mutex
+	sessions map[string]*Session
+	theme    string
 }
 
 // NewSessionManager creates a manager that builds sessions from cfg.

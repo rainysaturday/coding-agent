@@ -932,4 +932,3 @@ func runWebMode(cfg *config.Config) error {
 
 	return server.Serve()
 }
-
