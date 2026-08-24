@@ -27,6 +27,7 @@ import (
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tools"
 	"github.com/coding-agent/harness/tui"
+	"github.com/coding-agent/harness/webui"
 )
 
 // Version information injected at build time
@@ -118,6 +119,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Web UI mode
+	if cfg.Web {
+		err = runWebMode(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Interactive mode
 	err = runInteractiveMode(cfg)
 	if err != nil {
@@ -193,6 +204,16 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 	if cfg.Goal != "" {
 		os.Setenv("CODING_AGENT_GOAL", cfg.Goal)
 	}
+	// Web UI settings
+	if cfg.Web {
+		os.Setenv("CODING_AGENT_WEB", "true")
+	}
+	if cfg.WebAddr != "" {
+		os.Setenv("CODING_AGENT_WEB_ADDR", cfg.WebAddr)
+	}
+	if cfg.WebPort > 0 {
+		os.Setenv("CODING_AGENT_WEB_PORT", strconv.Itoa(cfg.WebPort))
+	}
 }
 
 func displayVersion() {
@@ -253,6 +274,9 @@ func displayHelp() {
 	fmt.Println("  -v, --version            Show version information")
 	fmt.Println("      --tools string       Comma-separated list of tool names to make available (overrides defaults for the mode)")
 	fmt.Println("      --list-tools          List available tools and exit")
+	fmt.Println("      --web                Start the web UI server instead of the terminal UI")
+	fmt.Println("      --web-addr string    Web UI listen address (default: \"127.0.0.1\")")
+	fmt.Println("      --web-port int       Web UI listen port (default: 8080)")
 	fmt.Println()
 	fmt.Println("Interactive Commands:")
 	fmt.Println("  /stats       - Display runtime statistics")
@@ -886,3 +910,26 @@ func runInteractiveMode(cfg *config.Config) error {
 		// Loop continues, but wg.Wait() at top will block until done
 	}
 }
+
+// runWebMode starts the web UI server and blocks until it is shut down.
+// It serves the embedded web UI over the existing agent packages. Per-session
+// agents are created lazily by the session manager (which loads any --load
+// context file and applies --goal on creation). Graceful shutdown is handled
+// on SIGINT/SIGTERM.
+func runWebMode(cfg *config.Config) error {
+	// Create the web UI server.
+	server := webui.NewServer(cfg)
+
+	// Graceful shutdown on SIGINT/SIGTERM.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	return server.Serve()
+}
+

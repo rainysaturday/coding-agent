@@ -83,6 +83,11 @@ type Config struct {
 	// Theme settings
 	Theme string
 
+	// Web UI settings
+	Web     bool   // When true, start the web UI server instead of the terminal UI
+	WebAddr string // Listen address for the web UI (default: 127.0.0.1)
+	WebPort int    // Listen port for the web UI (default: 8080)
+
 	// Persona settings
 	Persona     string
 	SummaryOnly bool // When true, only output the final summary (used by subagents)
@@ -117,6 +122,8 @@ func DefaultConfig() *Config {
 		MaxIterations:       1000,                    // Default max iterations for loop protection
 		Debug:               false,
 		DebugLog:            "debug.log",
+		WebAddr:             "127.0.0.1",
+		WebPort:             8080,
 	}
 }
 
@@ -329,6 +336,24 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 		case "--list-tools":
 			cfg.ListTools = true
+		case "--web":
+			cfg.Web = true
+		case "--web-addr":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--web-addr requires an argument")
+			}
+			i++
+			cfg.WebAddr = args[i]
+		case "--web-port":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--web-port requires an argument")
+			}
+			i++
+			webPort, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid web-port: %v", err)
+			}
+			cfg.WebPort = webPort
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -427,6 +452,14 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Tools = strings.Split(value, ",")
 			for j, t := range cfg.Tools {
 				cfg.Tools[j] = strings.TrimSpace(t)
+			}
+		case "web":
+			cfg.Web = value == "true" || value == "1"
+		case "web_addr":
+			cfg.WebAddr = value
+		case "web_port":
+			if v, err := strconv.Atoi(value); err == nil {
+				cfg.WebPort = v
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
@@ -532,6 +565,18 @@ func loadEnv(cfg *Config) {
 			cfg.Tools[j] = strings.TrimSpace(t)
 		}
 	}
+	// Web UI settings via environment variables
+	if val := os.Getenv("CODING_AGENT_WEB"); val != "" {
+		cfg.Web = val == "true" || val == "1"
+	}
+	if val := os.Getenv("CODING_AGENT_WEB_ADDR"); val != "" {
+		cfg.WebAddr = val
+	}
+	if val := os.Getenv("CODING_AGENT_WEB_PORT"); val != "" {
+		if v, err := strconv.Atoi(val); err == nil {
+			cfg.WebPort = v
+		}
+	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a GitHub
 	// Copilot or GitHub Models URL (both accept GitHub tokens).
@@ -563,6 +608,9 @@ func (c *Config) Validate() error {
 	}
 	if c.ReadTimeout != 0 && c.ReadTimeout < 10 {
 		return fmt.Errorf("read timeout must be at least 10 seconds")
+	}
+	if c.WebPort < 1 || c.WebPort > 65535 {
+		return fmt.Errorf("web port must be between 1 and 65535")
 	}
 	return nil
 }

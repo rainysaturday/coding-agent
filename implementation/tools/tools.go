@@ -73,6 +73,11 @@ func (te *ToolExecutor) SetReadOnly(readOnly bool) {
 	te.readOnly = readOnly
 }
 
+// IsReadOnly returns whether read-only mode is currently enabled.
+func (te *ToolExecutor) IsReadOnly() bool {
+	return te.readOnly
+}
+
 // Stats returns the current execution statistics.
 func (te *ToolExecutor) Stats() *Stats {
 	return te.stats

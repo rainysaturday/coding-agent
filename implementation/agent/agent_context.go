@@ -119,6 +119,14 @@ func (a *Agent) GetContextSize() int {
 	return a.GetActualContextSize()
 }
 
+// GetMaxContextSize returns the configured maximum context size.
+func (a *Agent) GetMaxContextSize() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.maxContextSize
+}
+
+
 // GetActualContextSize returns the exact total_tokens from the last API response,
 // which is the authoritative count of everything the API processed:
 // system prompt + messages + tools + completion.

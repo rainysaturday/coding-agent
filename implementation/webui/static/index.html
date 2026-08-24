@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Coding Agent</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Coding Agent</h1>
+    <div id="status-bar" class="status-bar">Connecting…</div>
+  </header>
+
+  <div class="layout">
+    <main class="main">
+      <div id="output" class="output" aria-live="polite">
+        <div class="msg msg-placeholder">
+          <div class="msg-body">Send a message to start a conversation with the agent.</div>
+        </div>
+      </div>
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <textarea id="prompt-input" rows="1" placeholder="Type a message or /command…"></textarea>
+        <button type="submit" id="send-btn" class="btn btn-primary">Send</button>
+        <button type="button" id="cancel-btn" class="btn" disabled>Cancel</button>
+      </form>
+      <div id="stats" class="stats"></div>
+    </main>
+
+    <aside class="sidebar">
+      <h2>History</h2>
+      <ul id="history-list" class="history-list"></ul>
+    </aside>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
