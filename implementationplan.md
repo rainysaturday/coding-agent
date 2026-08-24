@@ -293,38 +293,38 @@ Add acceptance criteria / explicit note:
 
 ## 10. Phased Implementation
 
-### Phase 1 — Backend scaffolding (no UI yet)
-- Add `--web`, `--web-addr`, `--web-port` config + parsing + tests.
-- Create `webui` package: `Session`, `SessionManager`, SSE hub, event structs.
-- Wire `main.go` web branch (agent setup, context callback, graceful shutdown).
-- Add `GET /api/state` and a trivial `GET /` returning a placeholder.
-- **Milestone:** `curl /api/state` returns JSON; server starts/stops cleanly.
+### Phase 1 — Backend scaffolding (no UI yet) ✅ COMPLETE
+- [x] Add `--web`, `--web-addr`, `--web-port` config + parsing + tests.
+- [x] Create `webui` package: `Session`, `SessionManager`, SSE hub, event structs.
+- [x] Wire `main.go` web branch (agent setup, context callback, graceful shutdown).
+- [x] Add `GET /api/state` and a trivial `GET /` returning a placeholder.
+- [x] **Milestone:** `curl /api/state` returns JSON; server starts/stops cleanly.
 
-### Phase 2 — Chat + streaming (SSE)
-- `POST /api/chat`, `POST /api/cancel`, `GET /api/events`.
-- Run `agent.RunStream` in a goroutine; publish `chunk`/`result`/`error`/`done`/`stats`.
-- Handle non-streaming (`agent.Run`) path by emitting the result as a single chunk.
-- **Milestone:** an SSE client (e.g. `curl -N`) receives live tokens.
+### Phase 2 — Chat + streaming (SSE) ✅ COMPLETE
+- [x] `POST /api/chat`, `POST /api/cancel`, `GET /api/events`.
+- [x] Run `agent.RunStream` in a goroutine; publish `chunk`/`result`/`error`/`done`/`stats`.
+- [x] Handle non-streaming (`agent.Run`) path by emitting the result as a single chunk.
+- [x] **Milestone:** an SSE client (e.g. `curl -N`) receives live tokens.
 
-### Phase 3 — Slash commands & state
-- `/api/command` handler mirroring `handleInteractiveCommand`:
+### Phase 3 — Slash commands & state ✅ COMPLETE
+- [x] `/api/command` handler mirroring `handleInteractiveCommand`:
   `/stats`, `/clear`, `/clear-history`, `/read-only`, `/compress`, `/goal`, `/goal-off`, `/dump`.
-- Publish `state` events on every change.
-- **Milestone:** full command parity with the TUI.
+- [x] Publish `state` events on every change.
+- [x] **Milestone:** full command parity with the TUI.
 
-### Phase 4 — Frontend SPA
-- `index.html`, `app.js`, `styles.css` embedded via `go:embed`.
-- Chat renderer (user/assistant/reasoning/goal/tool-call cards), SSE client,
+### Phase 4 — Frontend SPA (IN PROGRESS)
+- [x] `index.html`, `app.js`, `styles.css` embedded via `go:embed`.
+- [ ] Chat renderer (user/assistant/reasoning/goal/tool-call cards), SSE client,
   input with history + slash autocomplete, cancel button, clear buttons,
   stats panel, context ring, read-only toggle, goal input, dump button.
-- Theme mapping from `colors` to CSS variables.
-- **Milestone:** full visual parity; beautiful, responsive, offline.
+- [ ] Theme mapping from `colors` to CSS variables.
+- [ ] **Milestone:** full visual parity; beautiful, responsive, offline.
 
-### Phase 5 — Polish, tests, docs
-- `httptest` unit tests for handlers, session manager, SSE framing, command dispatch.
-- README + requirement 046 finalized.
-- `go build ./...`, `go vet ./...`, `go test ./...` all green.
-- Manual test across browsers (Chrome/Firefox) and themes.
+### Phase 5 — Polish, tests, docs (PENDING)
+- [ ] `httptest` unit tests for handlers, session manager, SSE framing, command dispatch.
+- [ ] README + requirement 046 finalized.
+- [ ] `go build ./...`, `go vet ./...`, `go test ./...` all green.
+- [ ] Manual test across browsers (Chrome/Firefox) and themes.
 
 ---
 
