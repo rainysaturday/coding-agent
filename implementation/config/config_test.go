@@ -618,3 +618,81 @@ func TestParseArgs_GitHubTokenIgnoredForNonGitHubEndpoint(t *testing.T) {
 	}
 }
 
+
+// ===== Tests for web UI flags =====
+
+func TestParseArgs_WebFlag(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--web"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !cfg.Web {
+		t.Error("Expected Web=true when --web is passed")
+	}
+	if cfg.WebAddr != "127.0.0.1" {
+		t.Errorf("Expected default WebAddr 127.0.0.1, got %q", cfg.WebAddr)
+	}
+	if cfg.WebPort != 8080 {
+		t.Errorf("Expected default WebPort 8080, got %d", cfg.WebPort)
+	}
+}
+
+func TestParseArgs_WebAddrAndPort(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--web", "--web-addr", "0.0.0.0", "--web-port", "9000"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.WebAddr != "0.0.0.0" {
+		t.Errorf("Expected WebAddr 0.0.0.0, got %q", cfg.WebAddr)
+	}
+	if cfg.WebPort != 9000 {
+		t.Errorf("Expected WebPort 9000, got %d", cfg.WebPort)
+	}
+}
+
+func TestParseArgs_WebAddrMissingArg(t *testing.T) {
+	if _, err := ParseArgs([]string{"--web-addr"}); err == nil {
+		t.Error("Expected error when --web-addr has no argument")
+	}
+}
+
+func TestParseArgs_WebPortMissingArg(t *testing.T) {
+	if _, err := ParseArgs([]string{"--web-port"}); err == nil {
+		t.Error("Expected error when --web-port has no argument")
+	}
+}
+
+func TestParseArgs_WebPortInvalid(t *testing.T) {
+	if _, err := ParseArgs([]string{"--web-port", "notanumber"}); err == nil {
+		t.Error("Expected error when --web-port is not a number")
+	}
+}
+
+func TestParseArgs_WebPortOutOfRange(t *testing.T) {
+	if _, err := ParseArgs([]string{"--web-port", "70000"}); err == nil {
+		t.Error("Expected error when --web-port is out of range")
+	}
+}
+
+func TestParseArgs_WebEnvVars(t *testing.T) {
+	os.Setenv("CODING_AGENT_WEB", "true")
+	os.Setenv("CODING_AGENT_WEB_ADDR", "127.0.0.1")
+	os.Setenv("CODING_AGENT_WEB_PORT", "9090")
+	defer func() {
+		os.Unsetenv("CODING_AGENT_WEB")
+		os.Unsetenv("CODING_AGENT_WEB_ADDR")
+		os.Unsetenv("CODING_AGENT_WEB_PORT")
+	}()
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !cfg.Web {
+		t.Error("Expected Web=true from env var")
+	}
+	if cfg.WebPort != 9090 {
+		t.Errorf("Expected WebPort 9090 from env var, got %d", cfg.WebPort)
+	}
+}
+
