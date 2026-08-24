@@ -1,6 +1,6 @@
 # Code Review Findings
 
-> **STATUS: 13 prior findings resolved ✅ · 10 NEW findings from the fix-commit review (open)**
+> **STATUS: 13 prior findings resolved ✅ · 10 NEW findings from the fix-commit review (all resolved ✅, N7 not valid)**
 >
 > The original 13 findings below were fixed and committed (see the "Resolution Log"
 > at the bottom). A subsequent **commit-by-commit review of every commit on this branch
@@ -25,7 +25,7 @@ severity. Line numbers refer to the current state of the code.
 > reproduced against the current tree with temporary tests (removed afterwards);
 > `go build ./...`, `go vet ./...`, and `go test ./...` all still pass.
 
-### N1. High — Streaming refusal is still dropped in the common single-line SSE case (incomplete fix of #13)
+### N1. ✅ High — Streaming refusal is still dropped in the common single-line SSE case (incomplete fix of #13)
 - **File:** `implementation/inference/stream.go`
 - **Introduced by:** `da87c16` ("surface model refusals") — the fix is incomplete.
 - **Problem:** `da87c16` added refusal handling to the non-streaming path
@@ -46,7 +46,7 @@ severity. Line numbers refer to the current state of the code.
   into `ss.fullRefusal` and emit a `StreamingChunk` for it (or route the inline
   delta through `processDelta` to avoid the two divergent code paths).
 
-### N2. High — `extractSummary` returns the reasoning block instead of the final answer (regression)
+### N2. ✅ High — `extractSummary` returns the reasoning block instead of the final answer (regression)
 - **File:** `implementation/tools/subagent.go` (`extractSummary`, lines 166-273)
 - **Introduced by:** `4d06709` (M5 "Improve extractSummary with more markers and paragraph parsing").
 - **Problem:** The subagent is invoked with `--quiet --summary-only --no-stream`
@@ -70,7 +70,7 @@ severity. Line numbers refer to the current state of the code.
   `[Reasoning]`/ANSI section before extraction. Add a unit test covering the
   `--quiet` output shape.
 
-### N3. High — `compressContext` leaves an orphaned tool message at the head of the preserved window
+### N3. ✅ High — `compressContext` leaves an orphaned tool message at the head of the preserved window
 - **File:** `implementation/agent/agent_context.go` (`groupAssistantToolMessages`, lines 322-363)
 - **Provenance:** **Pre-existing** (byte-identical at merge-base `47fc764`), but live
   in HEAD and adjacent to this branch's compression work: `4d06709` (M4) added an
@@ -91,7 +91,7 @@ severity. Line numbers refer to the current state of the code.
 - **Fix:** In `groupAssistantToolMessages`, drop (or re-home) a leading tool message
   whose assistant is not in the preserved window, symmetric to the summary-side filter.
 
-### N4. Medium — `grep` flags are silently dropped (documented flags never applied)
+### N4. ✅ Medium — `grep` flags are silently dropped (documented flags never applied)
 - **File:** `implementation/tools/utils.go` (`parseFlagsParamToMap`, lines 212-234)
 - **Provenance:** **Pre-existing** at merge-base, still live in HEAD.
 - **Problem:** The parser only accepts flags with `len(flagStr) == 1` (lines 219/226).
@@ -105,7 +105,7 @@ severity. Line numbers refer to the current state of the code.
 - **Fix:** Accept the documented `-x` forms (strip a leading `-`) or change the schema/
   prompt to single-char flags; keep the two in sync. Add a parser unit test.
 
-### N5. Low — Subagent output carries ANSI color codes into the parent's context
+### N5. ✅ Low — Subagent output carries ANSI color codes into the parent's context
 - **File:** `implementation/main.go` (`outputResult` Quiet branch, ~354-361); `implementation/colors/colors.go` (`GetColor`)
 - **Provenance:** Pre-existing; made more likely to surface by the N2 rewrite.
 - **Problem:** There is no TTY/`NO_COLOR` detection anywhere — `colors.GetColor` always
@@ -116,7 +116,7 @@ severity. Line numbers refer to the current state of the code.
 - **Fix:** Disable colors when stdout is not a TTY (or in `--quiet`/`--summary-only`
   piped mode), and/or strip ANSI escapes in `extractSummary`.
 
-### N6. Low — `insert_lines` splits the inserted text inconsistently with `splitLines`
+### N6. ✅ Low — `insert_lines` splits the inserted text inconsistently with `splitLines`
 - **File:** `implementation/tools/insert_lines.go` (~line 39)
 - **Provenance:** Pre-existing; `d9701af` ("Use shared splitLines() helper in
   insert_lines.go") only converted the **existing-content** read to `splitLines`, leaving
@@ -126,7 +126,7 @@ severity. Line numbers refer to the current state of the code.
   inserted, inconsistent with how the file's existing content is handled.
 - **Fix:** Use `splitLines` (or an equivalent trailing-empty strip) for the inserted text.
 
-### N7. Low — `replace_text` with `count=0` replaces all occurrences but reports "0 time(s)"
+### N7. ❌ Not valid — `replace_text` with `count=0` replaces all occurrences but reports "0 time(s)"
 - **File:** `implementation/tools/replace_text.go` (~lines 78-90)
 - **Provenance:** Pre-existing at merge-base.
 - **Problem:** The branch is `if count < 0 || count > totalOccurrences { ReplaceAll } else
@@ -137,7 +137,7 @@ severity. Line numbers refer to the current state of the code.
 - **Fix:** Treat `count == 0` as "replace all" (or reject it) and set
   `replacementsMade` to the actual number.
 
-### N8. Low — `read_lines` no longer bounds output by byte size (size guard removed)
+### N8. ✅ Low — `read_lines` no longer bounds output by byte size (size guard removed)
 - **File:** `implementation/tools/read_lines.go` (`maxReadLinesBlock`, lines 12, 66)
 - **Introduced by:** `979b140` ("remove file size limit, add line block limit").
 - **Problem:** The old `fileInfo.Size() > maxReadFileSize` guard was replaced by a limit
@@ -150,7 +150,7 @@ severity. Line numbers refer to the current state of the code.
 - **Fix:** Keep a byte-size cap on the returned output (and/or on the file read), or
   document the trade-off explicitly.
 
-### N9. Low — `TodoStore.List()` returns the live internal slice
+### N9. ✅ Low — `TodoStore.List()` returns the live internal slice
 - **File:** `implementation/tools/todo.go` (lines 77-82)
 - **Provenance:** Pre-existing.
 - **Problem:** `List()` locks, then returns `ts.items` directly (the same slice the store
@@ -159,7 +159,7 @@ severity. Line numbers refer to the current state of the code.
   backing array.
 - **Fix:** Return a copy (or expose items read-only).
 
-### N10. Low — Compression summary prompt drops tool-call information
+### N10. ✅ Low — Compression summary prompt drops tool-call information
 - **File:** `implementation/agent/agent_context.go` (lines 245-248)
 - **Provenance:** Pre-existing.
 - **Problem:** The summary prompt is built from `msg.Content` only. Assistant messages
@@ -381,3 +381,29 @@ was verified with `go build ./...`, `go vet ./...`, and `go test ./...`.
 - `go build ./...` — PASS
 - `go vet ./...` — PASS
 - `go test ./...` — PASS
+
+---
+
+## New Findings — Resolution Log
+
+All valid findings from the fix-commit review (N1–N6, N8–N10) have been fixed
+and committed (one commit per finding). Each fix was verified with `go build ./...`,
+`go vet ./...`, and `go test ./...` and a permanent regression test. N7 was
+re-verified and found **not reproducible**: Go's `strings.Replace` with `n == 0`
+replaces zero occurrences, so the tool replaces nothing and correctly reports
+"0 time(s)" — there is no "replaces all but reports 0" bug, so no code change
+was required.
+
+| # | Fix summary | Commit |
+|---|-------------|--------|
+| N1 | Surface model refusals in the inline single-line SSE path (mirror `processDelta`) | `a6f0ce3` |
+| N2 | `extractSummary` returns the subagent's final answer, not its reasoning | `b1debd3` |
+| N3 | Drop orphaned leading tool message in the preserved window | `c51d160` |
+| N4 | Accept documented dash-prefixed grep/list_files flags | `ba01b16` |
+| N5 | Disable ANSI colors when stdout is not a TTY (`colors.AutoDetect`) | `c3eea4a` |
+| N6 | Use `splitLines` for the inserted text in `insert_lines` | `a16aa2c` |
+| N7 | Not valid — `strings.Replace(…, 0)` is a no-op, not "replace all" | — (no change) |
+| N8 | Bound `read_lines` output by byte size (20 KB, rune-safe truncation) | `50b9fa8` |
+| N9 | `TodoStore.List()` returns a deep copy of its items | `96a0d5a` |
+| N10 | Include tool-call names/arguments in the compression summary prompt | `1d5e937` |
+
