@@ -12,6 +12,9 @@ The coding agent harness must have zero external dependencies in the codebase. A
 - [ ] No third-party logging libraries - use fmt or custom logging
 - [ ] Project can be built in isolated environments without network access
 - [ ] CI/CD pipeline does not require fetching external dependencies
+- [ ] No third-party web server, router, or websocket library - implement the web UI with stdlib `net/http`
+- [ ] No frontend frameworks, CDN assets, or build steps - embed vanilla HTML/CSS/JS via stdlib `embed`
+- [ ] Web UI works offline with all assets compiled into the binary
 
 ## Implementation Guidelines
 
@@ -71,6 +74,16 @@ import "github.com/rs/zerolog"
 // Configuration
 import "github.com/spf13/viper"
 import "github.com/mitchellh/go-homedir"
+
+// Web server / router / websocket libraries
+import "github.com/gin-gonic/gin"
+import "github.com/gorilla/mux"
+import "github.com/gorilla/websocket"
+import "github.com/labstack/echo/v4"
+
+// Frontend frameworks / CDN (not Go imports, but disallowed for the web UI)
+// React, Vue, Svelte, Tailwind, Bootstrap, jQuery, Google Fonts, etc.
+
 ```
 
 ## Rationale
