@@ -8,30 +8,78 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>Coding Agent</h1>
-    <div id="status-bar" class="status-bar">Connecting…</div>
+    <div class="brand">
+      <h1>Coding Agent</h1>
+      <span id="conn-dot" class="conn-dot conn-off" title="disconnected"></span>
+    </div>
+    <div class="top-actions">
+      <label class="field-label" for="theme-select">Theme</label>
+      <select id="theme-select" class="select">
+        <option value="">default</option>
+        <option value="dark">dark</option>
+        <option value="light">light</option>
+        <option value="solarized">solarized</option>
+        <option value="gruvbox">gruvbox</option>
+        <option value="darkula">darkula</option>
+      </select>
+      <button id="new-session-btn" class="btn" type="button">New Session</button>
+    </div>
   </header>
 
-  <div class="layout">
-    <main class="main">
-      <div id="output" class="output" aria-live="polite">
-        <div class="msg msg-placeholder">
-          <div class="msg-body">Send a message to start a conversation with the agent.</div>
-        </div>
+  <main class="layout">
+    <section class="chat-col">
+      <div class="controls-row">
+        <label class="field-label check">
+          <input type="checkbox" id="readonly-toggle"> Read-only
+        </label>
+        <button id="clear-btn" class="btn" type="button">Clear View</button>
+        <button id="clear-history-btn" class="btn" type="button">Clear History</button>
+        <button id="compress-btn" class="btn" type="button">Compress</button>
+        <button id="dump-btn" class="btn" type="button">Dump</button>
       </div>
-      <form id="chat-form" class="chat-form" autocomplete="off">
-        <textarea id="prompt-input" rows="1" placeholder="Type a message or /command…"></textarea>
-        <button type="submit" id="send-btn" class="btn btn-primary">Send</button>
-        <button type="button" id="cancel-btn" class="btn" disabled>Cancel</button>
-      </form>
-      <div id="stats" class="stats"></div>
-    </main>
 
-    <aside class="sidebar">
-      <h2>History</h2>
-      <ul id="history-list" class="history-list"></ul>
+      <div id="output" class="output" aria-live="polite"></div>
+
+      <form id="chat-form" class="input-row" autocomplete="off">
+        <input id="prompt-input" class="prompt" type="text"
+               placeholder="Type a message or /command (Tab for autocomplete, ↑/↓ for history)…"
+               autocomplete="off" spellcheck="false">
+        <button id="send-btn" class="btn btn-primary" type="submit">Send</button>
+        <button id="cancel-btn" class="btn btn-danger" type="button" disabled>Cancel</button>
+      </form>
+
+      <div class="status-row">
+        <span id="status-bar" class="status"></span>
+      </div>
+
+      <div class="goal-row">
+        <form id="goal-form" class="goal-form" autocomplete="off">
+          <input id="goal-input" class="prompt" type="text" placeholder="Set a goal for the agent…">
+          <button id="goal-off-btn" class="btn" type="button">Clear Goal</button>
+        </form>
+        <span id="goal-active" class="goal-active"></span>
+      </div>
+
+      <div class="stats-bar" id="stats"></div>
+    </section>
+
+    <aside class="side-col">
+      <div class="side-card">
+        <div class="side-title">Context</div>
+        <svg id="context-ring" class="context-ring" viewBox="0 0 36 36" width="72" height="72">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--border)" stroke-width="3"></circle>
+          <circle id="ring-fg" cx="18" cy="18" r="15.9" fill="none" stroke="#a6e3a1"
+                  stroke-width="3" stroke-linecap="round" transform="rotate(-90 18 18)"></circle>
+          <text id="ring-text" x="18" y="21" text-anchor="middle" font-size="7" fill="var(--fg)">0%</text>
+        </svg>
+      </div>
+
+      <div class="side-card">
+        <div class="side-title">History</div>
+        <ul id="history-list" class="history"></ul>
+      </div>
     </aside>
-  </div>
+  </main>
 
   <script src="/assets/app.js"></script>
 </body>

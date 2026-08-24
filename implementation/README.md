@@ -114,6 +114,21 @@ echo "Refactor utils.go" | ./coding-agent --stdin
 ./coding-agent --prompt "Create a file" --quiet
 ```
 
+### Web UI Mode
+
+```bash
+# Start the web UI on the default address and port
+./coding-agent --web
+
+# Start on a custom address and port
+./coding-agent --web --web-addr 0.0.0.0 --web-port 9000
+```
+
+Open `http://127.0.0.1:8080` in your browser. The web UI provides a chat
+interface with live streaming responses, context-size indicator, read-only
+toggle, history, slash commands, goal mode, and theme selection. The frontend
+is a dependency-free vanilla JS single-page app embedded into the binary.
+
 ### Command-Line Options
 
 | Option           | Description                   | Default |
@@ -129,6 +144,9 @@ echo "Refactor utils.go" | ./coding-agent --stdin
 | `--verbose`      | Enable verbose output         | false   |
 | `--quiet`        | Suppress non-essential output | false   |
 | `--output`       | Write results to file         | -       |
+| `--web`          | Start the web UI instead of the terminal UI | false |
+| `--web-addr`     | Web UI listen address         | 127.0.0.1 |
+| `--web-port`     | Web UI listen port            | 8080    |
 | `-h, --help`     | Show help message             | -       |
 | `-v, --version`  | Show version information      | -       |
 
@@ -242,9 +260,17 @@ implementation/
 ├── tools/            # Tool implementations
 │   ├── tools.go      # Tool executor and definitions
 │   └── tools_test.go # Tool tests
-└── tui/              # Terminal user interface
-    ├── tui.go        # TUI implementation
-    └── tui_test.go   # TUI tests
+├── tui/              # Terminal user interface
+│   ├── tui.go        # TUI implementation
+│   └── tui_test.go   # TUI tests
+└── webui/            # Web user interface
+    ├── server.go     # HTTP server and routing
+    ├── session.go    # Per-session agent state
+    ├── handlers.go   # REST + SSE handlers
+    ├── events.go     # Event types and marshaling
+    ├── sse.go        # Server-Sent Events writer
+    ├── static.go     # Embedded static assets
+    └── static/       # Frontend (index.html, app.js, styles.css)
 ```
 
 ## Requirements Coverage
