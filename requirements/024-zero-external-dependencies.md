@@ -12,9 +12,9 @@ The coding agent harness must have zero external dependencies in the codebase. A
 - [ ] No third-party logging libraries - use fmt or custom logging
 - [ ] Project can be built in isolated environments without network access
 - [ ] CI/CD pipeline does not require fetching external dependencies
-- [ ] No third-party web server, router, or websocket library - implement the web UI with stdlib `net/http`
-- [ ] No frontend frameworks, CDN assets, or build steps - embed vanilla HTML/CSS/JS via stdlib `embed`
-- [ ] Web UI works offline with all assets compiled into the binary
+- [x] No third-party web server, router, or websocket library - implement the web UI with stdlib `net/http`
+- [x] No frontend frameworks, CDN assets, or build steps - embed vanilla HTML/CSS/JS via stdlib `embed`
+- [x] Web UI works offline with all assets compiled into the binary
 
 ## Implementation Guidelines
 

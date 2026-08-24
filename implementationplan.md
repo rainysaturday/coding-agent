@@ -312,19 +312,19 @@ Add acceptance criteria / explicit note:
 - [x] Publish `state` events on every change.
 - [x] **Milestone:** full command parity with the TUI.
 
-### Phase 4 — Frontend SPA (IN PROGRESS)
+### Phase 4 — Frontend SPA ✅ COMPLETE
 - [x] `index.html`, `app.js`, `styles.css` embedded via `go:embed`.
-- [ ] Chat renderer (user/assistant/reasoning/goal/tool-call cards), SSE client,
+- [x] Chat renderer (user/assistant/reasoning/goal/tool-call cards), SSE client,
   input with history + slash autocomplete, cancel button, clear buttons,
   stats panel, context ring, read-only toggle, goal input, dump button.
-- [ ] Theme mapping from `colors` to CSS variables.
-- [ ] **Milestone:** full visual parity; beautiful, responsive, offline.
+- [x] Theme mapping from `colors` to CSS variables.
+- [x] **Milestone:** full visual parity; beautiful, responsive, offline.
 
-### Phase 5 — Polish, tests, docs (PENDING)
-- [ ] `httptest` unit tests for handlers, session manager, SSE framing, command dispatch.
-- [ ] README + requirement 046 finalized.
-- [ ] `go build ./...`, `go vet ./...`, `go test ./...` all green.
-- [ ] Manual test across browsers (Chrome/Firefox) and themes.
+### Phase 5 — Polish, tests, docs ✅ COMPLETE
+- [x] `httptest` unit tests for handlers, session manager, SSE framing, command dispatch.
+- [x] README + requirement 046 finalized.
+- [x] `go build ./...`, `go vet ./...`, `go test ./...` all green.
+- [x] Manual test across browsers (Chrome/Firefox) and themes.
 
 ---
 
@@ -373,10 +373,10 @@ Add acceptance criteria / explicit note:
 
 ## 14. Deliverables & Definition of Done
 
-- [ ] `webui` package implements server, sessions, SSE, and all `/api/*` endpoints.
-- [ ] Embedded vanilla SPA provides parity with every TUI interaction in §1.
-- [ ] Theme-aware, responsive, visually polished UI (no external assets).
-- [ ] `requirements/046-web-ui.md` added; `requirements/024` updated.
-- [ ] `--web` / `--web-addr` / `--web-port` flags documented in README and `--help`.
-- [ ] Unit + integration tests pass; `go build`, `go vet`, `go test`, `go mod tidy` clean.
-- [ ] go.mod remains stdlib-only (plus existing `x/term`); buildable offline.
+- [x] `webui` package implements server, sessions, SSE, and all `/api/*` endpoints.
+- [x] Embedded vanilla SPA provides parity with every TUI interaction in §1.
+- [x] Theme-aware, responsive, visually polished UI (no external assets).
+- [x] `requirements/046-web-ui.md` added; `requirements/024` updated.
+- [x] `--web` / `--web-addr` / `--web-port` flags documented in README and `--help`.
+- [x] Unit + integration tests pass; `go build`, `go vet`, `go test`, `go mod tidy` clean.
+- [x] go.mod remains stdlib-only (plus existing `x/term`); buildable offline.

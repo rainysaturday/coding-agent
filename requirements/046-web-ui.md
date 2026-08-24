@@ -13,29 +13,29 @@ frontend assets.
   context monitoring, and cancellation the terminal UI already supports.
 
 ## Acceptance Criteria
-- [ ] A `--web` flag starts the web UI server instead of the terminal UI.
-- [ ] The web UI supports entering a prompt and streams assistant tokens live.
-- [ ] Reasoning, goal-mode, and normal content are visually distinct (mirroring the TUI's
+- [x] A `--web` flag starts the web UI server instead of the terminal UI.
+- [x] The web UI supports entering a prompt and streams assistant tokens live.
+- [x] Reasoning, goal-mode, and normal content are visually distinct (mirroring the TUI's
       dim reasoning and magenta goal/compression styling).
-- [ ] Tool calls are shown as live-updating cards with the tool name and parameters.
-- [ ] The context-size indicator is displayed with the same warning levels as the TUI
+- [x] Tool calls are shown as live-updating cards with the tool name and parameters.
+- [x] The context-size indicator is displayed with the same warning levels as the TUI
       (green → yellow → red as usage rises).
-- [ ] Runtime statistics are available (tokens, tokens/second, tool calls, failed calls,
+- [x] Runtime statistics are available (tokens, tokens/second, tool calls, failed calls,
       iterations, compressions, uptime) — via `/stats` and a live panel.
-- [ ] Input history navigation is supported (Up/Down arrows) and persists across refresh.
-- [ ] The current operation can be cancelled (Cancel button).
-- [ ] The following slash commands work and match TUI behavior:
+- [x] Input history navigation is supported (Up/Down arrows) and persists across refresh.
+- [x] The current operation can be cancelled (Cancel button).
+- [x] The following slash commands work and match TUI behavior:
       `/stats`, `/clear`, `/clear-history`, `/read-only`, `/compress`, `/goal <text>`,
       `/goal-off`, `/dump`.
-- [ ] Theme support matches the `colors` package themes (dark, light, solarized,
+- [x] Theme support matches the `colors` package themes (dark, light, solarized,
       gruvbox, darkula) via CSS variables.
-- [ ] Backend uses **only Go standard library** (`net/http`, `encoding/json`, `embed`).
+- [x] Backend uses **only Go standard library** (`net/http`, `encoding/json`, `embed`).
       No websocket library, no router, no HTTP framework.
-- [ ] Frontend uses **only embedded vanilla HTML/CSS/JS**. No CDN, no npm/node build
+- [x] Frontend uses **only embedded vanilla HTML/CSS/JS**. No CDN, no npm/node build
       step, no external fonts or icon libraries.
-- [ ] The server binds to `127.0.0.1` by default.
-- [ ] `go mod tidy` keeps go.mod free of any new external dependencies.
-- [ ] `go build`, `go vet`, `go test` all pass; the project builds offline.
+- [x] The server binds to `127.0.0.1` by default.
+- [x] `go mod tidy` keeps go.mod free of any new external dependencies.
+- [x] `go build`, `go vet`, `go test` all pass; the project builds offline.
 
 ## Design Summary
 
