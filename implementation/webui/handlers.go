@@ -146,6 +146,19 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// handleReset clears all server-side state for a session ("New Session").
+func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
+	var req cancelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	sess := s.sessions.Get(req.Session)
+	sess.reset()
+	sess.broadcastEvent("state", sess.state())
+	writeJSON(w, http.StatusOK, commandResponse{OK: true, Output: "[Session reset: context, goal, and history cleared]", State: sess.state()})
+}
+
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

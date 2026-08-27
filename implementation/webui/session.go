@@ -39,6 +39,12 @@ type Session struct {
 	theme     string
 }
 
+// DefaultSessionID is the shared session used by every anonymous connection.
+// Because the web UI is reached through a trusted SSH channel, all clients
+// (page refreshes, different browsers, different machines) intentionally
+// converge on this one server-side session so they continue the same work.
+const DefaultSessionID = "default"
+
 // SessionManager creates, tracks, and reaps sessions.
 type SessionManager struct {
 	cfg      *config.Config
@@ -57,16 +63,20 @@ func NewSessionManager(cfg *config.Config) *SessionManager {
 }
 
 // Get returns an existing session or creates a new one lazily.
+//
+// An empty id resolves to the shared DefaultSessionID so that every anonymous
+// connection (and every page refresh / new browser / new machine) continues
+// the same server-side session. The session's state (agent context, goal,
+// history) lives entirely on the server and is shared by all clients that
+// connect without an explicit session id.
 func (m *SessionManager) Get(id string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if id != "" {
-		if s, ok := m.sessions[id]; ok {
-			return s
-		}
-	}
 	if id == "" {
-		id = newSessionID()
+		id = DefaultSessionID
+	}
+	if s, ok := m.sessions[id]; ok {
+		return s
 	}
 	s := newSession(m.cfg, id, m.theme)
 	m.sessions[id] = s
@@ -74,7 +84,7 @@ func (m *SessionManager) Get(id string) *Session {
 }
 
 // GetOrCreate returns the session with the given id, or creates it if absent.
-// If id is empty, a fresh id is generated.
+// If id is empty, the shared default session is returned.
 func (m *SessionManager) GetOrCreate(id string) *Session {
 	return m.Get(id)
 }
@@ -184,6 +194,17 @@ func (s *Session) addToHistory(prompt string) {
 func (s *Session) clearHistory() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.history = make([]string, 0)
+}
+
+// reset clears all server-side session state: the agent's context, the goal,
+// and the input history. It is used by "New Session" to start the shared
+// session fresh without relying on any client-side storage.
+func (s *Session) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agent.ClearContext()
+	s.agent.ClearGoal()
 	s.history = make([]string, 0)
 }
 
@@ -316,9 +337,4 @@ func resultEventFromResult(result *agent.Result, ag *agent.Agent) resultEvent {
 		}
 	}
 	return re
-}
-
-// newSessionID generates a short random session identifier.
-func newSessionID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }

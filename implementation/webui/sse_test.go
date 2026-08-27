@@ -76,22 +76,60 @@ func TestSessionManager_CreateAndGet(t *testing.T) {
 		t.Error("expected same session for same id")
 	}
 
-	// Empty id generates a fresh, non-empty id each time.
+	// Empty id resolves to the shared default session (see
+	// TestSessionManager_EmptyIDReturnsSharedDefault).
 	s3 := m.Get("")
-	if s3.ID == "" {
-		t.Error("expected a generated id for empty session id")
+	if s3.ID != DefaultSessionID {
+		t.Errorf("expected default session id %q for empty id, got %q", DefaultSessionID, s3.ID)
 	}
 }
 
-// TestSessionManager_EmptyIDGeneratesUniqueSessions verifies that empty ids
-// never collide (each Get generates a new session).
-func TestSessionManager_EmptyIDGeneratesUniqueSessions(t *testing.T) {
+// TestSessionManager_EmptyIDReturnsSharedDefault verifies that empty ids all
+// resolve to the same shared DefaultSessionID, so every anonymous connection
+// continues the same server-side session.
+func TestSessionManager_EmptyIDReturnsSharedDefault(t *testing.T) {
 	cfg := config.DefaultConfig()
 	m := NewSessionManager(cfg)
 	a := m.Get("")
 	b := m.Get("")
-	if a == b {
-		t.Error("expected distinct sessions for distinct empty-id calls")
+	if a != b {
+		t.Error("expected empty-id calls to return the same shared default session")
+	}
+	if a.ID != DefaultSessionID {
+		t.Errorf("expected default session id %q, got %q", DefaultSessionID, a.ID)
+	}
+}
+
+// TestSession_ResetClearsState verifies reset clears context, goal, and history.
+func TestSession_ResetClearsState(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewSessionManager(cfg)
+	s := m.Get("sess")
+
+	s.agent.SetGoal("some goal")
+	s.addToHistory("hello")
+	if !s.agent.IsGoalActive() {
+		t.Fatal("expected goal active after SetGoal")
+	}
+	if len(s.historySnapshot()) != 1 {
+		t.Fatal("expected one history entry after addToHistory")
+	}
+
+	s.reset()
+
+	if s.agent.IsGoalActive() {
+		t.Error("expected goal inactive after reset")
+	}
+	if len(s.historySnapshot()) != 0 {
+		t.Error("expected empty history after reset")
+	}
+	// After reset the context should be back to the system-prompt baseline:
+	// a fresh session (empty conversation) reports the same size, since
+	// GetContextSize always includes the system prompt.
+	fresh := m.Get("fresh")
+	if got := s.agent.GetContextSize(); got != fresh.agent.GetContextSize() {
+		t.Errorf("expected context size %d (system-prompt baseline) after reset, got %d",
+			fresh.agent.GetContextSize(), got)
 	}
 }
 

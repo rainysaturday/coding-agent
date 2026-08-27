@@ -42,6 +42,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/command", s.handleCommand)
 	mux.HandleFunc("/api/cancel", s.handleCancel)
+	mux.HandleFunc("/api/reset", s.handleReset)
 
 	s.httpSrv = &http.Server{
 		Addr:    addr,

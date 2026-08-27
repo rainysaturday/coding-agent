@@ -2,17 +2,12 @@
 (function () {
   "use strict";
 
-  var SESSION_KEY = "codingAgentSession";
   var THEME_KEY = "codingAgentTheme";
-  // Critical: the session id must be consistent across ALL requests (state,
-  // SSE, chat, command, cancel). The backend treats an empty id as "create a
-  // fresh session", so an empty id would silently split every request onto a
-  // different session and no streamed events would ever reach this tab.
-  var session = localStorage.getItem(SESSION_KEY) || "";
-  if (!session) {
-    session = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    try { localStorage.setItem(SESSION_KEY, session); } catch (e) {}
-  }
+  // Sessions live entirely on the server. Every client (page refresh, another
+  // browser, another machine) connects to the server's shared default session
+  // by sending an empty session id, so the same work continues everywhere.
+  // No session id is generated or stored client-side.
+  var session = "";
 
   // DOM refs
   var form = document.getElementById("chat-form");
@@ -401,12 +396,14 @@
     });
 
     newSessionBtn.addEventListener("click", function () {
-      session = "s" + Date.now();
-      localStorage.setItem(SESSION_KEY, session);
-      output.innerHTML = "";
-      streamBuf = null;
-      fetch("/api/state?session=" + encodeURIComponent(session)).then(function (r) { return r.json(); })
-        .then(renderState);
+      // Reset the server-side session (context, goal, history) so all clients
+      // connected to the shared default session start fresh together.
+      post("/api/reset", { session: session }).then(function () {
+        output.innerHTML = "";
+        streamBuf = null;
+        fetch("/api/state?session=" + encodeURIComponent(session)).then(function (r) { return r.json(); })
+          .then(renderState);
+      });
     });
 
     clearBtn.addEventListener("click", function () {
