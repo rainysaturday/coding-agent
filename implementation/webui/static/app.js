@@ -473,19 +473,21 @@
     });
     goalOffBtn.addEventListener("click", function () { sendCommand("/goal-off"); });
 
-    fetch("/api/state?session=" + encodeURIComponent(session)).then(function (res) { return res.json(); })
-      .then(function (st) {
-        renderState(st);
-        // Replay any existing conversation (messages/tool calls from before this
-        // client connected) BEFORE opening the SSE stream, so new output always
-        // appends after the replayed history.
-        fetch("/api/history?session=" + encodeURIComponent(session))
-          .then(function (res) { return res.json(); })
-          .then(function (data) { renderConversation(data.messages || []); })
-          .catch(function () {})
-          .then(function () { connectSSE(); });
-      })
-      .catch(function () { setStatus("Failed to load state."); connectSSE(); });
+    // Load the session state and replay the existing conversation
+    // INDEPENDENTLY, then open the SSE stream only after both settle. This
+    // guarantees history is rendered before any new live output arrives, and
+    // that a transient state-fetch failure never silently suppresses history.
+    var hist = fetch("/api/history?session=" + encodeURIComponent(session))
+      .then(function (res) { return res.json(); })
+      .then(function (data) { renderConversation(data.messages || []); })
+      .catch(function () {});
+
+    fetch("/api/state?session=" + encodeURIComponent(session))
+      .then(function (res) { return res.json(); })
+      .then(renderState)
+      .catch(function () { setStatus("Failed to load state."); });
+
+    Promise.all([hist]).then(function () { connectSSE(); });
   }
 
   function applyTheme(theme) {

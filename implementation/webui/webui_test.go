@@ -6,28 +6,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/coding-agent/harness/config"
 )
 
-// newTestMux builds a Server and a mux wired the same way as Serve() so tests
+// newTestMux builds a Server and the production mux (via buildMux) so tests
 // can drive the HTTP handlers through httptest without binding a real port.
 func newTestMux(t *testing.T) (*Server, *http.ServeMux) {
 	t.Helper()
 	cfg := config.DefaultConfig()
 	cfg.Theme = "dark"
 	srv := NewServer(cfg)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", srv.route)
-	mux.HandleFunc("/assets/", srv.handleAsset)
-	mux.HandleFunc("/api/state", srv.handleState)
-	mux.HandleFunc("/api/history", srv.handleHistory)
-	mux.HandleFunc("/api/chat", srv.handleChat)
-	mux.HandleFunc("/api/events", srv.handleEvents)
-	mux.HandleFunc("/api/command", srv.handleCommand)
-	mux.HandleFunc("/api/cancel", srv.handleCancel)
-	return srv, mux
+	return srv, srv.buildMux()
 }
 
 func doJSON(t *testing.T, mux http.Handler, method, path string, body interface{}) *httptest.ResponseRecorder {
@@ -89,6 +80,97 @@ func TestHistory_ReturnsConversation(t *testing.T) {
 	}
 	if resp.Messages[1].Role != "assistant" || resp.Messages[1].Content != "hi there" {
 		t.Errorf("unexpected second message: %+v", resp.Messages[1])
+	}
+}
+func TestHistory_AfterRealRun(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"id": "test-1",
+			"object": "chat.completion",
+			"created": 123,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"message": {"role": "assistant", "content": "Final answer here"},
+				"finish_reason": "stop"
+			}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+	cfg.Streaming = false
+	cfg.MaxTokens = 10000
+	cfg.ContextSize = 32000
+	srv := NewServer(cfg)
+	mux := srv.buildMux()
+
+	rec := doJSON(t, mux, http.MethodPost, "/api/chat", chatRequest{Session: "e2e", Prompt: "hello world"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+
+	// Wait for the background run to finish.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := doJSON(t, mux, http.MethodGet, "/api/state?session=e2e", nil)
+		var s stateEvent
+		if json.Unmarshal(st.Body.Bytes(), &s) == nil && !s.Running {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	rec = doJSON(t, mux, http.MethodGet, "/api/history?session=e2e", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp historyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Messages) < 2 {
+		t.Fatalf("expected at least user + assistant, got %d: %+v", len(resp.Messages), resp.Messages)
+	}
+	if resp.Messages[0].Role != "user" || resp.Messages[0].Content != "hello world" {
+		t.Errorf("unexpected first message: %+v", resp.Messages[0])
+	}
+	found := false
+	for _, m := range resp.Messages {
+		if m.Role == "assistant" && m.Content == "Final answer here" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected assistant final answer in history: %+v", resp.Messages)
+	}
+}
+
+func TestAssets_AppJS_ContainsHistoryRendering(t *testing.T) {
+	// The embedded app.js served in production must actually include the
+	// conversation-rendering logic and the /api/history fetch. If the served
+	// asset drifts from the source (or the endpoint is missing), history will
+	// silently never appear after a reload.
+	_, mux := newTestMux(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"function renderConversation(",
+		"function staticToolCard(",
+		"/api/history",
+		"connectSSE",
+	} {
+		if !bytes.Contains([]byte(body), []byte(want)) {
+			t.Errorf("served app.js is missing %q", want)
+		}
 	}
 }
 

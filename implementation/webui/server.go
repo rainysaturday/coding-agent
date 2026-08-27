@@ -34,16 +34,7 @@ func NewServer(cfg *config.Config) *Server {
 func (s *Server) Serve() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.WebAddr, s.cfg.WebPort)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.route)
-	mux.HandleFunc("/assets/", s.handleAsset)
-	mux.HandleFunc("/api/state", s.handleState)
-	mux.HandleFunc("/api/history", s.handleHistory)
-	mux.HandleFunc("/api/chat", s.handleChat)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/command", s.handleCommand)
-	mux.HandleFunc("/api/cancel", s.handleCancel)
-	mux.HandleFunc("/api/reset", s.handleReset)
+	mux := s.buildMux()
 
 	s.httpSrv = &http.Server{
 		Addr:    addr,
@@ -58,6 +49,22 @@ func (s *Server) Serve() error {
 	fmt.Println()
 
 	return s.httpSrv.ListenAndServe()
+}
+
+// buildMux constructs the HTTP routing for the web UI. It is factored out so
+// tests can drive the exact same routing used in production.
+func (s *Server) buildMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.route)
+	mux.HandleFunc("/assets/", s.handleAsset)
+	mux.HandleFunc("/api/state", s.handleState)
+	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/chat", s.handleChat)
+	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("/api/command", s.handleCommand)
+	mux.HandleFunc("/api/cancel", s.handleCancel)
+	mux.HandleFunc("/api/reset", s.handleReset)
+	return mux
 }
 
 // Shutdown gracefully shuts down the HTTP server.
