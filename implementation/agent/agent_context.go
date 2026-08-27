@@ -60,6 +60,33 @@ func (a *Agent) ClearContext() {
 	a.assistantMsgsSinceLastAPI = make(map[int]bool)
 }
 
+// GetConversation returns a read-only copy of the agent's conversation context
+// messages (user, assistant, and tool messages) for rendering by a client that
+// is reconnecting to an existing session.
+func (a *Agent) GetConversation() []ConversationMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ConversationMessage, 0, len(a.context))
+	for _, m := range a.context {
+		cm := ConversationMessage{
+			Role:      m.Role,
+			Content:   m.Content,
+			Reasoning: m.Reasoning,
+		}
+		if m.ReasoningContent != "" {
+			cm.Reasoning = m.ReasoningContent
+		}
+		for _, tc := range m.ToolCalls {
+			if tc != nil {
+				cp := *tc
+				cm.ToolCalls = append(cm.ToolCalls, &cp)
+			}
+		}
+		out = append(out, cm)
+	}
+	return out
+}
+
 // AddUserMessage adds a user message to the context.
 func (a *Agent) AddUserMessage(message string) {
 	a.mu.Lock()

@@ -79,6 +79,26 @@ type stateEvent struct {
 	HistoryCount int    `json:"historyCount"`
 }
 
+// historyToolCall describes one tool call within a history message.
+type historyToolCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// historyMessage is a single conversation message returned via /api/history so
+// a reconnecting client can render the existing conversation.
+type historyMessage struct {
+	Role      string            `json:"role"`
+	Content   string            `json:"content,omitempty"`
+	Reasoning string            `json:"reasoning,omitempty"`
+	ToolCalls []historyToolCall `json:"toolCalls,omitempty"`
+}
+
+// historyResponse is the payload returned by /api/history.
+type historyResponse struct {
+	Messages []historyMessage `json:"messages"`
+}
+
 // errorEvent is sent when an agent run fails.
 type errorEvent struct {
 	Message string `json:"message"`

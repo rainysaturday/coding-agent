@@ -632,3 +632,52 @@ func TestLoadContext_Version1EmptyIterations(t *testing.T) {
 		t.Error("Expected error when loading version 1 with empty iterations")
 	}
 }
+
+func TestGetConversation(t *testing.T) {
+	cfg := config.DefaultConfig()
+	a := NewAgent(cfg)
+
+	a.mu.Lock()
+	a.context = append(a.context, &inference.Message{Role: "user", Content: "hello"})
+	a.context = append(a.context, &inference.Message{
+		Role:      "assistant",
+		Content:   "",
+		Reasoning: "let me think",
+		ToolCalls: []*inference.APIToolCall{
+			{Function: inference.FunctionCall{Name: "bash", Arguments: `{"command":"ls"}`}},
+		},
+	})
+	a.context = append(a.context, &inference.Message{Role: "tool", Content: "Tool 'bash' executed successfully:\nfile1"})
+	a.mu.Unlock()
+
+	conv := a.GetConversation()
+	if len(conv) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(conv))
+	}
+	if conv[0].Role != "user" || conv[0].Content != "hello" {
+		t.Errorf("unexpected first message: %+v", conv[0])
+	}
+	if conv[1].Reasoning != "let me think" {
+		t.Errorf("expected reasoning, got %q", conv[1].Reasoning)
+	}
+	if len(conv[1].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(conv[1].ToolCalls))
+	}
+	if conv[1].ToolCalls[0].Function.Name != "bash" {
+		t.Errorf("unexpected tool name: %q", conv[1].ToolCalls[0].Function.Name)
+	}
+	if conv[1].ToolCalls[0].Function.Arguments != `{"command":"ls"}` {
+		t.Errorf("unexpected arguments: %q", conv[1].ToolCalls[0].Function.Arguments)
+	}
+	if conv[2].Role != "tool" || conv[2].Content == "" {
+		t.Errorf("unexpected tool result: %+v", conv[2])
+	}
+
+	// Mutating the returned copy must not affect the live context.
+	conv[0].Content = "changed"
+	a.mu.Lock()
+	if a.context[0].Content != "hello" {
+		t.Error("GetConversation leaked a reference to live context")
+	}
+	a.mu.Unlock()
+}

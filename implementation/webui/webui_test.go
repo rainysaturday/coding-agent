@@ -22,6 +22,7 @@ func newTestMux(t *testing.T) (*Server, *http.ServeMux) {
 	mux.HandleFunc("/", srv.route)
 	mux.HandleFunc("/assets/", srv.handleAsset)
 	mux.HandleFunc("/api/state", srv.handleState)
+	mux.HandleFunc("/api/history", srv.handleHistory)
 	mux.HandleFunc("/api/chat", srv.handleChat)
 	mux.HandleFunc("/api/events", srv.handleEvents)
 	mux.HandleFunc("/api/command", srv.handleCommand)
@@ -62,6 +63,32 @@ func TestState_ReturnsValidJSON(t *testing.T) {
 	}
 	if st.Theme != "dark" {
 		t.Errorf("expected theme dark, got %q", st.Theme)
+	}
+}
+
+func TestHistory_ReturnsConversation(t *testing.T) {
+	srv, mux := newTestMux(t)
+	sess := srv.sessions.Get("hist-session")
+	// Seed a small conversation (user -> assistant).
+	sess.agent.AddUserMessage("hello")
+	sess.agent.AddAssistantMessage("hi there")
+
+	rec := doJSON(t, mux, http.MethodGet, "/api/history?session=hist-session", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp historyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(resp.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d: %+v", len(resp.Messages), resp.Messages)
+	}
+	if resp.Messages[0].Role != "user" || resp.Messages[0].Content != "hello" {
+		t.Errorf("unexpected first message: %+v", resp.Messages[0])
+	}
+	if resp.Messages[1].Role != "assistant" || resp.Messages[1].Content != "hi there" {
+		t.Errorf("unexpected second message: %+v", resp.Messages[1])
 	}
 }
 

@@ -217,6 +217,26 @@ func (s *Session) historySnapshot() []string {
 	return out
 }
 
+// conversation returns the session's conversation messages as historyMessages
+// so a reconnecting client can render the full existing conversation.
+func (s *Session) conversation() historyResponse {
+	msgs := s.agent.GetConversation()
+	out := make([]historyMessage, 0, len(msgs))
+	for _, m := range msgs {
+		hm := historyMessage{Role: m.Role, Content: m.Content, Reasoning: m.Reasoning}
+		for _, tc := range m.ToolCalls {
+			if tc != nil {
+				hm.ToolCalls = append(hm.ToolCalls, historyToolCall{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				})
+			}
+		}
+		out = append(out, hm)
+	}
+	return historyResponse{Messages: out}
+}
+
 // isRunning reports whether a run is currently executing.
 func (s *Session) isRunning() bool {
 	s.mu.Lock()

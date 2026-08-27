@@ -83,6 +83,46 @@
     return div;
   }
 
+  // staticToolCard renders a tool call without a spinner (used when replaying
+  // an existing conversation on reconnect).
+  function staticToolCard(name, args) {
+    var div = el("div", "msg msg-tool");
+    var head = el("div", "msg-head");
+    head.appendChild(document.createTextNode("[Tool Call] " + name));
+    div.appendChild(head);
+    div.appendChild(el("div", "msg-body msg-body-mono tool-params", args || ""));
+    output.appendChild(div);
+    scrollBottom();
+  }
+
+  // renderConversation replays the session's existing messages (user prompts,
+  // assistant replies, tool calls and results) when a client (re)connects.
+  function renderConversation(messages) {
+    if (!messages || !messages.length) return;
+    messages.forEach(function (m) {
+      if (m.role === "user") {
+        appendMessage("user", m.content || "");
+        return;
+      }
+      if (m.role === "tool") {
+        appendToolResult(m.content || "");
+        return;
+      }
+      // assistant
+      if (m.reasoning) {
+        var rb = reasoningBlock();
+        rb.body.textContent = stripAnsi(m.reasoning);
+      }
+      (m.toolCalls || []).forEach(function (tc) {
+        staticToolCard(tc.name || "", tc.arguments || "");
+      });
+      if (m.content) {
+        appendMessage("assistant", stripAnsi(m.content));
+      }
+    });
+    scrollBottom();
+  }
+
   function appendToolResult(text) {
     var div = el("div", "msg msg-tool-result");
     div.appendChild(el("div", "msg-head", "Tool Result"));
@@ -434,7 +474,17 @@
     goalOffBtn.addEventListener("click", function () { sendCommand("/goal-off"); });
 
     fetch("/api/state?session=" + encodeURIComponent(session)).then(function (res) { return res.json(); })
-      .then(function (st) { renderState(st); connectSSE(); })
+      .then(function (st) {
+        renderState(st);
+        // Replay any existing conversation (messages/tool calls from before this
+        // client connected) BEFORE opening the SSE stream, so new output always
+        // appends after the replayed history.
+        fetch("/api/history?session=" + encodeURIComponent(session))
+          .then(function (res) { return res.json(); })
+          .then(function (data) { renderConversation(data.messages || []); })
+          .catch(function () {})
+          .then(function () { connectSSE(); });
+      })
       .catch(function () { setStatus("Failed to load state."); connectSSE(); });
   }
 

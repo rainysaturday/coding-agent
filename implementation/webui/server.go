@@ -38,6 +38,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("/", s.route)
 	mux.HandleFunc("/assets/", s.handleAsset)
 	mux.HandleFunc("/api/state", s.handleState)
+	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/command", s.handleCommand)

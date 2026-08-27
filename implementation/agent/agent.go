@@ -93,6 +93,17 @@ type Result struct {
 	TokenUsage  int
 }
 
+// ConversationMessage is a single message from the agent's context, suitable for
+// rendering by a client (e.g. the web UI) when reconnecting to an in-progress
+// or completed conversation. It is a read-only snapshot; fields are copies so
+// callers cannot mutate the agent's live context.
+type ConversationMessage struct {
+	Role      string
+	Content   string
+	Reasoning string
+	ToolCalls []*inference.APIToolCall
+}
+
 // ContextDump represents a serializable conversation context.
 type ContextDump struct {
 	Version    int         `json:"version"`

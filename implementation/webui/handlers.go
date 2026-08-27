@@ -48,6 +48,14 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// handleHistory returns the session's full conversation so a reconnecting
+// client can render messages/tool calls from before it connected.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	session := r.URL.Query().Get("session")
+	sess := s.sessions.Get(session)
+	writeJSON(w, http.StatusOK, sess.conversation())
+}
+
 // handleState returns the current session state as JSON.
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	session := r.URL.Query().Get("session")
