@@ -467,10 +467,20 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 		// Check if there are tool calls
 		if len(response.ToolCalls) > 0 {
 			// Execute tool calls
-			for _, tc := range response.ToolCalls {
+			for i, tc := range response.ToolCalls {
 				// Check for cancellation before executing each tool
 				select {
 				case <-ctx.Done():
+					// Synthesize tool results for this and every remaining tool call
+					// so the assistant turn stays well-formed. OpenAI-compatible
+					// servers require an assistant message with tool_calls to be
+					// followed by one tool message per tool_call_id; returning here
+					// without doing so would leave an orphaned tool call and get the
+					// next request rejected with HTTP 400.
+					for _, pending := range response.ToolCalls[i:] {
+						msg := fmt.Sprintf("Tool '%s' was cancelled: %v", pending.Name, ctx.Err())
+						a.appendToolResult(pending.ID, msg)
+					}
 					return nil, ctx.Err()
 				default:
 				}
@@ -525,17 +535,8 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 				// Add step to the list (output is already finalized)
 				steps = append(steps, step)
 
-				a.mu.Lock()
-				resultIdx := len(a.context)
-				a.context = append(a.context, &inference.Message{
-					Role:       "tool",
-					Content:    resultMessage,
-					ToolCallId: tc.ID, // Preserve the original tool call ID
-				})
-				// Track this tool result so getActualContextSizeUnlocked only
-				// counts tool messages added AFTER the last API call.
-				a.toolResultMsgsSinceLastAPI[resultIdx] = true
-				a.mu.Unlock()
+				// Add tool result to context with tool_call_id (OpenAI format)
+				a.appendToolResult(tc.ID, resultMessage)
 			}
 			continue // Loop for next iteration
 		}
@@ -655,6 +656,24 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 
 	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
 }
+
+// appendToolResult appends a tool result message for the given tool call ID to
+// the conversation context. It tracks the message as one added since the last
+// API response so the context-size delta is accounted for correctly.
+func (a *Agent) appendToolResult(toolCallID, content string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	resultIdx := len(a.context)
+	a.context = append(a.context, &inference.Message{
+		Role:       "tool",
+		Content:    content,
+		ToolCallId: toolCallID, // Preserve the original tool call ID
+	})
+	// Track this tool result so getActualContextSizeUnlocked only
+	// counts tool messages added AFTER the last API call.
+	a.toolResultMsgsSinceLastAPI[resultIdx] = true
+}
+
 
 // handleViewImage processes the result of a view_image tool call by sending the image
 // to a vision-capable model for analysis. Returns the LLM's description of the image.
