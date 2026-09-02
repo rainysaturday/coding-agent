@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -52,19 +53,71 @@ func (s *Server) Serve() error {
 }
 
 // buildMux constructs the HTTP routing for the web UI. It is factored out so
-// tests can drive the exact same routing used in production.
+// tests can drive the exact same routing used in production. All /api/ routes
+// are wrapped in an origin/content-type guard so a foreign web page cannot
+// drive tool execution on the shared session.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.route)
 	mux.HandleFunc("/assets/", s.handleAsset)
-	mux.HandleFunc("/api/state", s.handleState)
-	mux.HandleFunc("/api/history", s.handleHistory)
-	mux.HandleFunc("/api/chat", s.handleChat)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/command", s.handleCommand)
-	mux.HandleFunc("/api/cancel", s.handleCancel)
-	mux.HandleFunc("/api/reset", s.handleReset)
+	mux.HandleFunc("/api/state", s.guardAPI(s.handleState))
+	mux.HandleFunc("/api/history", s.guardAPI(s.handleHistory))
+	mux.HandleFunc("/api/chat", s.guardAPI(s.handleChat))
+	mux.HandleFunc("/api/events", s.guardAPI(s.handleEvents))
+	mux.HandleFunc("/api/command", s.guardAPI(s.handleCommand))
+	mux.HandleFunc("/api/cancel", s.guardAPI(s.handleCancel))
+	mux.HandleFunc("/api/reset", s.guardAPI(s.handleReset))
 	return mux
+}
+
+// guardAPI wraps an /api/ handler with CSRF / cross-origin protections for
+// state-changing POST requests:
+//
+//   - Requests whose Origin (or Referer) is present but does not match the
+//     server's own Host are rejected. Browsers always attach Origin to POSTs,
+//     so a foreign page cannot silently drive the shared session.
+//   - JSON endpoints require Content-Type: application/json, which forces a
+//     CORS preflight that a cross-origin page cannot satisfy.
+func (s *Server) guardAPI(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			next(w, r)
+			return
+		}
+		// Reject cross-origin browser requests.
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if !sameOrigin(origin, r) {
+				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+				return
+			}
+		} else if ref := r.Header.Get("Referer"); ref != "" {
+			if !sameOrigin(ref, r) {
+				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+				return
+			}
+		}
+		// Require JSON content type for JSON POST endpoints.
+		ct := r.Header.Get("Content-Type")
+		if ct == "" || !strings.HasPrefix(ct, "application/json") {
+			http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// sameOrigin reports whether an Origin or Referer URL points at the same
+// host:port as the request. Origin "null" (sandboxed iframes, file://) is
+// always rejected.
+func sameOrigin(ref string, r *http.Request) bool {
+	if ref == "" || ref == "null" {
+		return false
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // Shutdown gracefully shuts down the HTTP server.
