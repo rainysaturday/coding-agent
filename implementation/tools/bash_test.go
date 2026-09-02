@@ -3,6 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -458,5 +461,38 @@ func TestIsCancelled_OtherError(t *testing.T) {
 func TestIsCancelled_NilError(t *testing.T) {
 	if isCancelled(nil) {
 		t.Error("Expected isCancelled to return false for nil error")
+	}
+}
+
+// TestExecuteBash_KillsProcessGroup verifies that a timeout kills the whole
+// process group (including a forked grandchild) rather than just the bash
+// shell, leaving no orphaned process behind.
+func TestExecuteBash_KillsProcessGroup(t *testing.T) {
+	te := NewToolExecutor()
+
+	// A script that sleeps long enough that a timeout fires first. The
+	// backgrounded script is a grandchild of the bash shell; if only the shell
+	// were killed, this process would survive the timeout.
+	script := filepath.Join(t.TempDir(), "sleep_script.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	res := te.executeBash(context.Background(), map[string]interface{}{
+		"command": script + " & wait",
+		"timeout": 300.0,
+	})
+	if res.Success {
+		t.Fatal("expected timeout failure")
+	}
+	if res.ExitCode != 124 {
+		t.Errorf("expected exit code 124 for timeout, got %d", res.ExitCode)
+	}
+
+	// Allow the kill to settle, then confirm the grandchild is gone.
+	time.Sleep(150 * time.Millisecond)
+	out, _ := exec.Command("pgrep", "-f", script).Output()
+	if len(out) > 0 {
+		t.Errorf("orphaned process survived timeout: %s", out)
 	}
 }

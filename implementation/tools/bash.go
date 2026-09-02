@@ -56,6 +56,9 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 
 	go func() {
 		cmd := exec.CommandContext(ctx, "bash", "-c", command)
+		// Put the child in its own process group so cancellation kills the whole
+		// group (including grandchildren) rather than just the bash shell.
+		configureBashCommand(cmd)
 		output, err := cmd.CombinedOutput()
 		resultChan <- cmdResult{output: output, err: err}
 	}()
@@ -63,19 +66,27 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 	// Wait for either completion, timeout, or cancellation
 	select {
 	case <-ctx.Done():
+		// Collect whatever partial output the killed process produced so the
+		// timeout/cancel message can surface it instead of discarding it.
+		var partial string
+		select {
+		case res := <-resultChan:
+			partial = string(res.output)
+		case <-time.After(200 * time.Millisecond):
+		}
 		// Timeout or cancellation occurred
 		if ctx.Err() == context.DeadlineExceeded {
 			return &ToolResult{
 				Success:  false,
 				ExitCode: 124, // Convention: 124 for timeout (like GNU timeout)
-				Error:    fmt.Sprintf("command timed out after %dms (timeout exceeded). The command did not complete within the specified timeout period. Consider increasing the timeout parameter (in milliseconds) if the command needs more time, or optimizing the command to run faster.", timeoutMs),
+				Error:    fmt.Sprintf("command timed out after %dms (timeout exceeded). The command did not complete within the specified timeout period. Consider increasing the timeout parameter (in milliseconds) if the command needs more time, or optimizing the command to run faster.\nPartial output:\n%s", timeoutMs, partial),
 			}
 		}
 		if isCancelled(ctx.Err()) {
 			return &ToolResult{
 				Success:  false,
 				ExitCode: 130, // Convention: 130 for SIGINT (like bash)
-				Error:    "command was cancelled by the user",
+				Error:    fmt.Sprintf("command was cancelled by the user\nPartial output:\n%s", partial),
 			}
 		}
 		return &ToolResult{
