@@ -144,8 +144,29 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.sessions.Get(req.Session)
+	// Commands that mutate the conversation (compress, goal, reset, history,
+	// read-only) must not interleave with an in-flight run, which would produce
+	// undefined ordering and an extra billable request (I-12). Only the
+	// read-only commands are allowed while a run is in progress.
+	if sess.isRunning() && !commandSafeDuringRun(cmd) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "cannot run this command while a run is in progress"})
+		return
+	}
 	out := s.dispatchCommand(sess, cmd)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// commandSafeDuringRun reports whether a slash command may be applied while an
+// agent run is in progress. These are the read-only commands that inspect the
+// session without mutating the conversation (I-12).
+func commandSafeDuringRun(cmd string) bool {
+	full := strings.TrimPrefix(cmd, "/")
+	parts := strings.SplitN(full, " ", 2)
+	switch parts[0] {
+	case "stats", "dump":
+		return true
+	}
+	return false
 }
 
 // handleCancel cancels the current run for a session.
@@ -168,6 +189,12 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := s.sessions.Get(req.Session)
+	// Resetting while a run is in progress can drop messages the run is about
+	// to append (I-12); reject it so the client retries after the run ends.
+	if sess.isRunning() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "cannot reset while a run is in progress"})
+		return
+	}
 	sess.reset()
 	sess.broadcastEvent("state", sess.state())
 	writeJSON(w, http.StatusOK, commandResponse{OK: true, Output: "[Session reset: context, goal, and history cleared]", State: sess.state()})

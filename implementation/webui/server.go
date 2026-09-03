@@ -196,6 +196,10 @@ func (s *Server) dispatchCommand(sess *Session, command string) commandResponse 
 			output = "[Read-only mode disabled: write operations enabled]"
 		}
 	case "compress":
+		// Compress is only meaningful between runs: it issues its own inference
+		// request and rewrites the context, so it must not run concurrently with
+		// an agent run (I-12). handleCommand rejects it while a run is in
+		// progress.
 		timeout := time.Duration(sess.cfg.ReadTimeout) * time.Second
 		if timeout == 0 {
 			timeout = 24 * 60 * 60 * time.Second

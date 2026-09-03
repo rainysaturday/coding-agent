@@ -113,15 +113,21 @@ func TestHistory_AfterRealRun(t *testing.T) {
 		t.Fatalf("expected 202, got %d", rec.Code)
 	}
 
-	// Wait for the background run to finish.
+	// Wait for the background run to have produced the assistant answer. The
+	// run may start and finish within a single poll interval, so wait on the
+	// observable result (history) rather than the transient running flag.
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		st := doJSON(t, mux, http.MethodGet, "/api/state?session=e2e", nil)
-		var s stateEvent
-		if json.Unmarshal(st.Body.Bytes(), &s) == nil && !s.Running {
+	for {
+		rec = doJSON(t, mux, http.MethodGet, "/api/history?session=e2e", nil)
+		var h historyResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &h)
+		if len(h.Messages) >= 2 {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	rec = doJSON(t, mux, http.MethodGet, "/api/history?session=e2e", nil)
@@ -285,6 +291,45 @@ func TestCommand_ReadOnlyToggle(t *testing.T) {
 	}
 	if !resp.State.ReadOnly {
 		t.Error("expected ReadOnly true after /read-only")
+	}
+}
+
+
+// TestCommand_RejectedWhileRunning verifies that mutating slash commands and
+// reset are rejected with 409 while a run is in progress, while read-only
+// commands (stats, dump) are still allowed (I-12).
+func TestCommand_RejectedWhileRunning(t *testing.T) {
+	srv, mux := newTestMux(t)
+	sess := srv.sessions.Get("run")
+	sess.mu.Lock()
+	sess.running = true
+	sess.mu.Unlock()
+	defer func() {
+		sess.mu.Lock()
+		sess.running = false
+		sess.mu.Unlock()
+	}()
+
+	// Mutating commands are rejected.
+	for _, cmd := range []string{"/compress", "/goal hi", "/clear-history", "/read-only off"} {
+		rec := doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "run", Command: cmd})
+		if rec.Code != http.StatusConflict {
+			t.Errorf("command %q: expected 409, got %d", cmd, rec.Code)
+		}
+	}
+
+	// Reset is rejected while running.
+	rec := doJSON(t, mux, http.MethodPost, "/api/reset", cancelRequest{Session: "run"})
+	if rec.Code != http.StatusConflict {
+		t.Errorf("reset: expected 409, got %d", rec.Code)
+	}
+
+	// Read-only commands are still allowed.
+	for _, cmd := range []string{"/stats", "/dump"} {
+		rec := doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "run", Command: cmd})
+		if rec.Code != http.StatusOK {
+			t.Errorf("command %q: expected 200, got %d", cmd, rec.Code)
+		}
 	}
 }
 
