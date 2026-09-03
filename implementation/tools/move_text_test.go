@@ -862,3 +862,40 @@ func TestExecute_MoveText_CrossFile_AppendToExisting(t *testing.T) {
 		}
 	}
 }
+
+// TestExecute_MoveText_CrossFile_TargetWriteFailureNoDataLoss verifies that a
+// failed cross-file target write does not modify the source file. Previously
+// the source was rewritten before the target, so a failure lost the moved
+// block entirely.
+func TestExecute_MoveText_CrossFile_TargetWriteFailureNoDataLoss(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceFile := filepath.Join(tmpDir, "source.txt")
+	targetFile := filepath.Join(tmpDir, "target.txt")
+
+	os.WriteFile(sourceFile, []byte("keep\nMOVE ME\ntail\n"), 0644)
+	// Read-only target so the write fails (we are not running as root).
+	os.WriteFile(targetFile, []byte("target\n"), 0444)
+
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "move_text",
+		Parameters: map[string]interface{}{
+			"source_path":  sourceFile,
+			"source_start": 2.0,
+			"source_end":   2.0,
+			"target_path":  targetFile,
+			"target_line":  1.0,
+		},
+	})
+	if result.Success {
+		t.Fatal("expected the move to fail because the target is read-only")
+	}
+
+	srcContent, err := os.ReadFile(sourceFile)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(srcContent), "MOVE ME") {
+		t.Errorf("source was modified despite failed move: %q", string(srcContent))
+	}
+}

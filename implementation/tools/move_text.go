@@ -157,22 +157,28 @@ func (te *ToolExecutor) executeSameFileMove(mp *moveTextParams, movedLines []str
 }
 
 // executeCrossFileMove handles moving lines between different files.
+//
+// The target is written first so a failed target write leaves the source
+// untouched (no data loss). If the subsequent source write fails, the target
+// is rolled back to its original content so the move is atomic from the user's
+// perspective.
 func (te *ToolExecutor) executeCrossFileMove(mp *moveTextParams, movedLines []string, movedContent string, linesMoved int, remainingLines []string) *ToolResult {
-	// Write modified source file
-	sourceOutput := joinLines(remainingLines)
-	if err := WriteFilePreservePerm(mp.sourcePath, []byte(sourceOutput)); err != nil {
-		return &ToolResult{Success: false, Error: formatFileError(err, mp.sourcePath)}
-	}
-
-	// Prepare target file
+	// Prepare target directory (may create it). This never touches the source.
 	if err := ensureDirectory(mp.targetPath); err != nil {
 		return &ToolResult{Success: false, Error: fmt.Sprintf("cannot create directory: %v", err)}
 	}
 
+	// Read the target file if it exists (it may not).
 	var targetLines []string
+	var originalTargetContent []byte
+	targetExisted := false
 	targetContent, err := os.ReadFile(mp.targetPath)
 	if err == nil {
+		targetExisted = true
+		originalTargetContent = targetContent
 		targetLines = splitLines(string(targetContent))
+	} else if !os.IsNotExist(err) {
+		return &ToolResult{Success: false, Error: formatFileError(err, mp.targetPath)}
 	}
 
 	insertIdx := mp.targetLine - 1
@@ -189,8 +195,27 @@ func (te *ToolExecutor) executeCrossFileMove(mp *moveTextParams, movedLines []st
 	finalTargetLines = append(finalTargetLines, targetLines[insertIdx:]...)
 
 	targetOutput := joinLines(finalTargetLines)
+	sourceOutput := joinLines(remainingLines)
+
+	// Write the TARGET first so a failure here leaves the source untouched.
 	if err := WriteFilePreservePerm(mp.targetPath, []byte(targetOutput)); err != nil {
 		return &ToolResult{Success: false, Error: formatFileError(err, mp.targetPath)}
+	}
+
+	// Now write the modified source. If it fails, roll back the target so the
+	// moved block does not exist in two places (or vanish from both).
+	if err := WriteFilePreservePerm(mp.sourcePath, []byte(sourceOutput)); err != nil {
+		rollbackMsg := ""
+		if targetExisted {
+			if rerr := WriteFilePreservePerm(mp.targetPath, originalTargetContent); rerr != nil {
+				rollbackMsg = fmt.Sprintf(" (rollback failed: %v)", rerr)
+			}
+		} else {
+			if rerr := os.Remove(mp.targetPath); rerr != nil {
+				rollbackMsg = fmt.Sprintf(" (rollback failed: %v)", rerr)
+			}
+		}
+		return &ToolResult{Success: false, Error: formatFileError(err, mp.sourcePath) + rollbackMsg}
 	}
 
 	return &ToolResult{
