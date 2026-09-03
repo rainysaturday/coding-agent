@@ -457,7 +457,7 @@
     dumpBtn.addEventListener("click", function () { sendCommand("/dump"); });
 
     readonlyToggle.addEventListener("change", function () {
-      sendCommand(readonlyToggle.checked ? "/read-only" : "/read-only");
+      sendCommand(readonlyToggle.checked ? "/read-only on" : "/read-only off");
     });
 
     themeSelect.addEventListener("change", function () {

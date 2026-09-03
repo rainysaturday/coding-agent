@@ -288,6 +288,37 @@ func TestCommand_ReadOnlyToggle(t *testing.T) {
 	}
 }
 
+func TestCommand_ReadOnlyOff(t *testing.T) {
+	_, mux := newTestMux(t)
+	// Turn on, then turn off, verifying the state round-trips (I-07).
+	rec := doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "s4", Command: "/read-only on"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var on commandResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &on); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !on.State.ReadOnly {
+		t.Fatal("expected ReadOnly true after /read-only on")
+	}
+	rec = doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "s4", Command: "/read-only off"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var off commandResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &off); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if off.State.ReadOnly {
+		t.Error("expected ReadOnly false after /read-only off")
+	}
+	if !bytes.Contains([]byte(off.Output), []byte("disabled")) {
+		t.Errorf("expected disabled message, got %q", off.Output)
+	}
+}
+
+
 func TestCommand_UnknownCommand(t *testing.T) {
 	_, mux := newTestMux(t)
 	rec := doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "s5", Command: "/nope"})

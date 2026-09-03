@@ -282,7 +282,7 @@ func displayHelp() {
 	fmt.Println("  /stats       - Display runtime statistics")
 	fmt.Println("  /clear       - Clear the output display")
 	fmt.Println("  /clear-history - Clear input history")
-	fmt.Println("  /read-only   - Enable read-only mode")
+	fmt.Println("  /read-only [on|off] - Enable or disable read-only mode")
 	fmt.Println("  /dump         - Dump current context to JSON file")
 	fmt.Println("  /compress    - Manually trigger context compression")
 	fmt.Println("  /goal <prompt>    - Set a goal to guide the agent")
@@ -580,6 +580,10 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 	fullCommand := strings.TrimPrefix(input, "/")
 	parts := strings.SplitN(fullCommand, " ", 2)
 	command := parts[0]
+	arg := ""
+	if len(parts) > 1 {
+		arg = strings.TrimSpace(parts[1])
+	}
 
 	switch command {
 	case "stats":
@@ -593,8 +597,13 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 		tuiInstance.ClearHistory()
 		return input, true
 	case "read-only":
-		ag.GetToolExecutor().SetReadOnly(true)
-		fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+		on := arg != "off"
+		ag.GetToolExecutor().SetReadOnly(on)
+		if on {
+			fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+		} else {
+			fmt.Printf("%s[Read-only mode disabled: write operations enabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+		}
 		return input, true
 	case "compress":
 		fmt.Print("\n[Compressing context...]")

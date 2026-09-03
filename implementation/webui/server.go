@@ -188,8 +188,13 @@ func (s *Server) dispatchCommand(sess *Session, command string) commandResponse 
 		sess.clearHistory()
 		output = "History cleared."
 	case "read-only":
-		sess.agent.GetToolExecutor().SetReadOnly(true)
-		output = "[Read-only mode enabled: write operations disabled]"
+		on := arg != "off"
+		sess.agent.GetToolExecutor().SetReadOnly(on)
+		if on {
+			output = "[Read-only mode enabled: write operations disabled]"
+		} else {
+			output = "[Read-only mode disabled: write operations enabled]"
+		}
 	case "compress":
 		timeout := time.Duration(sess.cfg.ReadTimeout) * time.Second
 		if timeout == 0 {
