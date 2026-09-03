@@ -547,5 +547,30 @@ func AllToolDefinitions() map[string]ToolInfo {
    How to call: Use the subagent tool when you need to spawn a sub-agent for parallel tasks.
    Example use case: Running independent research tasks in parallel, having code reviewed while you continue working`,
 		},
+		"activate_skill": {
+			Definition: inference.ToolDefinition{
+				Type: "function",
+				Function: inference.FunctionDefinition{
+					Name:        "activate_skill",
+					Description: "Load a skill's instructions and bundled resources into context. Skills are discovered from the AVAILABLE SKILLS catalog.",
+					Parameters: inference.ParameterSchema{
+						Type: "object",
+						Properties: map[string]inference.Property{
+							"name": {
+								Type:        "string",
+								Description: "The name of the skill to activate (must be one of the available skills).",
+							},
+						},
+						Required: []string{"name"},
+					},
+				},
+			},
+			Description: `activate_skill
+   Description: Load a skill's instructions and bundled resources into context.
+   Parameters:
+     - name (string, required): The name of the skill to activate (must be one of the available skills).
+   How to call: Use activate_skill when a listed AVAILABLE SKILL matches the current task, to gain its specialized knowledge and workflows.
+   Example use case: Activating a "code-review" skill before reviewing a pull request`,
+		},
 	}
 }

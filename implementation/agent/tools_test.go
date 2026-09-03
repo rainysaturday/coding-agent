@@ -44,20 +44,21 @@ func TestBuildTools_Parameters(t *testing.T) {
 	toolDefs := buildTools(false, false, nil)
 
 	expectedParams := map[string][]string{
-		"bash":         {"command"},
-		"read_file":    {"path"},
-		"write_file":   {"path", "content"},
-		"read_lines":   {"path", "start", "end"},
-		"insert_lines": {"path", "line", "lines"},
-		"replace_text": {"path", "search", "replace"},
-		"move_text":    {"source_path", "source_start", "source_end", "target_path", "target_line"},
-		"list_files":   {},
-		"grep":         {"pattern"},
-		"git_log":      {},
-		"git_show":     {},
-		"git_diff":     {},
-		"view_image":   {"path"},
-		"todo":         {"action"},
+		"bash":           {"command"},
+		"read_file":      {"path"},
+		"write_file":     {"path", "content"},
+		"read_lines":     {"path", "start", "end"},
+		"insert_lines":   {"path", "line", "lines"},
+		"replace_text":   {"path", "search", "replace"},
+		"move_text":      {"source_path", "source_start", "source_end", "target_path", "target_line"},
+		"list_files":     {},
+		"grep":           {"pattern"},
+		"git_log":        {},
+		"git_show":       {},
+		"git_diff":       {},
+		"view_image":     {"path"},
+		"todo":           {"action"},
+		"activate_skill": {"name"},
 	}
 
 	for _, tool := range toolDefs {
@@ -259,8 +260,8 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true, false, nil)
 
-	// In read-only mode, should have: read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo
-	expectedNames := []string{"read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}
+	// In read-only mode, should have: activate_skill, read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo
+	expectedNames := []string{"activate_skill", "read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))

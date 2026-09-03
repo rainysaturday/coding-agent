@@ -14,6 +14,7 @@ import (
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/debug"
 	"github.com/coding-agent/harness/inference"
+	"github.com/coding-agent/harness/skills"
 	"github.com/coding-agent/harness/tools"
 	"path/filepath"
 )
@@ -29,15 +30,15 @@ type ContextSizeCallback func(size, max int)
 
 // Agent represents the coding agent.
 type Agent struct {
-	config              *config.Config
-	inference           *inference.InferenceClient
-	toolExecutor        *tools.ToolExecutor
-	context             []*inference.Message
-	iterationHistory    []Iteration // History of full contexts and stats after each turn
-	systemPrompt        string
-	stats               *Stats
-	maxIterations       int
-	streamCallback      StreamCallback
+	config           *config.Config
+	inference        *inference.InferenceClient
+	toolExecutor     *tools.ToolExecutor
+	context          []*inference.Message
+	iterationHistory []Iteration // History of full contexts and stats after each turn
+	systemPrompt     string
+	stats            *Stats
+	maxIterations    int
+	streamCallback   StreamCallback
 	// streamInference controls whether the inference API is called in streaming
 	// mode. It is separate from streamCallback so a web session can forward
 	// tool notifications via the callback while keeping inference non-streaming
@@ -68,6 +69,17 @@ type Agent struct {
 	// They are tracked alongside tool results so the pending-token delta in
 	// getActualContextSizeUnlocked accounts for them too.
 	assistantMsgsSinceLastAPI map[int]bool
+	// skillCatalog is the in-memory catalog of discovered Agent Skills. It is
+	// nil when skill discovery is disabled or no skills were found.
+	skillCatalog *skills.Catalog
+	// activatedSkills tracks which skills have been loaded into context, so
+	// repeated activation of the same skill is deduplicated.
+	activatedSkills map[string]bool
+	// skillPrompt accumulates the instructions of activated skills. It is
+	// appended to the base system prompt on every inference call, so activated
+	// skill content is exempt from context compaction (the system prompt is
+	// never pruned).
+	skillPrompt string
 }
 
 // Stats represents agent statistics.
@@ -167,6 +179,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		context:                    make([]*inference.Message, 0),
 		toolResultMsgsSinceLastAPI: make(map[int]bool),
 		assistantMsgsSinceLastAPI:  make(map[int]bool),
+		activatedSkills:            make(map[string]bool),
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
@@ -178,8 +191,16 @@ func NewAgent(cfg *config.Config) *Agent {
 	// Build system prompt, tools, and persona based on configuration
 	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly, cfg.Persona, cfg.SummaryOnly, cfg.Tools)
 
+	// Discover Agent Skills (Requirement 047). The AVAILABLE SKILLS catalog
+	// section is appended to the base system prompt when skills are found, and
+	// omitted entirely otherwise. Project-level skills are trust-gated.
+	agent.discoverSkills(cfg)
+
 	// Set read-only mode on tool executor
 	agent.toolExecutor.SetReadOnly(cfg.ReadOnly)
+
+	// Wire the activate_skill tool to the agent's skill loader.
+	agent.toolExecutor.SetSkillActivator(agent.ActivateSkill)
 
 	// Log system prompt if debug is enabled
 	if agent.debugLogger != nil {
@@ -668,7 +689,7 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	a.mu.Lock()
 	messages := make([]*inference.Message, len(a.context))
 	copy(messages, a.context)
-	systemPrompt := a.systemPrompt
+	systemPrompt := a.currentSystemPromptUnlocked()
 	streamCallback := a.streamCallback
 	streamInference := a.streamInference
 	a.mu.Unlock()
@@ -698,7 +719,6 @@ func (a *Agent) appendToolResult(toolCallID, content string) {
 	// counts tool messages added AFTER the last API call.
 	a.toolResultMsgsSinceLastAPI[resultIdx] = true
 }
-
 
 // handleViewImage processes the result of a view_image tool call by sending the image
 // to a vision-capable model for analysis. Returns the LLM's description of the image.
@@ -900,9 +920,13 @@ func (a *Agent) LoadContext(path string) error {
 	a.stats.FailedToolCalls = dump.Session.Stats.FailedToolCalls
 
 	// Reset token tracking baseline
-	a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
+	a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.currentSystemPromptUnlocked())
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
 	a.assistantMsgsSinceLastAPI = make(map[int]bool)
+	// The loaded system prompt already includes any active skill instructions,
+	// so reset the accumulated skill prompt to avoid duplication.
+	a.skillPrompt = ""
+	a.activatedSkills = make(map[string]bool)
 
 	return nil
 }

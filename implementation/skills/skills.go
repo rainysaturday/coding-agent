@@ -90,6 +90,13 @@ func (c *Catalog) add(s *Skill) (shadowed bool) {
 	return false
 }
 
+// Add inserts a skill into the catalog, returning true if it shadowed (and
+// replaced) an existing skill of the same name. It is exported for tests and
+// for programmatic catalog construction.
+func (c *Catalog) Add(s *Skill) bool {
+	return c.add(s)
+}
+
 // DiscoverOptions controls skill discovery.
 type DiscoverOptions struct {
 	// WorkingDir is the project working directory (project scope).
@@ -118,18 +125,21 @@ func Discover(opts DiscoverOptions) (*Catalog, []string) {
 	// Project scope is loaded only when the working directory is trusted.
 	if opts.WorkingDir != "" {
 		if !opts.Trusted {
-			warnings = append(warnings, fmt.Sprintf("skills: project scope skipped because the working directory is not trusted (use --trust to enable)"))
+			if hasSkillDirs(opts.WorkingDir) {
+				warnings = append(warnings, fmt.Sprintf("skills: project scope skipped because the working directory is not trusted (use --trust to enable)"))
+			}
 		} else {
 			discoverScope(catalog, opts.WorkingDir, "project", true, &warnings)
 		}
 	}
 
-	// Custom --skills-dir paths are treated as trusted user-supplied locations.
+	// Custom --skills-dir paths are treated as trusted user-supplied base
+	// directories that directly contain skill subdirectories.
 	for _, dir := range opts.SkillsDirs {
 		if dir == "" {
 			continue
 		}
-		discoverScope(catalog, dir, "custom", true, &warnings)
+		scanBaseDir(catalog, dir, "custom", &warnings)
 	}
 
 	return catalog, warnings
@@ -149,6 +159,23 @@ func discoverScope(catalog *Catalog, root, scope string, trusted bool, warnings 
 	for _, base := range baseDirs {
 		scanBaseDir(catalog, base, scope, warnings)
 	}
+}
+
+// hasSkillDirs reports whether the given root contains any candidate skill
+// base directory (e.g. <root>/.agents/skills/, <root>/skills/). It is used to
+// decide whether to warn about an untrusted project scope that actually
+// bundles skills.
+func hasSkillDirs(root string) bool {
+	for _, base := range []string{
+		filepath.Join(root, ".agents", "skills"),
+		filepath.Join(root, "skills"),
+		filepath.Join(root, ".claude", "skills"),
+	} {
+		if info, err := os.Stat(base); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // scanBaseDir scans a single skill base directory (e.g. .agents/skills/) for

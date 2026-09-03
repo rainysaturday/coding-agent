@@ -58,6 +58,10 @@ type ToolExecutor struct {
 	readOnly  bool
 	todoStore *TodoStore
 	stats     *Stats
+	// activateSkill, when set, is called by the activate_skill tool to load a
+	// skill's instructions into the agent's context. It is wired by the agent so
+	// the tools package does not depend on the agent package (no import cycle).
+	activateSkill func(name string) (string, error)
 }
 
 // NewToolExecutor creates a new tool executor.
@@ -66,6 +70,11 @@ func NewToolExecutor() *ToolExecutor {
 		stats:     &Stats{},
 		todoStore: NewTodoStore(),
 	}
+}
+
+// SetSkillActivator registers the callback used by the activate_skill tool.
+func (te *ToolExecutor) SetSkillActivator(fn func(name string) (string, error)) {
+	te.activateSkill = fn
 }
 
 // SetReadOnly sets the read-only mode.
@@ -192,6 +201,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 		result = te.executeViewImage(tc.Parameters)
 	case "todo":
 		result = te.executeTodo(tc.Parameters)
+	case "activate_skill":
+		result = te.executeActivateSkill(tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,
@@ -209,16 +220,18 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, git_show, and view_image are safe read-only operations.
 // todo is also allowed since add/complete/remove are blocked by earlier per-action check.
+// activate_skill is read-only (it only loads instructions into context).
 var readOnlyTools = map[string]bool{
-	"read_file":  true,
-	"list_files": true,
-	"read_lines": true,
-	"grep":       true,
-	"git_log":    true,
-	"git_show":   true,
-	"git_diff":   true,
-	"view_image": true,
-	"todo":       true,
+	"read_file":      true,
+	"list_files":     true,
+	"read_lines":     true,
+	"grep":           true,
+	"git_log":        true,
+	"git_show":       true,
+	"git_diff":       true,
+	"view_image":     true,
+	"todo":           true,
+	"activate_skill": true,
 }
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
@@ -229,6 +242,7 @@ func isReadOnlyTool(name string) bool {
 // AllToolNames returns a sorted list of all available tool names.
 func AllToolNames() []string {
 	return []string{
+		"activate_skill",
 		"bash",
 		"grep",
 		"git_diff",
@@ -250,6 +264,7 @@ func AllToolNames() []string {
 // DefaultNormalTools returns the default set of tool names for normal mode.
 func DefaultNormalTools() []string {
 	return []string{
+		"activate_skill",
 		"bash",
 		"read_file",
 		"read_lines",
@@ -270,6 +285,7 @@ func DefaultNormalTools() []string {
 // DefaultReadOnlyTools returns the default set of tool names for read-only mode.
 func DefaultReadOnlyTools() []string {
 	return []string{
+		"activate_skill",
 		"read_file",
 		"read_lines",
 		"list_files",

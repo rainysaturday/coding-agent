@@ -660,9 +660,24 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 			fmt.Printf("%s[Context dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
 		}
 		return input, true
+	case "skill":
+		if arg == "" {
+			fmt.Printf("%sUsage: /skill <name>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+			return input, true
+		}
+		out, err := ag.ActivateSkill(arg)
+		if err != nil {
+			fmt.Printf("%s[Skill activation failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
+		} else {
+			fmt.Printf("%s[Skill: %s]%s\n", colors.GetColor("cyan"), out, colors.GetColor("reset"))
+		}
+		return input, true
+	case "skills":
+		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), ag.ListSkills(), colors.GetColor("reset"))
+		return input, true
 	default:
 		fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 		return input, true
 	}
 }

@@ -138,26 +138,29 @@ func TestBuildSystemPrompt_ReadOnly(t *testing.T) {
 		t.Error("Read-only system prompt should mention READ-ONLY MODE")
 	}
 
-	// Should mention read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
-	if !strings.Contains(prompt, "1. read_file") {
+	// Should mention activate_skill, read_file, read_lines, list_files, grep, git_log, git_show, and git_diff
+	if !strings.Contains(prompt, "1. activate_skill") {
+		t.Error("Read-only system prompt should list activate_skill")
+	}
+	if !strings.Contains(prompt, "2. read_file") {
 		t.Error("Read-only system prompt should list read_file")
 	}
-	if !strings.Contains(prompt, "2. read_lines") {
+	if !strings.Contains(prompt, "3. read_lines") {
 		t.Error("Read-only system prompt should list read_lines")
 	}
-	if !strings.Contains(prompt, "3. list_files") {
+	if !strings.Contains(prompt, "4. list_files") {
 		t.Error("Read-only system prompt should list list_files")
 	}
-	if !strings.Contains(prompt, "4. grep") {
+	if !strings.Contains(prompt, "5. grep") {
 		t.Error("Read-only system prompt should list grep")
 	}
-	if !strings.Contains(prompt, "5. git_log") {
+	if !strings.Contains(prompt, "6. git_log") {
 		t.Error("Read-only system prompt should list git_log")
 	}
-	if !strings.Contains(prompt, "6. git_show") {
+	if !strings.Contains(prompt, "7. git_show") {
 		t.Error("Read-only system prompt should list git_show")
 	}
-	if !strings.Contains(prompt, "7. git_diff") {
+	if !strings.Contains(prompt, "8. git_diff") {
 		t.Error("Read-only system prompt should list git_diff")
 	}
 

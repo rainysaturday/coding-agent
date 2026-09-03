@@ -30,7 +30,7 @@ func (a *Agent) recordIterationUnlocked() {
 	fullContext := make([]*inference.Message, 0, 1+len(a.context))
 	fullContext = append(fullContext, &inference.Message{
 		Role:    "system",
-		Content: a.systemPrompt,
+		Content: a.currentSystemPromptUnlocked(),
 	})
 
 	// Deep copy messages
@@ -190,7 +190,7 @@ func (a *Agent) getActualContextSizeUnlocked() int {
 		return a.lastTotalTokens + delta
 	}
 	// No API response yet, estimate from scratch
-	return inference.EstimateContextSize(a.context, a.inference.GetTools(), a.systemPrompt)
+	return inference.EstimateContextSize(a.context, a.inference.GetTools(), a.currentSystemPromptUnlocked())
 }
 
 // shouldCompress checks if context compression is needed based on actual context window usage.
@@ -324,7 +324,7 @@ func (a *Agent) compressContext(ctx context.Context) error {
 	// context size reporting remains consistent until the next API response.
 	// This prevents a temporary distortion where getActualContextSizeUnlocked()
 	// falls back to a rough EstimateContextSize() heuristic.
-	a.lastTotalTokens = inference.EstimateContextSize(newContext, a.inference.GetTools(), a.systemPrompt)
+	a.lastTotalTokens = inference.EstimateContextSize(newContext, a.inference.GetTools(), a.currentSystemPromptUnlocked())
 
 	// Reset tool result tracking since the context has been rebuilt.
 	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
