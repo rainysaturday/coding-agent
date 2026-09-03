@@ -37,6 +37,7 @@ type Session struct {
 	running   bool
 	runCancel context.CancelFunc
 	theme     string
+	lastActive time.Time // last activity, used for idle reaping
 }
 
 // DefaultSessionID is the shared session used by every anonymous connection.
@@ -76,6 +77,7 @@ func (m *SessionManager) Get(id string) *Session {
 		id = DefaultSessionID
 	}
 	if s, ok := m.sessions[id]; ok {
+		s.touch()
 		return s
 	}
 	s := newSession(m.cfg, id, m.theme)
@@ -90,7 +92,9 @@ func (m *SessionManager) GetOrCreate(id string) *Session {
 }
 
 // Reap removes sessions idle for longer than timeout. It is safe to call
-// periodically; it never removes the most recently used session.
+// periodically; it never removes the most recently used session and never
+// reaps a session with a run in progress. Subscribers of a reaped session are
+// closed so reconnecting browsers terminate cleanly.
 func (m *SessionManager) Reap(timeout time.Duration) {
 	cutoff := time.Now().Add(-timeout)
 	m.mu.Lock()
@@ -98,14 +102,24 @@ func (m *SessionManager) Reap(timeout time.Duration) {
 	for id, s := range m.sessions {
 		s.mu.Lock()
 		busy := s.running
+		lastActive := s.lastActive
 		s.mu.Unlock()
-		// We don't track last-activity precisely here; a simple heuristic keeps
-		// sessions that are still running and prunes others. To keep the agent's
-		// long-lived interactive model intact, reaping is opt-in via the server
-		// and defaults to a very long timeout (see Server).
-		if !busy && s.idleSince().Before(cutoff) {
+		if !busy && lastActive.Before(cutoff) {
+			// Close subscribers so their SSE loops exit.
+			s.removeAllSubscribers()
 			delete(m.sessions, id)
 		}
+	}
+}
+
+// removeAllSubscribers deregisters and stops every SSE subscriber of the
+// session. The caller must not hold s.mu.
+func (s *Session) removeAllSubscribers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sub := range s.subs {
+		delete(s.subs, sub)
+		close(sub.stop)
 	}
 }
 
@@ -115,13 +129,14 @@ func newSession(cfg *config.Config, id, theme string) *Session {
 	// Track context size in the session state so /api/state can report it.
 	ag.SetContextSizeCallback(func(size, max int) {})
 	s := &Session{
-		ID:      id,
-		agent:   ag,
-		cfg:     cfg,
-		subs:    make(map[*subscriber]struct{}),
-		history: make([]string, 0),
-		maxHist: 100,
-		theme:   theme,
+		ID:         id,
+		agent:      ag,
+		cfg:        cfg,
+		subs:       make(map[*subscriber]struct{}),
+		history:    make([]string, 0),
+		maxHist:    100,
+		theme:      theme,
+		lastActive: time.Now(),
 	}
 	if val := cfg.ContextFile; val != "" {
 		_ = ag.LoadContext(val)
@@ -132,12 +147,12 @@ func newSession(cfg *config.Config, id, theme string) *Session {
 	return s
 }
 
-// idleSince returns a conservative idle timestamp. Because the agent may hold
-// long-lived state, we treat the session as idle only when not running and
-// simply use the current time (so Reap only removes sessions once the server
-// has shut down, unless overridden). This keeps the default behavior safe.
-func (s *Session) idleSince() time.Time {
-	return time.Now()
+// touch records that the session was recently active, so idle reaping leaves
+// it alone.
+func (s *Session) touch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastActive = time.Now()
 }
 
 // addSubscriber registers an SSE subscriber and returns it.
@@ -180,6 +195,7 @@ func (s *Session) broadcast(event, data string) {
 func (s *Session) addToHistory(prompt string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastActive = time.Now()
 	trimmed := strings.TrimSpace(prompt)
 	if trimmed == "" {
 		return
@@ -246,6 +262,7 @@ func (s *Session) isRunning() bool {
 
 // state builds a stateEvent for the session.
 func (s *Session) state() stateEvent {
+	s.touch()
 	ag := s.agent
 	st := s.cfg
 	return stateEvent{
@@ -274,6 +291,7 @@ func (s *Session) run(ctx context.Context, prompt string) error {
 		return fmt.Errorf("a run is already in progress for this session")
 	}
 	s.running = true
+	s.lastActive = time.Now()
 	runCtx, cancel := context.WithCancel(ctx)
 	s.runCancel = cancel
 	s.mu.Unlock()

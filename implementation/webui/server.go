@@ -19,6 +19,7 @@ type Server struct {
 	sessions *SessionManager
 	baseCtx  context.Context
 	httpSrv  *http.Server
+	reapStop chan struct{} // closed on shutdown to stop the session reaper
 }
 
 // NewServer creates a web UI server from a config.
@@ -27,6 +28,7 @@ func NewServer(cfg *config.Config) *Server {
 		cfg:      cfg,
 		sessions: NewSessionManager(cfg),
 		baseCtx:  context.Background(),
+		reapStop: make(chan struct{}),
 	}
 }
 
@@ -40,6 +42,11 @@ func (s *Server) Serve() error {
 	s.httpSrv = &http.Server{
 		Addr:    addr,
 		Handler: mux,
+	}
+
+	// Start the session reaper so idle sessions are GC'd (requirement 046).
+	if timeout := s.cfg.WebSessionIdleTimeout; timeout > 0 {
+		go s.reapSessions(time.Duration(timeout) * time.Second)
 	}
 
 	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
@@ -122,10 +129,32 @@ func sameOrigin(ref string, r *http.Request) bool {
 
 // Shutdown gracefully shuts down the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
+	select {
+	case <-s.reapStop:
+		// already stopped
+	default:
+		close(s.reapStop)
+	}
 	if s.httpSrv != nil {
 		return s.httpSrv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// reapSessions periodically removes idle sessions until the server is shut
+// down, bounding memory per requirement 046 ("sessions are GC'd after an idle
+// timeout").
+func (s *Server) reapSessions(timeout time.Duration) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.reapStop:
+			return
+		case <-t.C:
+			s.sessions.Reap(timeout)
+		}
+	}
 }
 
 // route dispatches the root path: serve the SPA at "/", JSON otherwise.

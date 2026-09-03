@@ -84,9 +84,10 @@ type Config struct {
 	Theme string
 
 	// Web UI settings
-	Web     bool   // When true, start the web UI server instead of the terminal UI
-	WebAddr string // Listen address for the web UI (default: 127.0.0.1)
-	WebPort int    // Listen port for the web UI (default: 8080)
+	Web                  bool   // When true, start the web UI server instead of the terminal UI
+	WebAddr              string // Listen address for the web UI (default: 127.0.0.1)
+	WebPort              int    // Listen port for the web UI (default: 8080)
+	WebSessionIdleTimeout int   // Idle timeout for web sessions in seconds (0 disables reaping)
 
 	// Persona settings
 	Persona     string
@@ -124,6 +125,7 @@ func DefaultConfig() *Config {
 		DebugLog:            "debug.log",
 		WebAddr:             "127.0.0.1",
 		WebPort:             8080,
+		WebSessionIdleTimeout: 1800, // 30 minutes; 0 disables reaping
 	}
 }
 
@@ -354,6 +356,16 @@ func ParseArgs(args []string) (*Config, error) {
 				return nil, fmt.Errorf("invalid web-port: %v", err)
 			}
 			cfg.WebPort = webPort
+		case "--web-session-idle-timeout":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--web-session-idle-timeout requires an argument")
+			}
+			i++
+			idleTimeout, err := strconv.Atoi(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("invalid web-session-idle-timeout: %v", err)
+			}
+			cfg.WebSessionIdleTimeout = idleTimeout
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -577,6 +589,11 @@ func loadEnv(cfg *Config) {
 			cfg.WebPort = v
 		}
 	}
+	if val := os.Getenv("CODING_AGENT_WEB_SESSION_IDLE_TIMEOUT"); val != "" {
+		if v, err := strconv.Atoi(val); err == nil {
+			cfg.WebSessionIdleTimeout = v
+		}
+	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a GitHub
 	// Copilot or GitHub Models URL (both accept GitHub tokens).
@@ -611,6 +628,9 @@ func (c *Config) Validate() error {
 	}
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("web port must be between 1 and 65535")
+	}
+	if c.WebSessionIdleTimeout < 0 {
+		return fmt.Errorf("web session idle timeout must be >= 0 seconds")
 	}
 	return nil
 }
