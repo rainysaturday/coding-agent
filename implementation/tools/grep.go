@@ -167,7 +167,13 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 					return nil
 				}
 				if !gp.flags["a"] {
-					if strings.HasPrefix(fileInfo.Name(), ".") && strings.Count(filePath, "/") > 0 {
+					// Skip hidden files and directories, but never the search root
+					// itself (which may itself be hidden, e.g. path=".config").
+					// Comparing against the root with filepath.Rel avoids the
+					// absolute-path bug where strings.Count(filePath, "/") > 0 is
+					// always true for a rooted path (I-13).
+					rel, relErr := filepath.Rel(gp.path, filePath)
+					if relErr == nil && rel != "." && strings.HasPrefix(fileInfo.Name(), ".") {
 						if fileInfo.IsDir() {
 							return filepath.SkipDir
 						}

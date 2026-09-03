@@ -556,3 +556,33 @@ func TestToolExecutor_ReadOnly_Statistics(t *testing.T) {
 		t.Errorf("Expected 1 failed call, got %d", stats.FailedCalls)
 	}
 }
+
+func TestExecute_Grep_SearchesHiddenRoot(t *testing.T) {
+	te := NewToolExecutor()
+	dir := t.TempDir()
+	// The search root itself is hidden (e.g. a ".config" or ".git" directory).
+	// It must still be searched even with -a (include-hidden) disabled, because
+	// the root is not "inside" itself (I-13).
+	root := filepath.Join(dir, ".hidden")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "f.txt"), []byte("needle here\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res := te.Execute(context.Background(), &ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "needle",
+			"path":    root,
+			"flags":   []interface{}{"r"},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("grep failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Output, "needle") {
+		t.Errorf("expected hidden root to be searched, got output: %q", res.Output)
+	}
+}

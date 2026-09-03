@@ -986,3 +986,57 @@ func TestWriteFilePreservePerm(t *testing.T) {
 		t.Errorf("new file permissions = %v, want %v", got, FilePermWrite)
 	}
 }
+
+func TestExecute_StringNumericParams_ReportTypeError(t *testing.T) {
+	te := NewToolExecutor()
+	dir := t.TempDir()
+	fileA := filepath.Join(dir, "a.txt")
+	fileB := filepath.Join(dir, "b.txt")
+	if err := os.WriteFile(fileA, []byte("a\nb\nc\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileB, []byte("x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A model sending a genuinely non-numeric value must be told the type is
+	// wrong, not that the parameter is "missing" (I-13).
+	cases := []struct {
+		name   string
+		tool   string
+		params map[string]interface{}
+		want   string
+	}{
+		{"insert_lines line", "insert_lines", map[string]interface{}{"path": fileA, "line": "abc", "lines": "a"}, "line must be a number, got string"},
+		{"read_lines start", "read_lines", map[string]interface{}{"path": fileA, "start": "abc", "end": 2}, "start must be a number, got string"},
+		{"read_lines end", "read_lines", map[string]interface{}{"path": fileA, "start": 1, "end": "abc"}, "end must be a number, got string"},
+		{"move_text source_start", "move_text", map[string]interface{}{"source_path": fileA, "source_start": "abc", "source_end": 2, "target_path": fileB, "target_line": 1}, "source_start must be a number, got string"},
+		{"move_text source_end", "move_text", map[string]interface{}{"source_path": fileA, "source_start": 1, "source_end": "abc", "target_path": fileB, "target_line": 1}, "source_end must be a number, got string"},
+		{"move_text target_line", "move_text", map[string]interface{}{"source_path": fileA, "source_start": 1, "source_end": 2, "target_path": fileB, "target_line": "abc"}, "target_line must be a number, got string"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := te.Execute(context.Background(), &ToolCall{Name: c.tool, Parameters: c.params})
+			if res.Success {
+				t.Fatalf("expected failure, got success: %s", res.Output)
+			}
+			if !strings.Contains(res.Error, c.want) {
+				t.Errorf("error %q does not contain %q", res.Error, c.want)
+			}
+		})
+	}
+
+	// A numeric string ("5") is accepted as a valid integer, not rejected.
+	for _, c := range []struct {
+		tool   string
+		params map[string]interface{}
+	}{
+		{"read_lines", map[string]interface{}{"path": fileA, "start": "1", "end": "2"}},
+		{"insert_lines", map[string]interface{}{"path": fileA, "line": "1", "lines": "z"}},
+	} {
+		res := te.Execute(context.Background(), &ToolCall{Name: c.tool, Parameters: c.params})
+		if strings.Contains(res.Error, "must be a number") {
+			t.Errorf("%s: numeric string rejected as non-numeric: %q", c.tool, res.Error)
+		}
+	}
+}

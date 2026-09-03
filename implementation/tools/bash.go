@@ -95,11 +95,16 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 			Error:    fmt.Sprintf("command failed with context error: %v", ctx.Err()),
 		}
 	case res := <-resultChan:
-		// Extract exit code
+		// Extract exit code. If the process could not be started at all (e.g.
+		// the shell binary was missing), the error is not an *exec.ExitError, so
+		// fall back to the conventional 127 ("command not found") rather than
+		// reporting a successful run with ExitCode 0 (I-13).
 		exitCode := 0
 		if res.err != nil {
 			if exitError, ok := res.err.(*exec.ExitError); ok {
 				exitCode = exitError.ExitCode()
+			} else {
+				exitCode = 127
 			}
 		}
 

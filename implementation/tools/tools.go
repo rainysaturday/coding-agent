@@ -131,10 +131,10 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 	te.stats.TotalCalls++
 
 	// Special handling for todo tool in read-only mode:
-	// add and complete are write actions that are blocked, but list and remove are allowed
+	// add, complete, and remove are write actions that are blocked, but list is allowed
 	if te.readOnly && tc.Name == "todo" {
 		if action, ok := tc.Parameters["action"].(string); ok {
-			if action == "add" || action == "complete" {
+			if action == "add" || action == "complete" || action == "remove" {
 				te.stats.FailedCalls++
 				return &ToolResult{
 					Success: false,
@@ -208,7 +208,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
 // read_file, list_files, read_lines, grep, git_log, git_show, and view_image are safe read-only operations.
-// todo is also allowed since add/complete are blocked by earlier per-action check.
+// todo is also allowed since add/complete/remove are blocked by earlier per-action check.
 var readOnlyTools = map[string]bool{
 	"read_file":  true,
 	"list_files": true,

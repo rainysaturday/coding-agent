@@ -32,6 +32,10 @@ const (
 type StreamingChunk struct {
 	Text        string
 	ContentType StreamingContentType
+	// IsToolCall marks chunks that describe a tool call (name or argument
+	// update). This is a typed signal so consumers do not have to sniff the
+	// "[Tool Call] " text prefix (I-13).
+	IsToolCall bool
 }
 
 // StreamingCallbackWithType is a function type for handling streaming chunks with content type.

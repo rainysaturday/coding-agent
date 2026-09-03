@@ -406,7 +406,7 @@ func TestToolExecutor_ReadOnly_TodoListAllowed(t *testing.T) {
 	}
 }
 
-func TestToolExecutor_ReadOnly_TodoRemoveAllowed(t *testing.T) {
+func TestToolExecutor_ReadOnly_TodoRemoveBlocked(t *testing.T) {
 	te := NewToolExecutor()
 	te.SetReadOnly(true)
 
@@ -417,9 +417,12 @@ func TestToolExecutor_ReadOnly_TodoRemoveAllowed(t *testing.T) {
 			"id":     1.0,
 		},
 	})
-	// Remove is allowed in read-only mode
-	if result.Error != "" && strings.Contains(result.Error, "not available in read-only mode") {
-		t.Error("Expected todo remove to be allowed in read-only mode")
+	// Remove is a write action, so it must be blocked in read-only mode.
+	if result.Success {
+		t.Error("Expected todo remove to fail in read-only mode")
+	}
+	if !strings.Contains(result.Error, "not available in read-only mode") {
+		t.Errorf("Expected 'not available in read-only mode' error, got: %s", result.Error)
 	}
 }
 

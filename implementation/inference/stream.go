@@ -127,6 +127,7 @@ func (ss *streamState) processToolCallDelta(deltaTC *APIToolCall) {
 		ss.callback(StreamingChunk{
 			Text:        notification,
 			ContentType: StreamingContentTypeNormal,
+			IsToolCall:  true,
 		})
 		ss.notifiedCalls[targetIndex] = true
 	}
@@ -156,6 +157,7 @@ func (ss *streamState) processToolCallDelta(deltaTC *APIToolCall) {
 		ss.callback(StreamingChunk{
 			Text:        argsUpdate,
 			ContentType: StreamingContentTypeNormal,
+			IsToolCall:  true,
 		})
 	}
 }

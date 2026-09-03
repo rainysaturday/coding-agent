@@ -27,24 +27,21 @@ func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolRes
 		}
 	}
 
-	startVal, ok := params["start"].(float64)
-	if !ok {
+	startLine, errMsg := parseIntParamStrict(params, "start")
+	if errMsg != "" {
 		return &ToolResult{
 			Success: false,
-			Error:   "parameter 'start' must be a number",
+			Error:   errMsg,
 		}
 	}
 
-	endVal, ok := params["end"].(float64)
-	if !ok {
+	endLine, errMsg := parseIntParamStrict(params, "end")
+	if errMsg != "" {
 		return &ToolResult{
 			Success: false,
-			Error:   "parameter 'end' must be a number",
+			Error:   errMsg,
 		}
 	}
-
-	startLine := int(startVal)
-	endLine := int(endVal)
 
 	// Validate start and end are positive (1-indexed line numbers)
 	if startLine < 1 {

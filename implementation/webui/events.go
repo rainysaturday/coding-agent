@@ -7,16 +7,6 @@ package webui
 
 import (
 	"github.com/coding-agent/harness/agent"
-	"github.com/coding-agent/harness/inference"
-)
-
-// Content type constants mirroring inference.StreamingContentType, exposed to the
-// frontend as integers over the wire.
-const (
-	contentNormal      = inference.StreamingContentTypeNormal
-	contentReasoning   = inference.StreamingContentTypeReasoning
-	contentGoal        = inference.StreamingContentTypeGoal
-	contentCompression = inference.StreamingContentTypeCompression
 )
 
 // chunkEvent is sent for each streamed token/text fragment.

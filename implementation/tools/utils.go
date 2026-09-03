@@ -23,7 +23,8 @@ const (
 const (
 	// MaxDisplayOutput is the maximum number of characters for display output (used by list_files).
 	MaxDisplayOutput = 500
-	// MaxToolOutput is the maximum number of characters for tool result output (used by grep, git_log, git_show, git_diff).
+	// MaxToolOutput is the maximum number of characters for tool result output
+	// before it is truncated for display (used by agent_format.go).
 	MaxToolOutput = 1000
 )
 
@@ -145,6 +146,29 @@ func parseIntParam(params map[string]interface{}, key string, defaultValue int) 
 	return defaultValue
 }
 
+// parseIntParamStrict extracts an integer from a map parameter value, returning
+// a descriptive error if the parameter is missing or not an integer. Unlike the
+// lenient parseIntParam, it reports "must be a number, got <type>" instead of a
+// misleading "missing required parameter" when a model sends a string like "5"
+// (I-13).
+func parseIntParamStrict(params map[string]interface{}, key string) (int, string) {
+	v, ok := params[key]
+	if !ok {
+		return 0, fmt.Sprintf("missing required parameter: %s", key)
+	}
+	switch val := v.(type) {
+	case float64:
+		return int(val), ""
+	case int:
+		return val, ""
+	case string:
+		if i, err := strconv.Atoi(val); err == nil {
+			return i, ""
+		}
+	}
+	return 0, fmt.Sprintf("%s must be a number, got %T", key, v)
+}
+
 // ensureDirectory creates parent directories if needed for a file path.
 func ensureDirectory(path string) error {
 	dir := filepath.Dir(path)
@@ -152,14 +176,6 @@ func ensureDirectory(path string) error {
 		return os.MkdirAll(dir, FilePermDir)
 	}
 	return nil
-}
-
-// truncateLargeOutput truncates output to max bytes and adds a truncation marker.
-func truncateLargeOutput(output string, maxBytes int) string {
-	if len(output) <= maxBytes {
-		return output
-	}
-	return output[:maxBytes] + "\n... [output truncated due to size]"
 }
 
 // parseFlagValue extracts the value portion from a flag like "flag=value" or "flag".

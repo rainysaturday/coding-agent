@@ -405,3 +405,31 @@ func TestParseFlagsParamToMap(t *testing.T) {
 		t.Errorf("Expected empty map without flags param, got %v", got)
 	}
 }
+
+func TestParseIntParamStrict(t *testing.T) {
+	// Numeric forms are accepted.
+	if v, err := parseIntParamStrict(map[string]interface{}{"n": 5.0}, "n"); err != "" || v != 5 {
+		t.Errorf("float64: got (%d, %q), want (5, \"\")", v, err)
+	}
+	if v, err := parseIntParamStrict(map[string]interface{}{"n": 7}, "n"); err != "" || v != 7 {
+		t.Errorf("int: got (%d, %q), want (7, \"\")", v, err)
+	}
+	if v, err := parseIntParamStrict(map[string]interface{}{"n": "9"}, "n"); err != "" || v != 9 {
+		t.Errorf("numeric string: got (%d, %q), want (9, \"\")", v, err)
+	}
+
+	// Missing parameter reports "missing required parameter".
+	if _, err := parseIntParamStrict(map[string]interface{}{}, "n"); !strings.Contains(err, "missing required parameter: n") {
+		t.Errorf("missing: got %q, want 'missing required parameter: n'", err)
+	}
+
+	// Non-numeric string reports a type-aware error, not "missing".
+	if _, err := parseIntParamStrict(map[string]interface{}{"n": "abc"}, "n"); !strings.Contains(err, "n must be a number, got string") {
+		t.Errorf("bad string: got %q, want type-aware error", err)
+	}
+
+	// Wrong type reports a type-aware error.
+	if _, err := parseIntParamStrict(map[string]interface{}{"n": true}, "n"); !strings.Contains(err, "n must be a number, got bool") {
+		t.Errorf("bad type: got %q, want type-aware error", err)
+	}
+}

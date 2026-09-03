@@ -29,29 +29,29 @@ func parseMoveTextParams(params map[string]interface{}) (*moveTextParams, *ToolR
 	if !ok {
 		return nil, &ToolResult{Success: false, Error: "missing required parameter: source_path"}
 	}
-	sourceStartF, ok := params["source_start"].(float64)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: source_start"}
+	sourceStart, errMsg := parseIntParamStrict(params, "source_start")
+	if errMsg != "" {
+		return nil, &ToolResult{Success: false, Error: errMsg}
 	}
-	sourceEndF, ok := params["source_end"].(float64)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: source_end"}
+	sourceEnd, errMsg := parseIntParamStrict(params, "source_end")
+	if errMsg != "" {
+		return nil, &ToolResult{Success: false, Error: errMsg}
 	}
 	targetPath, ok := params["target_path"].(string)
 	if !ok {
 		return nil, &ToolResult{Success: false, Error: "missing required parameter: target_path"}
 	}
-	targetLineF, ok := params["target_line"].(float64)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: target_line"}
+	targetLine, errMsg := parseIntParamStrict(params, "target_line")
+	if errMsg != "" {
+		return nil, &ToolResult{Success: false, Error: errMsg}
 	}
 
 	mp := &moveTextParams{
 		sourcePath:  sourcePath,
-		sourceStart: int(sourceStartF),
-		sourceEnd:   int(sourceEndF),
+		sourceStart: sourceStart,
+		sourceEnd:   sourceEnd,
 		targetPath:  targetPath,
-		targetLine:  int(targetLineF),
+		targetLine:  targetLine,
 	}
 
 	// Validate line number constraints

@@ -87,12 +87,6 @@ func (m *SessionManager) Get(id string) *Session {
 	return s
 }
 
-// GetOrCreate returns the session with the given id, or creates it if absent.
-// If id is empty, the shared default session is returned.
-func (m *SessionManager) GetOrCreate(id string) *Session {
-	return m.Get(id)
-}
-
 // Reap removes sessions idle for longer than timeout. It is safe to call
 // periodically; it never removes the most recently used session and never
 // reaps a session with a run in progress. Subscribers of a reaped session are
@@ -128,8 +122,6 @@ func (s *Session) removeAllSubscribers() {
 // newSession builds a Session with a fresh agent from cfg.
 func newSession(cfg *config.Config, id, theme string) *Session {
 	ag := agent.NewAgent(cfg)
-	// Track context size in the session state so /api/state can report it.
-	ag.SetContextSizeCallback(func(size, max int) {})
 	s := &Session{
 		ID:         id,
 		agent:      ag,
@@ -337,7 +329,7 @@ func (s *Session) run(ctx context.Context, prompt string) error {
 		s.broadcastEvent("chunk", chunkEvent{
 			Text:        chunk.Text,
 			ContentType: int(chunk.ContentType),
-			IsToolCall:  strings.HasPrefix(chunk.Text, "[Tool Call] "),
+			IsToolCall:  chunk.IsToolCall,
 		})
 	}
 	if s.cfg.Streaming {

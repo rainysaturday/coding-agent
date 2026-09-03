@@ -696,3 +696,24 @@ data: [DONE]
 		t.Errorf("Expected 'Hello world', got %q", result.Content)
 	}
 }
+
+func TestStreamingChunk_IsToolCallField(t *testing.T) {
+	// Tool-call notification chunks carry a typed IsToolCall flag so consumers
+	// do not need to sniff the "[Tool Call] " text prefix (I-13).
+	chunk := StreamingChunk{
+		Text:        "[Tool Call] bash",
+		ContentType: StreamingContentTypeNormal,
+		IsToolCall:  true,
+	}
+	if !chunk.IsToolCall {
+		t.Error("expected IsToolCall to be true for a tool-call chunk")
+	}
+
+	plain := StreamingChunk{
+		Text:        "plain assistant text",
+		ContentType: StreamingContentTypeNormal,
+	}
+	if plain.IsToolCall {
+		t.Error("expected IsToolCall to be false for a normal chunk")
+	}
+}

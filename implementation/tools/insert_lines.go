@@ -18,11 +18,11 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 		}
 	}
 
-	lineNum, ok := params["line"].(float64)
-	if !ok {
+	insertLine, errMsg := parseIntParamStrict(params, "line")
+	if errMsg != "" {
 		return &ToolResult{
 			Success: false,
-			Error:   "missing required parameter: line",
+			Error:   errMsg,
 		}
 	}
 
@@ -34,7 +34,6 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 		}
 	}
 
-	insertLine := int(lineNum)
 	// Use splitLines (which strips a trailing empty element) so inserted text
 	// ending in a newline is handled consistently with the file's existing
 	// content, rather than inserting an extra empty line.
