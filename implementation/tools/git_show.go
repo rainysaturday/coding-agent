@@ -140,7 +140,7 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 	}
 
 	if len(resultStr) > 50000 {
-		resultStr = resultStr[:50000] + "\n... [output truncated due to size]"
+		resultStr = TruncateBytesAtRuneBoundary(resultStr, 50000, "\n... [output truncated due to size]")
 	}
 
 	return &ToolResult{

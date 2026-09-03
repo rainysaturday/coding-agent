@@ -328,6 +328,28 @@ func TestExecuteCtx_Bash_Cancelled(t *testing.T) {
 	}
 }
 
+
+func TestTruncateBytesAtRuneBoundary(t *testing.T) {
+	// A 2-byte UTF-8 character whose cut lands mid-rune must not be split (I-11).
+	// "ä" is 0xC3 0xA9. Repeating it and cutting at an odd byte offset used to
+	// leave a lone continuation byte.
+	for _, maxBytes := range []int{1, 3, 5, 7} {
+		out := TruncateBytesAtRuneBoundary(strings.Repeat("ä", 20), maxBytes, "...")
+		if !utf8.ValidString(out) {
+			t.Errorf("TruncateBytesAtRuneBoundary(maxBytes=%d) produced invalid UTF-8: %q", maxBytes, out)
+		}
+	}
+	// ASCII truncation appends the suffix.
+	got := TruncateBytesAtRuneBoundary("abcdef", 3, "...")
+	if got != "abc..." {
+		t.Errorf("TruncateBytesAtRuneBoundary = %q, want %q", got, "abc...")
+	}
+	// Short strings are returned unchanged.
+	if got := TruncateBytesAtRuneBoundary("hi", 10, "..."); got != "hi" {
+		t.Errorf("TruncateBytesAtRuneBoundary(short) = %q, want %q", got, "hi")
+	}
+}
+
 func TestTruncateRunes(t *testing.T) {
 	// A 3-byte CJK character should not be split in the middle.
 	cjk := "你好世界"

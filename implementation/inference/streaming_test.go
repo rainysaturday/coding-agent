@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coding-agent/harness/config"
 )
@@ -338,6 +339,14 @@ func TestTruncateJSON(t *testing.T) {
 	}
 	if !strings.HasSuffix(result, "...") {
 		t.Error("Expected result to end with ...")
+	}
+}
+
+func TestTruncateJSON_RuneSafe(t *testing.T) {
+	// Cutting mid-way through a multi-byte rune must not yield invalid UTF-8 (I-11).
+	out := truncateJSON(strings.Repeat("ä", 200), 40)
+	if !utf8.ValidString(out) {
+		t.Errorf("truncateJSON produced invalid UTF-8: %q", out)
 	}
 }
 

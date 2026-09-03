@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/tools"
@@ -860,10 +861,16 @@ func formatJSONArrayWithMaxWidth(arr []interface{}, maxWidth int) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// truncateJSON truncates a JSON string to a maximum length, appending "..." if truncated.
+// truncateJSON truncates a JSON string to a maximum length, appending "..." if
+// truncated. The cut is aligned to a UTF-8 rune boundary so multi-byte
+// characters are never split into invalid bytes (I-11).
 func truncateJSON(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	end := maxLen
+	for end > 0 && end < len(s) && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + "..."
 }

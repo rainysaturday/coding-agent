@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // File permission constants used across tool implementations.
@@ -187,6 +188,21 @@ func TruncateOutputByLen(text string, maxLen int, suffix string) string {
 
 // TruncateRunes truncates s to at most maxLen runes without splitting a
 // multi-byte UTF-8 character in the middle, appending "..." if truncated.
+
+// TruncateBytesAtRuneBoundary truncates s to at most maxBytes bytes without
+// splitting a multi-byte UTF-8 rune in the middle, appending suffix if the
+// content was truncated (I-11).
+func TruncateBytesAtRuneBoundary(s string, maxBytes int, suffix string) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	end := maxBytes
+	for end > 0 && end < len(s) && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + suffix
+}
+
 // It is safe to use on arbitrary UTF-8 text (e.g. CJK, emoji).
 func TruncateRunes(s string, maxLen int) string {
 	if len(s) <= maxLen {
