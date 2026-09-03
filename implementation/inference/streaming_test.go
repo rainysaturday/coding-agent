@@ -209,6 +209,38 @@ data: [DONE]`
 	}
 }
 
+// TestHandleStreamResponse_UsageOnlyFinalChunk verifies that a final SSE chunk
+// carrying usage with an empty "choices" array (as emitted by vLLM, llama.cpp
+// and Ollama-compatible endpoints with stream_options include_usage) is still
+// recorded. Previously usage extraction was nested inside the choices guard and
+// dropped.
+func TestHandleStreamResponse_UsageOnlyFinalChunk(t *testing.T) {
+	sseStream := `data: {"choices": [{"delta": {"content": "Hello"}}]}
+data: {"choices": [], "usage": {"prompt_tokens": 111, "completion_tokens": 22, "total_tokens": 133}}
+data: [DONE]`
+
+	body := io.NopCloser(strings.NewReader(sseStream))
+	client := NewInferenceClient(config.DefaultConfig())
+
+	resp, err := client.handleStreamResponse(body, nil)
+	if err != nil {
+		t.Fatalf("handleStreamResponse() error: %v", err)
+	}
+
+	if resp.Content != "Hello" {
+		t.Errorf("Expected content 'Hello', got %q", resp.Content)
+	}
+	if resp.InputTokens != 111 {
+		t.Errorf("Expected input tokens 111, got %d", resp.InputTokens)
+	}
+	if resp.OutputTokens != 22 {
+		t.Errorf("Expected output tokens 22, got %d", resp.OutputTokens)
+	}
+	if resp.TokenUsage != 133 {
+		t.Errorf("Expected total tokens 133, got %d", resp.TokenUsage)
+	}
+}
+
 func TestInferenceRequestStream_NoCallback(t *testing.T) {
 	cfg := config.DefaultConfig()
 	client := NewInferenceClient(cfg)

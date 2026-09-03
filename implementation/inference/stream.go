@@ -350,9 +350,11 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					inJSON = true
 				} else {
 					// Process the buffered chunk data immediately
+					// Extract token usage unconditionally so a usage-only
+					// chunk (empty choices) is still recorded.
+					ss.extractTokenUsage(bufferChunk.Usage, bufferChunk.Timings)
 					if len(bufferChunk.Choices) > 0 {
 						ss.processDelta(bufferChunk.Choices[0].Delta)
-						ss.extractTokenUsage(bufferChunk.Usage, bufferChunk.Timings)
 					}
 					jsonBuffer.Reset()
 				}
@@ -393,6 +395,13 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 			// Skip empty lines and non-SSE data when not accumulating JSON
 			continue
 		}
+
+		// Get token usage - also track input/output separately. This is done
+		// unconditionally because OpenAI-compatible servers report usage in a
+		// final chunk with an empty "choices" array (stream_options
+		// include_usage); extracting it only inside the choices guard would drop
+		// those tokens.
+		ss.extractTokenUsage(chunk.Usage, chunk.Timings)
 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
@@ -453,9 +462,6 @@ func (ic *InferenceClient) handleStreamResponse(body io.Reader, callback Streami
 					ContentType: StreamingContentTypeNormal,
 				})
 			}
-
-			// Get token usage - also track input/output separately
-			ss.extractTokenUsage(chunk.Usage, chunk.Timings)
 		}
 	}
 
