@@ -618,7 +618,6 @@ func TestParseArgs_GitHubTokenIgnoredForNonGitHubEndpoint(t *testing.T) {
 	}
 }
 
-
 // ===== Tests for web UI flags =====
 
 func TestParseArgs_WebFlag(t *testing.T) {
@@ -696,3 +695,68 @@ func TestParseArgs_WebEnvVars(t *testing.T) {
 	}
 }
 
+func TestParseArgs_SkillsDefaultsOn(t *testing.T) {
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if !cfg.Skills {
+		t.Error("Expected Skills=true by default")
+	}
+}
+
+func TestParseArgs_NoSkills(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--no-skills"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Skills {
+		t.Error("Expected Skills=false with --no-skills")
+	}
+}
+
+func TestParseArgs_SkillsDir(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--skills-dir", "/a", "--skills-dir", "/b"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(cfg.SkillsDirs) != 2 || cfg.SkillsDirs[0] != "/a" || cfg.SkillsDirs[1] != "/b" {
+		t.Errorf("Expected SkillsDirs [%v], got %v", []string{"/a", "/b"}, cfg.SkillsDirs)
+	}
+}
+
+func TestParseArgs_SkillsDirMissingArg(t *testing.T) {
+	if _, err := ParseArgs([]string{"--skills-dir"}); err == nil {
+		t.Error("Expected error when --skills-dir has no argument")
+	}
+}
+
+func TestParseArgs_TrustDir(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--trust", "/repo"})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if len(cfg.TrustDirs) != 1 || cfg.TrustDirs[0] != "/repo" {
+		t.Errorf("Expected TrustDirs [/repo], got %v", cfg.TrustDirs)
+	}
+}
+
+func TestParseArgs_SkillsEnvVars(t *testing.T) {
+	os.Setenv("CODING_AGENT_SKILLS", "false")
+	os.Setenv("CODING_AGENT_SKILLS_DIRS", "/x,/y")
+	defer func() {
+		os.Unsetenv("CODING_AGENT_SKILLS")
+		os.Unsetenv("CODING_AGENT_SKILLS_DIRS")
+	}()
+
+	cfg, err := ParseArgs([]string{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if cfg.Skills {
+		t.Error("Expected Skills=false from env var")
+	}
+	if len(cfg.SkillsDirs) != 2 || cfg.SkillsDirs[0] != "/x" || cfg.SkillsDirs[1] != "/y" {
+		t.Errorf("Expected SkillsDirs [/x /y], got %v", cfg.SkillsDirs)
+	}
+}

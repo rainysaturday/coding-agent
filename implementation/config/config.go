@@ -84,14 +84,19 @@ type Config struct {
 	Theme string
 
 	// Web UI settings
-	Web                  bool   // When true, start the web UI server instead of the terminal UI
-	WebAddr              string // Listen address for the web UI (default: 127.0.0.1)
-	WebPort              int    // Listen port for the web UI (default: 8080)
-	WebSessionIdleTimeout int   // Idle timeout for web sessions in seconds (0 disables reaping)
+	Web                   bool   // When true, start the web UI server instead of the terminal UI
+	WebAddr               string // Listen address for the web UI (default: 127.0.0.1)
+	WebPort               int    // Listen port for the web UI (default: 8080)
+	WebSessionIdleTimeout int    // Idle timeout for web sessions in seconds (0 disables reaping)
 
 	// Persona settings
 	Persona     string
 	SummaryOnly bool // When true, only output the final summary (used by subagents)
+
+	// Skills settings
+	Skills     bool     // When true, enable Agent Skills discovery (default: on)
+	SkillsDirs []string // Custom skill search directories (--skills-dir, repeatable)
+	TrustDirs  []string // Directories trusted for project-level skill loading (--trust, repeatable)
 
 	// Timeout settings (in seconds)
 	InitialTokenTimeout int
@@ -111,21 +116,22 @@ type Config struct {
 // DefaultConfig returns a config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		Model:               "llama3",
-		Temperature:         nil,
-		MaxTokens:           64000,
-		ContextSize:         128000,
-		Streaming:           true,
-		InitialTokenTimeout: 24 * 60 * 60,            // 24 hours default
-		ConnectionTimeout:   24 * 60 * 60,            // 24 hours default
-		ReadTimeout:         24 * 60 * 60,            // 24 hours default
-		APIEndpoint:         "http://localhost:8080", // llama.cpp default
-		MaxIterations:       1000,                    // Default max iterations for loop protection
-		Debug:               false,
-		DebugLog:            "debug.log",
-		WebAddr:             "127.0.0.1",
-		WebPort:             8080,
+		Model:                 "llama3",
+		Temperature:           nil,
+		MaxTokens:             64000,
+		ContextSize:           128000,
+		Streaming:             true,
+		InitialTokenTimeout:   24 * 60 * 60,            // 24 hours default
+		ConnectionTimeout:     24 * 60 * 60,            // 24 hours default
+		ReadTimeout:           24 * 60 * 60,            // 24 hours default
+		APIEndpoint:           "http://localhost:8080", // llama.cpp default
+		MaxIterations:         1000,                    // Default max iterations for loop protection
+		Debug:                 false,
+		DebugLog:              "debug.log",
+		WebAddr:               "127.0.0.1",
+		WebPort:               8080,
 		WebSessionIdleTimeout: 1800, // 30 minutes; 0 disables reaping
+		Skills:                true, // Skill discovery is on by default
 	}
 }
 
@@ -238,6 +244,7 @@ func ParseArgs(args []string) (*Config, error) {
 			maxIterations, err := strconv.Atoi(args[i])
 			if err != nil {
 				return nil, fmt.Errorf("invalid max-iterations: %v", err)
+
 			}
 			cfg.MaxIterations = maxIterations
 		case "--context-size":
@@ -366,6 +373,22 @@ func ParseArgs(args []string) (*Config, error) {
 				return nil, fmt.Errorf("invalid web-session-idle-timeout: %v", err)
 			}
 			cfg.WebSessionIdleTimeout = idleTimeout
+		case "--skills":
+			cfg.Skills = true
+		case "--no-skills":
+			cfg.Skills = false
+		case "--skills-dir":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--skills-dir requires an argument")
+			}
+			i++
+			cfg.SkillsDirs = append(cfg.SkillsDirs, args[i])
+		case "--trust":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--trust requires an argument")
+			}
+			i++
+			cfg.TrustDirs = append(cfg.TrustDirs, args[i])
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("unknown flag: %s", arg)
@@ -444,6 +467,7 @@ func loadConfigFile(path string, cfg *Config) error {
 		case "read_timeout":
 			if v, err := strconv.Atoi(value); err == nil {
 				cfg.ReadTimeout = v
+
 			}
 		case "verbose":
 			cfg.Verbose = value == "true" || value == "1"
@@ -451,6 +475,12 @@ func loadConfigFile(path string, cfg *Config) error {
 			cfg.Quiet = value == "true" || value == "1"
 		case "debug":
 			cfg.Debug = value == "true" || value == "1"
+		case "skills":
+			cfg.Skills = value == "true" || value == "1"
+		case "skills_dirs", "skills-dirs":
+			cfg.SkillsDirs = splitList(value)
+		case "trust_dirs", "trust-dirs":
+			cfg.TrustDirs = splitList(value)
 		case "debug_log":
 			cfg.DebugLog = value
 		case "read_only", "read-only":
@@ -594,6 +624,16 @@ func loadEnv(cfg *Config) {
 			cfg.WebSessionIdleTimeout = v
 		}
 	}
+	// Skills settings via environment variables
+	if val := os.Getenv("CODING_AGENT_SKILLS"); val != "" {
+		cfg.Skills = val == "true" || val == "1"
+	}
+	if val := os.Getenv("CODING_AGENT_SKILLS_DIRS"); val != "" {
+		cfg.SkillsDirs = splitList(val)
+	}
+	if val := os.Getenv("CODING_AGENT_TRUST_DIRS"); val != "" {
+		cfg.TrustDirs = splitList(val)
+	}
 
 	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a GitHub
 	// Copilot or GitHub Models URL (both accept GitHub tokens).
@@ -633,4 +673,21 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("web session idle timeout must be >= 0 seconds")
 	}
 	return nil
+}
+
+// splitList splits a comma-separated config value into a trimmed, non-empty
+// slice. It is used for repeatable list settings (skills dirs, trust dirs).
+func splitList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

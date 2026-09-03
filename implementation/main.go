@@ -214,6 +214,14 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 	if cfg.WebPort > 0 {
 		os.Setenv("CODING_AGENT_WEB_PORT", strconv.Itoa(cfg.WebPort))
 	}
+	// Skills settings
+	os.Setenv("CODING_AGENT_SKILLS", strconv.FormatBool(cfg.Skills))
+	if len(cfg.SkillsDirs) > 0 {
+		os.Setenv("CODING_AGENT_SKILLS_DIRS", strings.Join(cfg.SkillsDirs, ","))
+	}
+	if len(cfg.TrustDirs) > 0 {
+		os.Setenv("CODING_AGENT_TRUST_DIRS", strings.Join(cfg.TrustDirs, ","))
+	}
 }
 
 func displayVersion() {
@@ -277,6 +285,11 @@ func displayHelp() {
 	fmt.Println("      --web                Start the web UI server instead of the terminal UI")
 	fmt.Println("      --web-addr string    Web UI listen address (default: \"127.0.0.1\")")
 	fmt.Println("      --web-port int       Web UI listen port (default: 8080)")
+	fmt.Println("      --skills              Enable Agent Skills discovery (default: on)")
+	fmt.Println("      --no-skills           Disable Agent Skills discovery")
+	fmt.Println("      --skills-dir path     Add a custom skill search directory (repeatable)")
+	fmt.Println("      --trust dir           Mark a directory as trusted for project-level skill loading (repeatable)")
+
 	fmt.Println()
 	fmt.Println("Interactive Commands:")
 	fmt.Println("  /stats       - Display runtime statistics")
@@ -287,6 +300,9 @@ func displayHelp() {
 	fmt.Println("  /compress    - Manually trigger context compression")
 	fmt.Println("  /goal <prompt>    - Set a goal to guide the agent")
 	fmt.Println("  /goal-off         - Deactivate goal mode")
+	fmt.Println("  /skill <name>    - Load a skill's instructions into context")
+	fmt.Println("  /skills          - List available skills")
+
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  coding-agent -p \"Create a REST API in Go\"")
