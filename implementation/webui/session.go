@@ -331,15 +331,22 @@ func (s *Session) run(ctx context.Context, prompt string) error {
 
 	var result *agent.Result
 	var err error
-	if s.cfg.Streaming {
-		result, err = s.agent.RunStream(runCtx, prompt, func(chunk inference.StreamingChunk) {
-			s.broadcastEvent("chunk", chunkEvent{
-				Text:        chunk.Text,
-				ContentType: int(chunk.ContentType),
-				IsToolCall:  strings.HasPrefix(chunk.Text, "[Tool Call] "),
-			})
+	// broadcastChunk forwards tool/status notifications (and, in streaming
+	// mode, assistant tokens) to SSE subscribers.
+	broadcastChunk := func(chunk inference.StreamingChunk) {
+		s.broadcastEvent("chunk", chunkEvent{
+			Text:        chunk.Text,
+			ContentType: int(chunk.ContentType),
+			IsToolCall:  strings.HasPrefix(chunk.Text, "[Tool Call] "),
 		})
+	}
+	if s.cfg.Streaming {
+		result, err = s.agent.RunStream(runCtx, prompt, broadcastChunk)
 	} else {
+		// Non-streaming: install a notification callback so tool cards still
+		// stream and status lines do not leak to the server's stdout, while
+		// inference stays non-streaming (I-10).
+		s.agent.SetStreamCallback(broadcastChunk)
 		result, err = s.agent.Run(runCtx, prompt)
 	}
 	if err != nil {

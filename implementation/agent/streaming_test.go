@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -28,6 +30,58 @@ func TestRunStream(t *testing.T) {
 		t.Error("Expected error when no LLM server is available")
 	}
 }
+
+// TestRun_NonStreamingWithCallback_DoesNotForceStreamingInference verifies
+// that a web session which installs a notification callback (for tool cards)
+// while running in --no-stream mode still uses non-streaming inference and
+// does not leak status lines to stdout (I-10). The mock serves a single,
+// non-SSE JSON completion on each request, which the streaming parser would
+// reject.
+func TestRun_NonStreamingWithCallback_DoesNotForceStreamingInference(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		calls++
+		if calls == 1 {
+			w.Write([]byte(`{
+				"id":"test-1","object":"chat.completion","created":1234567890,"model":"test-model",
+				"choices":[{"index":0,"message":{"role":"assistant","content":"","tool_calls":[
+					{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo hi\"}"}}
+				]},"finish_reason":"tool_calls"}],
+				"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}
+			}`))
+			return
+		}
+		w.Write([]byte(`{
+			"id":"test-2","object":"chat.completion","created":1234567891,"model":"test-model",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"Final answer here"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+	cfg.Streaming = false
+	ag := NewAgent(cfg)
+
+	var chunks []inference.StreamingChunk
+	ag.SetStreamCallback(func(chunk inference.StreamingChunk) {
+		chunks = append(chunks, chunk)
+	})
+
+	result, err := ag.Run(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if result.FinalOutput != "Final answer here" {
+		t.Errorf("unexpected final output %q", result.FinalOutput)
+	}
+	if len(chunks) == 0 {
+		t.Error("expected tool notification chunks via callback")
+	}
+}
+
 
 func TestStreamResult_Callback(t *testing.T) {
 	var received []inference.StreamingChunk

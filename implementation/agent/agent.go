@@ -38,6 +38,11 @@ type Agent struct {
 	stats               *Stats
 	maxIterations       int
 	streamCallback      StreamCallback
+	// streamInference controls whether the inference API is called in streaming
+	// mode. It is separate from streamCallback so a web session can forward
+	// tool notifications via the callback while keeping inference non-streaming
+	// (--no-stream), avoiding the stdout fallback (I-10).
+	streamInference     bool
 	contextSizeCallback ContextSizeCallback
 	maxContextSize      int
 	compressionCount    int
@@ -353,8 +358,26 @@ If you have not achieved the goal, explain what remains to be done and continue 
 	}
 }
 
-// Run runs the agent with the given prompt.
+// Run runs the agent with the given prompt using non-streaming inference.
 func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
+	return a.run(ctx, prompt, false)
+}
+
+// run is the shared agent loop. stream controls whether inference requests use
+// the streaming API; the stream callback (if any) is still used for tool
+// notifications in either case (I-10).
+func (a *Agent) run(ctx context.Context, prompt string, stream bool) (*Result, error) {
+	// Set the inference streaming flag for the duration of the run.
+	a.mu.Lock()
+	savedStream := a.streamInference
+	a.streamInference = stream
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.streamInference = savedStream
+		a.mu.Unlock()
+	}()
+
 	// Log user message if debug is enabled
 	if a.debugLogger != nil {
 		a.debugLogger.LogUserMessage(prompt, inference.EstimateTokens(prompt))
@@ -637,7 +660,7 @@ func (a *Agent) RunStream(ctx context.Context, prompt string, onChunk StreamCall
 		a.mu.Unlock()
 	}()
 
-	return a.Run(ctx, prompt)
+	return a.run(ctx, prompt, true)
 }
 
 // getInferenceResponse gets a response from the inference backend.
@@ -647,10 +670,12 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	copy(messages, a.context)
 	systemPrompt := a.systemPrompt
 	streamCallback := a.streamCallback
+	streamInference := a.streamInference
 	a.mu.Unlock()
 
-	// Use streaming version if callback is set
-	if streamCallback != nil {
+	// Use streaming version only when explicitly requested (I-10); the
+	// callback alone is used for tool notifications, not to force streaming.
+	if streamInference {
 		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
 	}
 

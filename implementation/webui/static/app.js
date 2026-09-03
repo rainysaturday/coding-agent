@@ -42,6 +42,7 @@
   var history = [];
   var histIndex = -1;
   var streamBuf = null; // current streaming assistant message node
+  var sawStream = false; // whether any chunk was streamed in the current run
 
   var COMMANDS = [
     "/stats", "/clear", "/clear-history", "/read-only", "/compress",
@@ -137,6 +138,27 @@
     div.appendChild(copy);
     output.appendChild(div);
     scrollBottom();
+
+  // renderFinalResult renders the final result of a non-streaming run (or a
+  // reconnect that missed the live stream) from the result event's fields,
+  // which the frontend otherwise ignored (I-10).
+  function renderFinalResult(r) {
+    if (!r) return;
+    if (r.reasoning) {
+      var rb = reasoningBlock();
+      rb.body.textContent = stripAnsi(r.reasoning);
+    }
+    (r.steps || []).forEach(function (st) {
+      if (st.toolCall) {
+        staticToolCard(st.toolCall.name || "", st.toolCall.arguments || "");
+        if (st.toolResult) appendToolResult(st.toolResult);
+      }
+    });
+    if (r.finalOutput) {
+      appendMessage("assistant", stripAnsi(r.finalOutput));
+    }
+  }
+
   }
 
   function reasoningBlock() {
@@ -329,6 +351,7 @@
   }
 
   function handleChunk(c) {
+    sawStream = true;
     if (c.isToolCall) {
       // Streaming tool-call notifications come as "[Tool Call] name" followed by
       // "[Tool Call] name (key: value, ...)" param updates. Keep one live card
@@ -394,6 +417,10 @@
     es.addEventListener("result", function (ev) {
       var r = JSON.parse(ev.data);
       renderStats(r.stats);
+      // In --no-stream (or after a reconnect that missed the live stream) the
+      // answer and tool steps arrive only here; render them when nothing was
+      // streamed so the UI is never silent (I-10).
+      if (!sawStream) renderFinalResult(r);
     });
     es.addEventListener("truncated", function (ev) {
       var t = JSON.parse(ev.data || "{}");
