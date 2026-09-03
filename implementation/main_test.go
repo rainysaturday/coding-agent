@@ -600,3 +600,35 @@ func TestDisplayHelp(t *testing.T) {
 		t.Error("Expected '--goal' in help output")
 	}
 }
+func TestBuildCreateSkillPrompt(t *testing.T) {
+	desc := "extract tables from PDFs"
+	prompt := buildCreateSkillPrompt(desc)
+
+	// The injected prompt must explain the SKILL.md format and placement.
+	for _, want := range []string{
+		"SKILL.md",
+		"name:",
+		"description:",
+		"---",
+		".agents/skills/",
+		"skills/",
+		"USER'S SKILL DESCRIPTION",
+		desc,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("create-skill prompt should contain %q", want)
+		}
+	}
+}
+
+func TestBuildCreateSkillPrompt_EmptyDescription(t *testing.T) {
+	// An empty description should still yield a valid template (the caller
+	// checks for emptiness and prints usage, but the builder must not panic).
+	prompt := buildCreateSkillPrompt("")
+	if prompt == "" {
+		t.Fatal("expected a non-empty prompt")
+	}
+	if !strings.Contains(prompt, "USER'S SKILL DESCRIPTION") {
+		t.Error("prompt should include the description section marker")
+	}
+}

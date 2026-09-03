@@ -302,6 +302,7 @@ func displayHelp() {
 	fmt.Println("  /goal-off         - Deactivate goal mode")
 	fmt.Println("  /skill <name>    - Load a skill's instructions into context")
 	fmt.Println("  /skills          - List available skills")
+	fmt.Println("  /create-skill <desc> - Create a new skill from a description")
 
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -675,11 +676,76 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 	case "skills":
 		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), ag.ListSkills(), colors.GetColor("reset"))
 		return input, true
+	case "create-skill":
+		if arg == "" {
+			fmt.Printf("%sUsage: /create-skill <description of the skill>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
+			return input, true
+		}
+		fmt.Printf("%s[Create-skill: generating a skill from your description]%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
+		return buildCreateSkillPrompt(arg), false
 	default:
 		fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 		return input, true
 	}
+}
+
+// buildCreateSkillPrompt returns the prompt injected to the model when the user
+// runs /create-skill <description>. It explains what a skill is, the SKILL.md
+// format, and where to place it, then asks the model to author a skill file
+// from the user's description. The model uses its write tools (write_file /
+// bash) to create the skill directory and SKILL.md.
+func buildCreateSkillPrompt(description string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	return fmt.Sprintf(`You are creating a new Agent Skill based on the user's description below.
+
+=== WHAT A SKILL IS ===
+A skill is a directory containing a SKILL.md file. It packages specialized
+instructions (and optionally scripts/, references/, and assets/ resources) that
+the agent can load on demand. The SKILL.md file has YAML frontmatter between
+--- delimiters, followed by a Markdown body that is the skill's instructions.
+
+=== SKILL.md FORMAT ===
+---
+name: <skill-name>
+description: <what it does AND when to use it>
+license: <optional short license>
+compatibility: <optional environment requirements>
+metadata:
+  <key>: <value>
+allowed-tools: <optional space-separated tools>
+---
+
+# <Skill Name>
+
+## When to use this skill
+Describe the trigger conditions / scenarios where this skill applies.
+
+## Instructions
+Provide clear, step-by-step instructions, examples, and edge cases.
+
+## Resources (optional)
+List any bundled scripts/, references/, or assets/ files.
+
+=== RULES ===
+- name: 1-64 chars, lowercase alphanumerics + hyphens, must match the directory name.
+- description: 1-1024 chars; must state WHAT it does AND WHEN to use it (include trigger keywords).
+- The body is loaded wholesale on activation, so keep it focused (< 5000 tokens).
+
+=== PLACEMENT ===
+Create the skill as a directory under the project's skills location:
+  %s/.agents/skills/<skill-name>/SKILL.md
+or (client-native alternative):
+  %s/skills/<skill-name>/SKILL.md
+Use bash (mkdir -p) to create the directory and write_file to create its SKILL.md.
+
+=== USER'S SKILL DESCRIPTION ===
+%s
+`, cwd, cwd, description)
 }
 
 // runAgentWithStreaming runs the agent with streaming and displays the result.
@@ -741,7 +807,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Printf("%sType your request below. Use Ctrl+C to exit.%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 	fmt.Println()
 
 	// Initialize TUI
