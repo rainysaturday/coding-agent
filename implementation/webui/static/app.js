@@ -395,6 +395,11 @@
       var r = JSON.parse(ev.data);
       renderStats(r.stats);
     });
+    es.addEventListener("truncated", function (ev) {
+      var t = JSON.parse(ev.data || "{}");
+      var n = t.dropped || 0;
+      appendMessage("error", n + " event(s) lost (slow connection) — reload for the full conversation.");
+    });
     es.addEventListener("stats", function (ev) { renderStats(JSON.parse(ev.data)); });
     es.addEventListener("error", function (ev) {
       var m = JSON.parse(ev.data || "{}").message || "An error occurred.";

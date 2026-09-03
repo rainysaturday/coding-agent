@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 // handleIndex serves the embedded single-page app shell.
@@ -121,6 +122,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case msg := <-sub.ch:
 			sw.raw(msg.event, msg.data)
+			// Once the channel has room again, report any events dropped while
+			// it was full so the frontend can warn the user (I-09).
+			if n := atomic.SwapInt64(&sub.dropped, 0); n > 0 {
+				sw.event("truncated", map[string]interface{}{"dropped": n})
+			}
 		}
 	}
 }

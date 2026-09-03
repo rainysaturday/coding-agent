@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/coding-agent/harness/config"
 )
@@ -130,6 +132,53 @@ func TestSession_ResetClearsState(t *testing.T) {
 	if got := s.agent.GetContextSize(); got != fresh.agent.GetContextSize() {
 		t.Errorf("expected context size %d (system-prompt baseline) after reset, got %d",
 			fresh.agent.GetContextSize(), got)
+	}
+}
+
+
+// TestSession_BroadcastDropsCounted verifies that when a subscriber's channel
+// is full, dropped events are counted (I-09) and terminal events are still
+// delivered by evicting the oldest queued event.
+func TestSession_BroadcastDropsCounted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	m := NewSessionManager(cfg)
+	s := m.Get("sess")
+
+	sub := s.addSubscriber()
+	defer s.removeSubscriber(sub)
+
+	// Fill the subscriber channel to capacity so broadcasts must drop.
+	for {
+		select {
+		case sub.ch <- sseMessage{event: "chunk", data: "x"}:
+		default:
+			goto filled
+		}
+	}
+filled:
+
+	// Non-terminal events are dropped and counted.
+	s.broadcast("chunk", "dropped-me")
+	s.broadcast("chunk", "dropped-me-2")
+	if got := atomic.LoadInt64(&sub.dropped); got < 2 {
+		t.Fatalf("expected at least 2 dropped, got %d", got)
+	}
+
+	// A terminal event evicts an older queued event so it is delivered.
+	done := make(chan sseMessage, 1)
+	go func() {
+		for msg := range sub.ch {
+			if msg.event == "result" {
+				done <- msg
+				return
+			}
+		}
+	}()
+	s.broadcast("result", "{}")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("terminal result event was not delivered")
 	}
 }
 

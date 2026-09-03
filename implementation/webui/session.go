@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coding-agent/harness/agent"
@@ -14,8 +15,9 @@ import (
 
 // subscriber is a single SSE connection registered to a session.
 type subscriber struct {
-	ch   chan sseMessage
-	stop chan struct{}
+	ch      chan sseMessage
+	stop    chan struct{}
+	dropped int64 // count of events dropped while this subscriber's channel was full
 }
 
 // sseMessage is an already-framed SSE event ready to write to a subscriber.
@@ -178,15 +180,34 @@ func (s *Session) removeSubscriber(sub *subscriber) {
 }
 
 // broadcast sends a framed event to all subscribers without blocking.
+// If a subscriber's channel is full, the event is dropped and counted so the
+// frontend can be told content was lost (I-09). Terminal events (state,
+// result, error) are never dropped: the oldest queued event is evicted to make
+// room so the subscriber still learns the run finished.
 func (s *Session) broadcast(event, data string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	msg := sseMessage{event: event, data: data}
+	critical := event == "state" || event == "result" || event == "error" || event == "truncated"
 	for sub := range s.subs {
 		select {
 		case sub.ch <- msg:
 		default:
-			// Subscriber is slow; drop the message to avoid blocking the run.
+			if critical {
+				// Evict the oldest queued (likely a chunk) so a terminal event
+				// is always delivered.
+				select {
+				case <-sub.ch:
+					atomic.AddInt64(&sub.dropped, 1)
+				default:
+				}
+				select {
+				case sub.ch <- msg:
+				default:
+				}
+			} else {
+				atomic.AddInt64(&sub.dropped, 1)
+			}
 		}
 	}
 }
