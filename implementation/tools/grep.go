@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -143,14 +144,16 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 	var results []matchResult
 	var skipCount int
 	var binaryCount int
+	var oversizedCount int
 	const maxResults = 5000
 
 	// Check if path is a single file
 	info, err := os.Stat(gp.path)
 	if err == nil && !info.IsDir() {
-		res, sc, bc := te.searchFile(gp.path, re, gp.flags, maxResults)
+		res, sc, bc, oc := te.searchFile(gp.path, re, gp.flags, maxResults)
 		skipCount += sc
 		binaryCount += bc
+		oversizedCount += oc
 		results = append(results, res...)
 	} else if info != nil && info.IsDir() {
 		if gp.flags["r"] {
@@ -181,9 +184,10 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 					if len(results) >= maxResults {
 						return filepath.SkipDir
 					}
-					res, sc, bc := te.searchFile(filePath, re, gp.flags, maxResults-len(results))
+					res, sc, bc, oc := te.searchFile(filePath, re, gp.flags, maxResults-len(results))
 					skipCount += sc
 					binaryCount += bc
+					oversizedCount += oc
 					results = append(results, res...)
 				}
 				return nil
@@ -211,9 +215,10 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 				if len(results) >= maxResults {
 					break
 				}
-				res, sc, bc := te.searchFile(fullPath, re, gp.flags, maxResults-len(results))
+				res, sc, bc, oc := te.searchFile(fullPath, re, gp.flags, maxResults-len(results))
 				skipCount += sc
 				binaryCount += bc
+				oversizedCount += oc
 				results = append(results, res...)
 			}
 		}
@@ -228,6 +233,9 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 	var extraInfo strings.Builder
 	if binaryCount > 0 {
 		extraInfo.WriteString(fmt.Sprintf("\n[Skipped %d binary file(s)]", binaryCount))
+	}
+	if oversizedCount > 0 {
+		extraInfo.WriteString(fmt.Sprintf("\n[Skipped %d oversized file(s) (larger than %d MB)]", oversizedCount, maxGrepFileSize/(1024*1024)))
 	}
 	if skipCount > 0 {
 		extraInfo.WriteString(fmt.Sprintf("\n[Skipped %d inaccessible file(s)]", skipCount))
@@ -244,6 +252,9 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 	if binaryCount > 0 {
 		extra["skippedBinaryFiles"] = binaryCount
 	}
+	if oversizedCount > 0 {
+		extra["skippedOversizedFiles"] = oversizedCount
+	}
 	if skipCount > 0 {
 		extra["skippedFiles"] = skipCount
 	}
@@ -255,42 +266,49 @@ func (te *ToolExecutor) executeGrep(ctx context.Context, params map[string]inter
 	}
 }
 
+// maxGrepFileSize caps how large a file grep will read, so a single
+// recursive search over build artefacts, datasets or VM images cannot exhaust
+// memory (I-08). Oversized files are skipped and reported separately.
+const maxGrepFileSize = 10 * 1024 * 1024 // 10 MB
+
 // searchFile searches a single file for matching lines.
-func (te *ToolExecutor) searchFile(filePath string, re *regexp.Regexp, flags map[string]bool, maxResults int) ([]matchResult, int, int) {
+func (te *ToolExecutor) searchFile(filePath string, re *regexp.Regexp, flags map[string]bool, maxResults int) ([]matchResult, int, int, int) {
 	if maxResults <= 0 {
-		return nil, 0, 0
+		return nil, 0, 0, 0
 	}
 
-	// Check if file is binary by reading first few bytes
-	data, err := os.ReadFile(filePath)
+	// Check file size up-front so we never read a huge file into memory.
+	info, err := os.Stat(filePath)
 	if err != nil {
-		return nil, 1, 0 // Skip count
+		return nil, 1, 0, 0 // inaccessible
+	}
+	if info.Size() > maxGrepFileSize {
+		return nil, 0, 0, 1 // oversized
 	}
 
-	// Simple binary detection: check for null bytes
-	isBinary := false
-	for i := 0; i < len(data) && i < 512; i++ {
-		if data[i] == 0 {
-			isBinary = true
-			break
-		}
-	}
-	if isBinary {
-		return nil, 0, 1 // Binary count
+	// Binary detection runs on the first 512 bytes before any full read.
+	if isBinaryFile(filePath) {
+		return nil, 0, 1, 0 // binary
 	}
 
-	content := string(data)
-	lines := strings.Split(content, "\n")
-	// Handle trailing newline
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, 1, 0, 0
 	}
+	defer f.Close()
+
+	// Stream line by line rather than reading the whole file into memory.
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxGrepFileSize)
 
 	var results []matchResult
-	for i, line := range lines {
+	lineNum := 0
+	for scanner.Scan() {
 		if len(results) >= maxResults {
 			break
 		}
+		lineNum++
+		line := scanner.Text()
 
 		// The regex is already compiled with (?i) prefix if case-insensitive
 		// was requested, so we can match directly on the original line.
@@ -302,11 +320,16 @@ func (te *ToolExecutor) searchFile(filePath string, re *regexp.Regexp, flags map
 		if matched {
 			results = append(results, matchResult{
 				filePath: filePath,
-				lineNum:  i + 1,
+				lineNum:  lineNum,
 				line:     line,
 			})
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		// A line exceeding the buffer is treated as inaccessible rather than
+		// silently truncated, so the caller knows the file was not fully read.
+		return nil, 1, 0, 0
+	}
 
-	return results, 0, 0
+	return results, 0, 0, 0
 }

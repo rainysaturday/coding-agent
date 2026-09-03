@@ -9,6 +9,46 @@ import (
 	"time"
 )
 
+func TestExecute_Grep_SkipsOversizedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Create a file larger than maxGrepFileSize without materialising it on disk
+	// by seeking past the size cap. A non-matching pattern means the old
+	// implementation would have read the whole file into memory (I-08).
+	bigFile := filepath.Join(tmpDir, "big.log")
+	f, err := os.Create(bigFile)
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if err := f.Truncate(maxGrepFileSize + 1); err != nil {
+		f.Close()
+		t.Fatalf("truncate file: %v", err)
+	}
+	f.Close()
+
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "definitely-not-present",
+			"path":    bigFile,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Error)
+	}
+	if result.Output != "" {
+		t.Errorf("expected no output, got %q", result.Output)
+	}
+	extra, ok := result.Extra["skippedOversizedFiles"]
+	if !ok {
+		t.Fatalf("expected skippedOversizedFiles in extra, got %v", result.Extra)
+	}
+	if extra.(int) != 1 {
+		t.Errorf("expected 1 oversized file skipped, got %v", extra)
+	}
+}
+
+
 // ===== Tests for grep tool =====
 
 func TestExecute_Grep_MissingPattern(t *testing.T) {
