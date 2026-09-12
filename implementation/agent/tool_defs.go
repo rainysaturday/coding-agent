@@ -28,6 +28,10 @@ func AllToolDefinitions() map[string]ToolInfo {
 								Type:        "integer",
 								Description: "Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.",
 							},
+							"max_output_lines": {
+								Type:        "integer",
+								Description: "Maximum number of lines of output to return (default: 200). Only the last N lines are shown. Set to 0 or a negative value to disable truncation and return the full output.",
+							},
 						},
 						Required: []string{"command"},
 					},
@@ -38,6 +42,7 @@ func AllToolDefinitions() map[string]ToolInfo {
    Parameters:
      - command (string, required): The bash command to execute
      - timeout (integer, optional): Timeout in milliseconds for the command (default: 30000). Use this for long-running commands.
+     - max_output_lines (integer, optional): Maximum number of lines of output to return (default: 200). Only the last N lines are shown. Set to 0 or a negative value to disable truncation and return the full output. Use a larger value if you need more output, or 0 to get everything.
    How to call: Use the bash tool when you need to run shell commands, install packages, build projects, check file system, etc.
    Example use case: "ls -la", "cat file.txt", "npm install", "pip install -r requirements.txt"`,
 		},

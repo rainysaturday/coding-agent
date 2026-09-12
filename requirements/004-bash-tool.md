@@ -49,6 +49,10 @@ line_n
         "timeout": {
           "type": "integer",
           "description": "Timeout in milliseconds (default: 30000)"
+        },
+        "max_output_lines": {
+          "type": "integer",
+          "description": "Maximum number of lines of output to return (default: 200). Only the last N lines are shown. Set to 0 or a negative value to disable truncation and return the full output."
         }
       },
       "required": ["command"]
@@ -116,6 +120,11 @@ The OpenAI API returns tool calls in the following format:
   - If the command does not complete within the timeout, execution is terminated
   - Timeout value must be positive
   - If timeout occurs, the error message will clearly indicate it was a timeout
+- `max_output_lines`: Maximum number of lines of output to return (optional, integer, default: 200)
+  - Only the **last N lines** (tail) of the output are returned, which is most useful for bash commands
+  - If the output is truncated, a notice like `... [output truncated: showing last N of M lines]` is prepended so the LLM knows output was omitted
+  - Set to `0` or a negative value to disable truncation and return the full output (e.g. when the command output must be read in full)
+  - Set to a larger value to increase how much output is retained
 
 
 ### Examples

@@ -7,11 +7,38 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Default timeout for bash commands in milliseconds
 const defaultBashTimeoutMs = 30000
+
+// Default maximum number of lines of output returned by the bash tool before it
+// is truncated. Keeping only the tail (last lines) is most useful because for
+// bash commands the end of output typically contains the actual results.
+const defaultBashMaxOutputLines = 200
+
+// truncateBashOutput returns the last maxLines lines of the given output. If the
+// output has more than maxLines lines, a truncation notice is prepended so the
+// LLM knows some output was omitted. A maxLines value <= 0 disables truncation
+// entirely and returns the output unchanged.
+func truncateBashOutput(output string, maxLines int) string {
+	if maxLines <= 0 {
+		return output
+	}
+	// Split into lines, dropping a trailing empty element produced by a trailing
+	// newline so we don't count it as content.
+	lines := strings.Split(output, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) <= maxLines {
+		return output
+	}
+	notice := fmt.Sprintf("... [output truncated: showing last %d of %d lines]\n", maxLines, len(lines))
+	return notice + strings.Join(lines[len(lines)-maxLines:], "\n")
+}
 
 // executeBash executes a bash command with context support for cancellation.
 func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]interface{}) *ToolResult {
@@ -43,6 +70,10 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 		timeoutMs = defaultBashTimeoutMs
 	}
 
+	// Parse optional max_output_lines parameter. Default to 200 lines. A value
+	// <= 0 disables truncation entirely, returning the full output.
+	maxOutputLines := parseIntParam(params, "max_output_lines", defaultBashMaxOutputLines)
+
 	// Create a child context that respects both the parent cancellation and the timeout
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
@@ -71,7 +102,7 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 		var partial string
 		select {
 		case res := <-resultChan:
-			partial = string(res.output)
+			partial = truncateBashOutput(string(res.output), maxOutputLines)
 		case <-time.After(200 * time.Millisecond):
 		}
 		// Timeout or cancellation occurred
@@ -108,16 +139,20 @@ func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]inter
 			}
 		}
 
+		// Apply output truncation (default: last 200 lines). max_output_lines
+		// <= 0 disables truncation and returns the full output.
+		output := truncateBashOutput(string(res.output), maxOutputLines)
+
 		result := &ToolResult{
 			ExitCode: exitCode,
 		}
 
 		if res.err != nil {
 			result.Success = false
-			result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", res.err, string(res.output))
+			result.Error = fmt.Sprintf("command failed: %v\nOutput: %s", res.err, output)
 		} else {
 			result.Success = true
-			result.Output = string(res.output)
+			result.Output = output
 		}
 
 		return result

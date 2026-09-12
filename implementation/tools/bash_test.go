@@ -496,3 +496,171 @@ func TestExecuteBash_KillsProcessGroup(t *testing.T) {
 		t.Errorf("orphaned process survived timeout: %s", out)
 	}
 }
+
+// ===== Tests for bash output truncation =====
+
+func TestTruncateBashOutput(t *testing.T) {
+	// Short output is unchanged
+	if got := truncateBashOutput("a\nb\nc\n", 200); got != "a\nb\nc\n" {
+		t.Errorf("short output changed: %q", got)
+	}
+	// Truncation keeps the last N lines and adds a notice
+	out := "1\n2\n3\n4\n5\n"
+	got := truncateBashOutput(out, 3)
+	if !strings.Contains(got, "showing last 3 of 5 lines") {
+		t.Errorf("expected truncation notice, got: %q", got)
+	}
+	if !strings.HasSuffix(got, "3\n4\n5") {
+		t.Errorf("expected tail lines 3,4,5, got: %q", got)
+	}
+	if strings.Contains(got, "1\n") {
+		t.Errorf("expected leading lines truncated, got: %q", got)
+	}
+	// maxLines <= 0 disables truncation entirely
+	if got := truncateBashOutput("1\n2\n3\n4\n5\n", 0); got != "1\n2\n3\n4\n5\n" {
+		t.Errorf("0 should not truncate, got: %q", got)
+	}
+	if got := truncateBashOutput("1\n2\n3\n4\n5\n", -1); got != "1\n2\n3\n4\n5\n" {
+		t.Errorf("-1 should not truncate, got: %q", got)
+	}
+	// Empty output is unchanged
+	if got := truncateBashOutput("", 200); got != "" {
+		t.Errorf("empty output changed: %q", got)
+	}
+	// No trailing newline is handled
+	got = truncateBashOutput("1\n2\n3\n4\n5", 2)
+	if !strings.HasSuffix(got, "4\n5") {
+		t.Errorf("expected tail without trailing newline, got: %q", got)
+	}
+}
+
+func TestExecuteBash_DefaultTruncation(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "for i in {1..500}; do echo line$i; done",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "output truncated") {
+		t.Errorf("Expected truncation notice in output, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "showing last 200 of 500 lines") {
+		t.Errorf("Expected 'showing last 200 of 500 lines' in output, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "line500") {
+		t.Errorf("Expected last line 'line500' in output")
+	}
+	if strings.Contains(result.Output, "line1") {
+		t.Errorf("Expected leading lines to be truncated away")
+	}
+	// 1 notice line + 200 content lines
+	if got := len(strings.Split(result.Output, "\n")); got != 201 {
+		t.Errorf("Expected 201 lines (notice + 200), got %d", got)
+	}
+}
+
+func TestExecuteBash_CustomMaxOutputLines(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command":          "for i in {1..50}; do echo line$i; done",
+			"max_output_lines": 10,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "showing last 10 of 50 lines") {
+		t.Errorf("Expected truncation notice, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "line50") {
+		t.Errorf("Expected 'line50' in output")
+	}
+	if strings.Contains(result.Output, "line1") {
+		t.Errorf("Expected 'line1' to be truncated away")
+	}
+}
+
+func TestExecuteBash_DisableTruncationWithZero(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command":          "for i in {1..50}; do echo line$i; done",
+			"max_output_lines": 0,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if strings.Contains(result.Output, "output truncated") {
+		t.Errorf("Expected no truncation notice, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "line1") {
+		t.Errorf("Expected 'line1' present when truncation disabled")
+	}
+	if !strings.Contains(result.Output, "line50") {
+		t.Errorf("Expected 'line50' present when truncation disabled")
+	}
+}
+
+func TestExecuteBash_DisableTruncationWithNegative(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command":          "for i in {1..50}; do echo line$i; done",
+			"max_output_lines": -1,
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if strings.Contains(result.Output, "output truncated") {
+		t.Errorf("Expected no truncation notice, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "line50") {
+		t.Errorf("Expected 'line50' present when truncation disabled")
+	}
+}
+
+func TestExecuteBash_NoTruncationUnderLimit(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command": "echo hello",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if strings.Contains(result.Output, "output truncated") {
+		t.Errorf("Expected no truncation notice for short output, got: %s", result.Output)
+	}
+	if result.Output != "hello\n" {
+		t.Errorf("Expected 'hello\\n', got '%s'", result.Output)
+	}
+}
+
+func TestExecuteBash_StringMaxOutputLines(t *testing.T) {
+	te := NewToolExecutor()
+	result := te.Execute(context.Background(), &ToolCall{
+		Name: "bash",
+		Parameters: map[string]interface{}{
+			"command":          "for i in {1..50}; do echo line$i; done",
+			"max_output_lines": "5",
+		},
+	})
+	if !result.Success {
+		t.Fatalf("Expected success, got: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "showing last 5 of 50 lines") {
+		t.Errorf("Expected truncation notice, got: %s", result.Output)
+	}
+}
