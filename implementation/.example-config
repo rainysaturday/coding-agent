@@ -1,24 +1,49 @@
 # Coding Agent Configuration File
-# Format: KEY=VALUE (one per line)
-# Lines starting with # are comments
+# Format: key = value (one per line); # starts a comment.
+# Precedence: defaults < this file < environment < CLI flags.
 
-# Inference settings
-model=llama3
-temperature=0.7
-max_tokens=64000
-context_size=128000
-streaming=true
+# --- Inference ---
+api_endpoint = http://localhost:8080/v1
+api_key      =
+model        = llama3
+temperature  = 0.7
+max_tokens   = 4096
+top_p        = 0.9
+stream       = true
+initial_token_timeout = 300
 
-# API settings
-api_endpoint=http://localhost:8080
-api_key=
+# --- Context management ---
+context_size      = 8192
+context_threshold = 0.75
+auto_compress     = true
 
-# Timeout settings (in seconds)
-initial_token_timeout=7200
-connection_timeout=30
-read_timeout=300
+# --- Agent behaviour ---
+max_iterations = 25
+max_history    = 100
+subagent_timeout = 300
+read_only   = false
+summary_only = false
+goal        =
+persona     =
 
-# Output settings
-verbose=false
-quiet=false
-goal=
+# --- UI ---
+theme   = dark
+verbose = false
+quiet   = false
+
+# --- Debug ---
+debug     = false
+debug_log = debug.log
+
+# --- One-shot / web ---
+output =
+load   =
+web    = false
+web_port = 8081
+
+# --- MCP servers (one section per server) ---
+# [mcp_server.myserver]
+# enabled = true
+# command = path/to/mcp-server
+# args    = --stdio
+# env.TOKEN = secret

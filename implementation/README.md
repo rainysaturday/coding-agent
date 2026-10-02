@@ -1,328 +1,222 @@
-# Minimal Coding Agent Harness
+# coding-agent
 
-A minimal coding agent harness written in Go with a basic TUI supporting an input prompt.
+A **minimal coding agent harness** — a terminal coding assistant with tool
+calling, built from scratch in Go with **zero external dependencies** (Go
+standard library only).
 
-## Overview
+It talks to any **OpenAI-compatible chat-completions API** (llama.cpp server,
+Ollama, LM Studio, vLLM, OpenAI, GitHub Models, GitHub Copilot API), gives the
+model a set of coding tools, and loops until the task is done.
 
-This project implements a coding agent that can:
-
-- Execute bash commands
-- Read and write files
-- Read and modify specific line ranges in files
-- Connect to an LLM inference backend (llama.cpp server via OpenAI API)
-- Provide a terminal user interface (TUI) for interactive use
-- Support one-shot non-interactive mode
+```
+$ coding-agent "fix the off-by-one in parse.go"
+```
 
 ## Features
 
-### Core Features
+- **Interactive TUI** with ANSI styling, themes, spinners, live token stats,
+  and slash commands (`/help`, `/stats`, `/goal`, `/compress`, `/dump`, …)
+- **Agentic tool loop**: the model calls tools; results are fed back; the loop
+  runs until the model stops or `--max-iterations` is reached
+- **Tools**: `bash`, `read_file`, `write_file`, `read_lines`, `insert_lines`,
+  `replace_text`, `move_text`, `list_files`, `grep`, `git_log`, `git_show`,
+  `git_diff`, `todo`, `view_image`, `activate_skill`, and `subagent`
+  (nested agent)
+- **Skills**: `SKILL.md` files (YAML front matter + instructions) discovered
+  from bundled, user (`~/.config/coding-agent/skills`) and project scopes;
+  project skills require directory trust
+- **MCP servers**: stdio JSON-RPC Model Context Protocol clients; server tools
+  are exposed to the model as `mcp_<server>_<tool>`
+- **Context compression**: when the estimated context exceeds a threshold, the
+  middle of the conversation is replaced by a model-written summary
+  (first and last messages are preserved)
+- **Goal mode**: `/goal <text>` keeps the agent looping until the model reports
+  `GOAL_ACHIEVED`
+- **Session dumps**: the full context is written to
+  `coding-agent-context.json` in the system temp directory (unique suffixes on
+  collision) on exit or via `/dump`; `--load <file>` resumes a session
+- **Web UI**: `--web` serves an HTML/JS chat interface with SSE streaming
+- **Read-only mode** (`--read-only`) removes all mutating tools
+- **One-shot mode** (`-p "prompt"`) for scripting; `--quiet` prints only the
+  answer; exit codes are meaningful (see below)
 
-- **Minimal TUI** with input prompt for user interaction
-- **Runtime statistics** tracking (tokens, tool calls, iterations)
-- **Tool support** for common coding tasks
+## Requirements
 
-### Supported Tools
+- Go 1.22 or newer to build
+- An OpenAI-compatible inference endpoint (e.g. `llama-server --port 8080`)
 
-1. **bash** - Execute shell commands and scripts
-2. **read_file** - Read entire file contents
-3. **write_file** - Write content to files
-4. **read_lines** - Read specific line ranges from files
-5. **insert_lines** - Insert lines at specific positions
+## Build
 
-### Technical Features
-
-- **Zero external dependencies** - Uses only Go standard library
-- **Cross-platform** - Works on Linux, macOS, and Windows
-- **Streaming responses** - Real-time token display
-- **Context management** - Configurable context size with compression
-- **History navigation** - Up/down arrow keys for previous prompts
-- **Cancellation** - Escape key to cancel ongoing operations
-- **Version tracking** - Git commit hash and dirty status on startup
-
-## Building
-
-### Prerequisites
-
-- Go 1.22 or later
-
-### Build Commands
-
-```bash
-# Build for current platform
-make build
-
-# Build for all platforms
-make build-all
-
-# Run tests
-make test
-
-# Run tests with coverage
-make test-cover
-
-# Run go vet
-make vet
+```sh
+make build          # or: go build -o coding-agent .
+make test           # go test ./...
+make lint           # go vet + gofmt check
 ```
 
-### Build with Version Information
+The binary embeds git hash / dirty state / build time via `-ldflags`
+(`make build` does this automatically; a bare `go build` shows `unknown`).
 
-Version information is automatically embedded at build time:
+## Quick start
 
-```bash
-make build
-# Git Hash: a1b2c3d [clean]
-# Build Time: 2024-01-15T10:30:00Z
-```
-
-## Usage
-
-### Interactive Mode
-
-```bash
-# Start the agent
+```sh
+# llama.cpp server on localhost:8080 (default endpoint)
+llama-server -m your-model.gguf --port 8080
 ./coding-agent
 
-# Commands available in TUI:
-# - Type your request and press Enter
-# - Type 'stats' to view statistics
-# - Type 'clear' to clear output
-# - Type 'clear-history' to clear input history
-# - Press Escape to cancel ongoing operations
-# - Use Up/Down arrow keys for history navigation
-# - Press Ctrl+C to exit
+# one-shot
+./coding-agent -p "list the go files here and summarise them"
+
+# GitHub Models
+export CODING_AGENT_API_ENDPOINT=https://models.inference.ai.azure.com
+export CODING_AGENT_API_KEY=ghp_...
+./coding-agent --model gpt-4o
 ```
-
-### One-Shot Mode
-
-```bash
-# With prompt flag
-./coding-agent --prompt "Create a Go function that adds two numbers"
-
-# With prompt from stdin
-echo "Refactor utils.go" | ./coding-agent --stdin
-
-# With prompt from file
-./coding-agent --prompt-file task.txt
-
-# With output file
-./coding-agent --prompt "Create main.go" --output result.txt
-
-# Verbose mode
-./coding-agent --prompt "Create a file" --verbose
-
-# Quiet mode
-./coding-agent --prompt "Create a file" --quiet
-```
-
-### Web UI Mode
-
-```bash
-# Start the web UI on the default address and port
-./coding-agent --web
-
-# Start on a custom address and port
-./coding-agent --web --web-addr 0.0.0.0 --web-port 9000
-```
-
-Open `http://127.0.0.1:8080` in your browser. The web UI provides a chat
-interface with live streaming responses, context-size indicator, read-only
-toggle, history, slash commands, goal mode, and theme selection. The frontend
-is a dependency-free vanilla JS single-page app embedded into the binary.
-
-### Command-Line Options
-
-| Option           | Description                   | Default |
-| ---------------- | ----------------------------- | ------- |
-| `-p, --prompt`   | Prompt for one-shot mode      | -       |
-| `--stdin`        | Read prompt from stdin        | false   |
-| `--prompt-file`  | Read prompt from file         | -       |
-| `--model`        | Model to use                  | llama3  |
-| `--temperature`  | Inference temperature         | 0.7     |
-| `--max-tokens`   | Maximum tokens to generate    | 64000   |
-| `--context-size` | Context window size           | 128000  |
-| `--no-stream`    | Disable streaming             | false   |
-| `--verbose`      | Enable verbose output         | false   |
-| `--quiet`        | Suppress non-essential output | false   |
-| `--output`       | Write results to file         | -       |
-| `--web`          | Start the web UI instead of the terminal UI | false |
-| `--web-addr`     | Web UI listen address         | 127.0.0.1 |
-| `--web-port`     | Web UI listen port            | 8080    |
-| `-h, --help`     | Show help message             | -       |
-| `-v, --version`  | Show version information      | -       |
-
-### Environment Variables
-
-| Variable                             | Description                           |
-| ------------------------------------ | ------------------------------------- |
-| `CODING_AGENT_MODEL`                 | Model to use                          |
-| `CODING_AGENT_TEMPERATURE`           | Inference temperature                 |
-| `CODING_AGENT_MAX_TOKENS`            | Maximum tokens                        |
-| `CODING_AGENT_CONTEXT_SIZE`          | Context window size                   |
-| `CODING_AGENT_API_ENDPOINT`          | API endpoint URL                      |
-| `CODING_AGENT_API_KEY`               | API key for authentication            |
-| `CODING_AGENT_INITIAL_TOKEN_TIMEOUT` | Initial token timeout (seconds)       |
-| `CODING_AGENT_STREAMING`             | Enable/disable streaming (true/false) |
-| `CODING_AGENT_MAX_HISTORY`           | Maximum input history entries         |
-
-## Tool Calling Format
-
-All tool calls use a standardized JSON format:
-
-```
-[TOOL:{"name":"tool_name","parameters":{...}}]
-```
-
-### Examples
-
-**Bash command:**
-
-```
-[TOOL:{"name":"bash","parameters":{"command":"ls -la"}}]
-```
-
-**Read file:**
-
-```
-[TOOL:{"name":"read_file","parameters":{"path":"/path/to/file.txt"}}]
-```
-
-**Write file with multi-line content:**
-
-```
-[TOOL:{"name":"write_file","parameters":{"path":"script.sh","content":"#!/bin/bash\necho hello"}}]
-```
-
-**Read lines:**
-
-```
-[TOOL:{"name":"read_lines","parameters":{"path":"file.txt","start":1,"end":10}}]
-```
-
-**Insert lines:**
-
-```
-[TOOL:{"name":"insert_lines","parameters":{"path":"file.txt","line":5,"lines":"new line"}}]
-```
-
-## Runtime Statistics
-
-The agent tracks and displays:
-
-- Input tokens processed
-- Output tokens generated
-- Tool calls (total and failed)
-- Iterations
-- Uptime
-- Current context size
-
-View statistics with the `stats` command in TUI mode.
 
 ## Configuration
 
-### Context Size
+Priority (lowest → highest): **defaults → config file → environment → CLI
+flags**.
 
-Default: 128000 tokens
+### Config file
 
-Can be configured via:
+`~/.coding-agentrc` (INI style; override with `--config` or
+`CODING_AGENT_CONFIG`). Global `key = value` pairs plus optional
+`[mcp_server.<name>]` sections:
 
-- Environment variable: `CODING_AGENT_CONTEXT_SIZE`
-- Command-line flag: `--context-size`
-- Config file
+```ini
+api_endpoint = http://localhost:8080/v1
+model        = qwen2.5-coder-7b-instruct
+temperature  = 0.7
+max_tokens   = 4096
+stream       = true
+context_size = 8192
+context_threshold = 0.75
+max_iterations = 25
+theme        = dark
+persona      = You are a terse senior engineer.
 
-### Initial Token Timeout
-
-Default: 86400 seconds (24 hours)
-
-Minimum: 10 seconds
-
-Can be configured via:
-
-- Environment variable: `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`
-- Command-line flag: `--initial-token-timeout`
-
-## Architecture
-
-```
-implementation/
-├── main.go           # Entry point, CLI handling
-├── go.mod            # Go module definition
-├── Makefile          # Build automation
-├── README.md         # This file
-├── agent/            # Agent logic
-│   ├── agent.go      # Main agent implementation
-│   └── agent_test.go # Agent tests
-├── config/           # Configuration handling
-│   ├── config.go     # Config parsing and validation
-│   └── config_test.go # Config tests
-├── inference/        # LLM backend communication
-│   ├── inference.go  # Inference client
-│   └── inference_test.go # Inference tests
-├── tools/            # Tool implementations
-│   ├── tools.go      # Tool executor and definitions
-│   └── tools_test.go # Tool tests
-├── tui/              # Terminal user interface
-│   ├── tui.go        # TUI implementation
-│   └── tui_test.go   # TUI tests
-└── webui/            # Web user interface
-    ├── server.go     # HTTP server and routing
-    ├── session.go    # Per-session agent state
-    ├── handlers.go   # REST + SSE handlers
-    ├── events.go     # Event types and marshaling
-    ├── sse.go        # Server-Sent Events writer
-    ├── static.go     # Embedded static assets
-    └── static/       # Frontend (index.html, app.js, styles.css)
+[mcp_server.myserver]
+enabled = true
+command = path/to/server
+args    = --stdio
+env.TOKEN = secret
 ```
 
-## Requirements Coverage
+### Environment variables
 
-This implementation covers all 25 requirements:
+All config keys have a `CODING_AGENT_*` equivalent:
+`CODING_AGENT_API_ENDPOINT`, `CODING_AGENT_API_KEY`, `CODING_AGENT_MODEL`,
+`CODING_AGENT_TEMPERATURE`, `CODING_AGENT_MAX_TOKENS`, `CODING_AGENT_TOP_P`,
+`CODING_AGENT_STREAM`, `CODING_AGENT_INITIAL_TOKEN_TIMEOUT`,
+`CODING_AGENT_CONTEXT_SIZE`, `CODING_AGENT_CONTEXT_THRESHOLD`,
+`CODING_AGENT_MAX_ITERATIONS`, `CODING_AGENT_THEME`, `CODING_AGENT_DEBUG`,
+`CODING_AGENT_DEBUG_LOG`, `CODING_AGENT_READ_ONLY`, `CODING_AGENT_PERSONA`,
+`CODING_AGENT_SUMMARY_ONLY`, `CODING_AGENT_GOAL`, `CODING_AGENT_CONFIG`.
+MCP servers can also be configured via
+`CODING_AGENT_MCP_<NAME>_<FIELD>` variables (e.g.
+`CODING_AGENT_MCP_GITHUB_COMMAND`).
 
-1. ✅ **Go Runtime** - Go modules, cross-platform binary
-2. ✅ **TUI Input Prompt** - Minimal TUI with input
-3. ✅ **Runtime Statistics** - Token and tool tracking
-4. ✅ **Bash Tool** - Command execution
-5. ✅ **Read File Tool** - File reading
-6. ✅ **Write File Tool** - File writing
-7. ✅ **Inference Backend** - OpenAI API compatible
-8. ✅ **Context Size** - Configurable context window
-9. ✅ **Context Compression** - Auto-compression support
-10. ✅ **Streaming Inference** - Real-time token display
-11. ✅ **Read Lines Tool** - Line range reading
-12. ✅ **Insert Lines Tool** - Line insertion
-13. ✅ **Replace Lines Tool** - Line replacement (range and search)
-14. ✅ **Tool Calling Format** - JSON-based format
-15. ✅ **Tool Prefix Prompt** - System prompt with tools
-16. ✅ **Tool Result Context** - Results added to context
-17. ✅ **TUI Tool Feedback** - Tool call display
-18. ✅ **LLM Error Feedback** - Error messages to LLM
-19. ✅ **TUI History Navigation** - Up/down arrow support
-20. ✅ **TUI Escape Cancellation** - Escape key cancellation
-21. ✅ **TUI Context Size Display** - Context size indicator
-22. ✅ **No User Input Echo** - No redundant input display
-23. ✅ **Version Information** - Git hash display
-24. ✅ **Zero External Dependencies** - Standard library only
-25. ✅ **One-Shot Mode** - Non-interactive CLI mode
+### Flags
 
-## Testing
+Run `coding-agent --help` for the full list. Highlights:
 
-Run all tests:
+| Flag | Meaning |
+|---|---|
+| `-p, --prompt` | one-shot prompt (non-interactive) |
+| `--stdin` | read prompt from stdin (auto-detected when piped) |
+| `--model` | model name |
+| `--api-endpoint` | API base URL |
+| `--api-key` | API key |
+| `--no-stream` | disable streaming |
+| `--max-iterations N` | cap on tool-loop iterations |
+| `--context-size N` | model context window (tokens) |
+| `--context-threshold F` | compress above F × context-size |
+| `--goal TEXT` | enable goal mode |
+| `--read-only` | disable write/execute tools |
+| `--web [--web-port N]` | serve the web UI |
+| `--load FILE` | resume from a session dump |
+| `--output FILE` | write final answer to a file |
+| `--quiet` | print only the final answer (one-shot) |
+| `--verbose` | print tool calls and a summary |
+| `--no-dump-on-exit` | skip the exit context dump |
+| `--theme NAME` | dark (default), light, solarized, gruvbox, darkula |
 
-```bash
-make test
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | runtime error |
+| 2 | invalid arguments / configuration |
+| 3 | authentication error (bad or missing API key) |
+| 4 | inference timeout |
+
+## Skills
+
+A skill is a directory containing `SKILL.md` with YAML front matter:
+
+```markdown
+---
+name: my-skill
+description: What this skill does
+---
+Instructions injected when the model calls activate_skill("my-skill").
 ```
 
-Run with coverage:
+Search order (project scope first, so project skills win on name clashes):
 
-```bash
-make test-cover
+- **Project** (only if the directory is trusted): `./.agents/skills`,
+  `./skills`, `./.claude/skills`
+- **User**: `~/.agents/skills`, `~/.skills`, `~/.claude/skills`
+- **Custom**: additional directories via `--skills <dir>` (repeatable)
+
+Trust a project directory with `--trust <dir>` (persisted in
+`~/.coding-agent-trusted`; also settable via `trust = <dir>` in the config
+file). Disable skills entirely with `--no-skills`.
+
+## MCP servers
+
+Configure servers in the config file:
+
+```ini
+[mcp_server.github]
+enabled = true
+command = mcp-github
 ```
 
-Run with race detector:
+or via environment: `CODING_AGENT_MCP_GITHUB_ENABLED=1`,
+`CODING_AGENT_MCP_GITHUB_COMMAND=mcp-github`,
+`CODING_AGENT_MCP_GITHUB_ARGS=--stdio`.
 
-```bash
-make test-race
+On startup the agent launches each server over stdio, performs the MCP
+initialize handshake, and registers its tools as `mcp_github_<tool>`.
+`--read-only` disables MCP tools (they may mutate state).
+
+## Web UI
+
+```sh
+./coding-agent --web --web-port 8081
 ```
 
-## License
+Open <http://127.0.0.1:8081>. The UI streams assistant tokens over SSE, shows
+tool calls, stats, and supports the same slash commands.
 
-See LICENSE
+## Development
+
+```
+.
+├── main.go            # entry point, one-shot & interactive orchestration
+├── config/            # flags, env, config file, precedence
+├── inference/         # OpenAI-compatible client, SSE streaming, retries
+├── agent/             # agentic loop, context mgmt, compression, dumps, goal mode
+├── tools/             # tool registry + implementations
+├── skills/            # SKILL.md discovery, trust, injection
+├── mcp/               # stdio JSON-RPC MCP client
+├── tui/               # terminal UI, key reader, themes, spinners
+├── web/               # embedded web UI (net/http + SSE)
+├── colors/            # ANSI helpers + themes
+├── debug/             # optional debug logging
+└── version/           # build info (ldflags-injected)
+```
+
+Tests use only the standard library (`go test ./...`).

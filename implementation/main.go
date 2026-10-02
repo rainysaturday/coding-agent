@@ -1,1040 +1,299 @@
-//go:generate make build
-
-// Minimal Coding Agent Harness
-// A minimal coding agent harness written in Go with a basic TUI supporting an input prompt.
-
+// Command coding-agent is a minimal coding agent harness: a TUI (or web UI)
+// driving an OpenAI-compatible inference backend with tool calling.
 package main
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"golang.org/x/term"
-
-	"github.com/coding-agent/harness/agent"
-	"github.com/coding-agent/harness/colors"
-	"github.com/coding-agent/harness/config"
-	"github.com/coding-agent/harness/inference"
-	"github.com/coding-agent/harness/tools"
-	"github.com/coding-agent/harness/tui"
-	"github.com/coding-agent/harness/webui"
+	"github.com/coding-agent/coding-agent/agent"
+	"github.com/coding-agent/coding-agent/colors"
+	"github.com/coding-agent/coding-agent/config"
+	"github.com/coding-agent/coding-agent/debug"
+	"github.com/coding-agent/coding-agent/tui"
+	"github.com/coding-agent/coding-agent/version"
+	"github.com/coding-agent/coding-agent/web"
 )
-
-// Version information injected at build time
-// Terminal color codes for one-shot mode output.
-
-var (
-	gitHash   string
-	gitDirty  string
-	buildTime string
-)
-
-func init() {
-	if gitHash == "" {
-		gitHash = "unknown"
-	}
-	if gitDirty == "" {
-		gitDirty = "unknown"
-	}
-}
 
 func main() {
-	// Disable colors when stdout is not a TTY (or NO_COLOR is set) so ANSI
-	// escape codes do not leak into captured/piped output (e.g. a subagent's
-	// summary that is fed back into the parent's message history).
-	colors.AutoDetect()
+	os.Exit(run(os.Args[1:]))
+}
 
-	// Parse command-line arguments
-	cfg, err := config.ParseArgs(os.Args[1:])
+func run(args []string) int {
+	cfg, err := config.Load(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+		printUsage(os.Stderr)
+		return 2
 	}
-
-	// Validate any user-supplied --tools list so unknown names are reported
-	// rather than silently ignored.
-	if len(cfg.Tools) > 0 {
-		if err := tools.ValidateToolNames(cfg.Tools); err != nil {
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-			os.Exit(2)
-		}
-	}
-
-	// Export the resolved configuration to CODING_AGENT_* env vars so spawned
-	// subagents inherit the same settings (model, endpoint, key, tokens, tools,
-	// etc.) even when they were provided via CLI flags rather than the environment.
-	exportResolvedConfigToEnv(cfg)
-
-	// Apply theme (CLI flag overrides env var; default is "dark")
-	if cfg.Theme != "" {
-		if err := colors.ApplyTheme(cfg.Theme); err != nil {
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-			os.Exit(2)
-		}
-	}
-
-	// Handle version flag
-	if cfg.ShowVersion {
-		displayVersion()
-		os.Exit(0)
-	}
-
-	// Handle help flag
 	if cfg.ShowHelp {
-		displayHelp()
-		os.Exit(0)
+		printUsage(os.Stdout)
+		return 0
+	}
+	if cfg.ShowVersion {
+		fmt.Println(version.Full())
+		return 0
 	}
 
-	// Handle list-tools flag
-	if cfg.ListTools {
-		displayTools()
-		os.Exit(0)
+	if err := colors.ApplyTheme(cfg.Theme); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v (falling back to %s)\n", err, colors.DefaultTheme)
+		cfg.Theme = colors.DefaultTheme
+		_ = colors.ApplyTheme(cfg.Theme)
 	}
 
-	// Set build version for agent debug logging
-	version := gitHash
-	if gitDirty == "dirty" {
-		version = version + " [dirty]"
-	}
-	agent.SetBuildVersion(version)
-
-	// Detect run mode
-	if cfg.Prompt != "" || cfg.PromptFile != "" || cfg.UseStdin || cfg.Goal != "" {
-		// One-shot mode
-		err = runOneShotMode(cfg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-			os.Exit(exitCodeForError(err))
-		}
-		os.Exit(0)
-	}
-
-	// Web UI mode
-	if cfg.Web {
-		err = runWebMode(cfg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-
-	// Interactive mode
-	err = runInteractiveMode(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		os.Exit(1)
-	}
-}
-
-// exportResolvedConfigToEnv exports the parent's resolved configuration to the
-// CODING_AGENT_* environment variables so spawned subagents inherit the same
-// settings (model, endpoint, key, max tokens, temperature, tools, read-only,
-// etc.) even when they were provided via CLI flags rather than the environment.
-// The subagent's config parser reads these vars, and executeSubagent forwards
-// the tool-related ones as explicit CLI flags.
-func exportResolvedConfigToEnv(cfg *config.Config) {
-	if cfg.Model != "" {
-		os.Setenv("CODING_AGENT_MODEL", cfg.Model)
-	}
-	if cfg.Temperature != nil {
-		os.Setenv("CODING_AGENT_TEMPERATURE", strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64))
-	}
-	if cfg.MaxTokens > 0 {
-		os.Setenv("CODING_AGENT_MAX_TOKENS", strconv.Itoa(cfg.MaxTokens))
-	}
-	if cfg.APIEndpoint != "" {
-		os.Setenv("CODING_AGENT_API_ENDPOINT", cfg.APIEndpoint)
-	}
-	if cfg.APIKey != "" {
-		os.Setenv("CODING_AGENT_API_KEY", cfg.APIKey)
-	}
-	if len(cfg.Tools) > 0 {
-		os.Setenv("CODING_AGENT_TOOLS", strings.Join(cfg.Tools, ","))
-	}
-	if cfg.ReadOnly {
-		os.Setenv("CODING_AGENT_READ_ONLY", "true")
-	}
-	if cfg.Experimental {
-		os.Setenv("CODING_AGENT_EXPERIMENTAL", "true")
-	}
-	if cfg.Theme != "" {
-		os.Setenv("CODING_AGENT_THEME", cfg.Theme)
-	}
-	if cfg.Persona != "" {
-		os.Setenv("CODING_AGENT_PERSONA", cfg.Persona)
-	}
-	if cfg.ContextSize > 0 {
-		os.Setenv("CODING_AGENT_CONTEXT_SIZE", strconv.Itoa(cfg.ContextSize))
-	}
-	if cfg.MaxIterations > 0 {
-		os.Setenv("CODING_AGENT_MAX_ITERATIONS", strconv.Itoa(cfg.MaxIterations))
-	}
-	if cfg.InitialTokenTimeout > 0 {
-		os.Setenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT", strconv.Itoa(cfg.InitialTokenTimeout))
-	}
-	if cfg.ConnectionTimeout > 0 {
-		os.Setenv("CODING_AGENT_CONNECTION_TIMEOUT", strconv.Itoa(cfg.ConnectionTimeout))
-	}
-	if cfg.ReadTimeout > 0 {
-		os.Setenv("CODING_AGENT_READ_TIMEOUT", strconv.Itoa(cfg.ReadTimeout))
-	}
-	// Streaming defaults to true; export it whenever it differs from the default
-	// so subagents honor a parent that disabled streaming via CLI flag.
-	os.Setenv("CODING_AGENT_STREAMING", strconv.FormatBool(cfg.Streaming))
-	os.Setenv("CODING_AGENT_DEBUG", strconv.FormatBool(cfg.Debug))
-	if cfg.DebugLog != "" {
-		os.Setenv("CODING_AGENT_DEBUG_LOG", cfg.DebugLog)
-	}
-	os.Setenv("CODING_AGENT_DEBUG_VERBOSE", strconv.FormatBool(cfg.DebugVerbose))
-	os.Setenv("CODING_AGENT_DEBUG_VERBOSE_VERBOSE", strconv.FormatBool(cfg.DebugVerboseVerbose))
-	if cfg.SummaryOnly {
-		os.Setenv("CODING_AGENT_SUMMARY_ONLY", "true")
-	}
-	if cfg.Goal != "" {
-		os.Setenv("CODING_AGENT_GOAL", cfg.Goal)
-	}
-	// Web UI settings
-	if cfg.Web {
-		os.Setenv("CODING_AGENT_WEB", "true")
-	}
-	if cfg.WebAddr != "" {
-		os.Setenv("CODING_AGENT_WEB_ADDR", cfg.WebAddr)
-	}
-	if cfg.WebPort > 0 {
-		os.Setenv("CODING_AGENT_WEB_PORT", strconv.Itoa(cfg.WebPort))
-	}
-	// Skills settings
-	os.Setenv("CODING_AGENT_SKILLS", strconv.FormatBool(cfg.Skills))
-	if len(cfg.SkillsDirs) > 0 {
-		os.Setenv("CODING_AGENT_SKILLS_DIRS", strings.Join(cfg.SkillsDirs, ","))
-	}
-	if len(cfg.TrustDirs) > 0 {
-		os.Setenv("CODING_AGENT_TRUST_DIRS", strings.Join(cfg.TrustDirs, ","))
-	}
-}
-
-func displayVersion() {
-	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s  Minimal Coding Agent Harness%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	if gitDirty == "clean" {
-		fmt.Printf("  %sVersion:%s %s [clean]\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
-	} else if gitDirty == "dirty" {
-		fmt.Printf("  %sVersion:%s %s [dirty]%s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash, colors.GetColor("reset"))
-	} else {
-		fmt.Printf("  %sVersion:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
-	}
-	if buildTime != "" {
-		fmt.Printf("  %sBuilt:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), buildTime)
-	}
-	fmt.Println()
-}
-
-func displayHelp() {
-	fmt.Println("Minimal Coding Agent Harness")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  coding-agent [OPTIONS] [COMMAND]")
-	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  -p, --prompt string      Prompt for one-shot mode (non-interactive)")
-	fmt.Println("      --stdin              Read prompt from stdin")
-	fmt.Println("      --goal string        Set a goal for one-shot mode (non-interactive, activates goal mode)")
-	fmt.Println("      --prompt-file path   Read prompt from file")
-	fmt.Println("      --load path           Load conversation context from JSON file")
-	fmt.Println("      --config path        Load configuration from file")
-	fmt.Println("      --debug              Enable debug logging (saves conversation to file)")
-	fmt.Println("      --debug-log path     Path to debug log file (default: debug.log)")
-	fmt.Println("      --debug-verbose             Print every request/response to stderr during inference")
-	fmt.Println("      --debug-verbose-verbose     Print raw SSE body for every streaming chunk to stderr")
-	fmt.Println("      --model string       Model to use (default: \"llama3\")")
-	fmt.Println("      --temperature float  Inference temperature (omitted when not set, uses model default)")
-	fmt.Println("      --max-tokens int     Maximum tokens to generate (default: 64000)")
-	fmt.Println("      --context-size int   Context window size (default: 128000)")
-	fmt.Println("      --max-iterations int Maximum iterations for loop protection (default: 1000)")
-	fmt.Println("      --connection-timeout int  Connection timeout in seconds (default: 24 hours)")
-	fmt.Println("      --read-timeout int        Read timeout in seconds (default: 24 hours)")
-	fmt.Println("      --api-endpoint string  API endpoint URL (default: \"http://localhost:8080\")")
-	fmt.Println("      --initial-token-timeout int  Initial token timeout in seconds (default: 24 hours)")
-	fmt.Println("      --api-key string       API key for authentication")
-	fmt.Println("      --verbose            Enable verbose output")
-	fmt.Println("      --quiet              Suppress non-essential output")
-	fmt.Println("      --read-only          Enable read-only mode (only read_file, read_lines, list_files, grep, git_log, git_show, git_diff available)")
-	fmt.Println("      --experimental       Enable experimental features (e.g., subagent tool)")
-	fmt.Println("      --persona string     Set a persona for the agent (e.g., \"Expert Go developer\", \"Security code reviewer\")")
-	fmt.Println("      --theme string       Color theme for the TUI (dark, light, solarized, gruvbox, darkula). Overrides CODING_AGENT_THEME env var (default: \"dark\")")
-	fmt.Println("      --summary-only       Only output the final summary (used by subagents)")
-	fmt.Println("      --output file        Write results to file")
-	fmt.Println("      --no-dump-on-exit     Disable automatic context dump on exit")
-	fmt.Println("      --no-stream          Disable streaming output")
-	fmt.Println("  -h, --help               Show this help message")
-	fmt.Println("  -v, --version            Show version information")
-	fmt.Println("      --tools string       Comma-separated list of tool names to make available (overrides defaults for the mode)")
-	fmt.Println("      --list-tools          List available tools and exit")
-	fmt.Println("      --web                Start the web UI server instead of the terminal UI")
-	fmt.Println("      --web-addr string    Web UI listen address (default: \"127.0.0.1\")")
-	fmt.Println("      --web-port int       Web UI listen port (default: 8080)")
-	fmt.Println("      --skills              Enable Agent Skills discovery (default: on)")
-	fmt.Println("      --no-skills           Disable Agent Skills discovery")
-	fmt.Println("      --skills-dir path     Add a custom skill search directory (repeatable)")
-	fmt.Println("      --trust dir           Mark a directory as trusted for project-level skill loading (repeatable)")
-
-	fmt.Println()
-	fmt.Println("Interactive Commands:")
-	fmt.Println("  /stats       - Display runtime statistics")
-	fmt.Println("  /clear       - Clear the output display")
-	fmt.Println("  /clear-history - Clear input history")
-	fmt.Println("  /read-only [on|off] - Enable or disable read-only mode")
-	fmt.Println("  /dump         - Dump current context to JSON file")
-	fmt.Println("  /compress    - Manually trigger context compression")
-	fmt.Println("  /goal <prompt>    - Set a goal to guide the agent")
-	fmt.Println("  /goal-off         - Deactivate goal mode")
-	fmt.Println("  /skill <name>    - Load a skill's instructions into context")
-	fmt.Println("  /skills          - List available skills")
-	fmt.Println("  /create-skill <desc> - Create a new skill from a description")
-
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  coding-agent -p \"Create a REST API in Go\"")
-	fmt.Println("  coding-agent --prompt-file task.txt")
-	fmt.Println("  coding-agent --config config.txt")
-	fmt.Println("  echo \"Fix bug\" | coding-agent --stdin")
-	fmt.Println("  coding-agent --debug")
-	fmt.Println("  coding-agent --debug --debug-log /tmp/agent-debug.log")
-	fmt.Println("  coding-agent -p \"Task\" --debug")
-	fmt.Println()
-	fmt.Println("GitHub Copilot setup:")
-	fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://api.githubcopilot.com\"")
-	fmt.Println("  export GITHUB_TOKEN=\"ghu_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"")
-	fmt.Println("  coding-agent --model gpt-4o")
-	fmt.Println()
-	fmt.Println("GitHub Models setup (official API):")
-	fmt.Println("  export CODING_AGENT_API_ENDPOINT=\"https://models.github.ai\"")
-	fmt.Println("  export CODING_AGENT_API_KEY=\"github_pat_xxxxxxxxxxxxxxxxxxxx\"")
-	fmt.Println("  coding-agent --model openai/gpt-4.1")
-	fmt.Println()
-	fmt.Println("Theme customization:")
-	fmt.Println("  coding-agent --theme gruvbox")
-	fmt.Println("  export CODING_AGENT_THEME=solarized")
-	fmt.Println("  coding-agent --theme light")
-}
-func displayTools() {
-	fmt.Println("Available tools:")
-	fmt.Println()
-	// List all available tool names
-	names := tools.AllToolNames()
-	for _, name := range names {
-		fmt.Printf("  %s\n", name)
-	}
-	fmt.Println()
-	fmt.Println("Use --tools to specify a comma-separated list of tool names.")
-	fmt.Println("For example: --tools \"read_file,read_lines,bash\"")
-	fmt.Println()
-	fmt.Println("Default tools for normal mode:")
-	fmt.Println("  " + strings.Join(tools.DefaultNormalTools(), ", "))
-	fmt.Println()
-	fmt.Println("Default tools for read-only mode:")
-	fmt.Println("  " + strings.Join(tools.DefaultReadOnlyTools(), ", "))
-	fmt.Println()
-	fmt.Println("Experimental tools (add with --experimental or include explicitly):")
-	fmt.Println("  subagent")
-}
-
-func runOneShotMode(cfg *config.Config) error {
-	var prompt string
-	var err error
-
-	// If --goal is specified, use it as the prompt and enable goal mode
-	if cfg.Goal != "" {
-		prompt = cfg.Goal
-	} else {
-		// Load prompt from other sources
-		prompt, err = loadPrompt(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to load prompt: %w", err)
-		}
-
-		if prompt == "" {
-			return fmt.Errorf("no prompt provided")
-		}
-	}
-
-	// Initialize agent
-	ag := agent.NewAgent(cfg)
-
-	if cfg.ContextFile != "" {
-		if err := ag.LoadContext(cfg.ContextFile); err != nil {
-			return fmt.Errorf("failed to load context: %w", err)
-		}
-	}
-
-	// If --goal is specified, set the goal on the agent
-	if cfg.Goal != "" {
-		ag.SetGoal(cfg.Goal)
-	}
-
-	// Create context with cancellation support
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle SIGINT for cancellation
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	// Run agent with streaming to show LLM responses in real-time
-	startTime := time.Now()
-	transitionedFromReasoning := false
-	lastContentWasToolCall := false
-	result, err := ag.RunStream(ctx, prompt, func(chunk inference.StreamingChunk) {
-		// Stream LLM responses to stdout with appropriate coloring
-		switch chunk.ContentType {
-		case inference.StreamingContentTypeReasoning:
-			fmt.Printf("%s%s%s", colors.GetColor("dim"), chunk.Text, colors.GetColor("reset"))
-		case inference.StreamingContentTypeGoal:
-			// Goal messages are displayed in magenta to stand out
-			fmt.Printf("%s%s%s", colors.GetColor("magenta"), chunk.Text, colors.GetColor("reset"))
-		default:
-			// Add separator when transitioning from reasoning to normal content
-			if !transitionedFromReasoning && chunk.Text != "" {
-				fmt.Println()
-				fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
-				transitionedFromReasoning = true
-			}
-			// Handle tool call parameter updates in-place using ANSI cursor positioning,
-			// matching the behavior of interactive mode.
-			if strings.HasPrefix(chunk.Text, "[Tool Call] ") {
-				fmt.Print("\033[2K\r" + chunk.Text)
-				lastContentWasToolCall = true
-			} else {
-				if lastContentWasToolCall {
-					fmt.Print("\n")
-				}
-				fmt.Print(chunk.Text)
-				lastContentWasToolCall = false
-			}
-		}
-	})
-	duration := time.Since(startTime)
-
-	// Close debug logger at the end of one-shot mode
 	if cfg.Debug {
-		ag.CloseDebugLogger()
+		debug.Init(cfg.DebugLog, true)
+		defer debug.Close()
+	}
+	for _, w := range cfg.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 
-	if err != nil {
-		return fmt.Errorf("agent execution failed: %w", err)
-	}
-
-	// Output result
-	return outputResult(result, cfg, duration)
-}
-
-// exitCodeForError returns the appropriate exit code for an error.
-// Classification is delegated to the agent package's WrapError, which maps
-// error text onto typed errors (AuthError / ContextLimitError) in a single
-// place, so the string matching isn't duplicated here.
-func exitCodeForError(err error) int {
-	if err == nil {
-		return agent.ExitSuccess
-	}
-	wrapped := agent.WrapError(err)
-	var ctxErr *agent.ContextLimitError
-	if errors.As(wrapped, &ctxErr) {
-		return agent.ExitContextLimit
-	}
-	var authErr *agent.AuthError
-	if errors.As(wrapped, &authErr) {
-		return agent.ExitAuthError
-	}
-	return agent.ExitError
-}
-
-func loadPrompt(cfg *config.Config) (string, error) {
-	if cfg.Prompt != "" {
-		return cfg.Prompt, nil
-	}
-
+	// One-shot prompt sources.
 	if cfg.PromptFile != "" {
-		// Handle "-" as stdin
-		if cfg.PromptFile == "-" {
-			reader := bufio.NewReader(os.Stdin)
-			var prompt string
-			data, err := io.ReadAll(reader)
-			if err != nil {
-				return "", err
-			}
-			prompt = string(data)
-			return prompt, nil
-		}
-		content, err := os.ReadFile(cfg.PromptFile)
+		data, err := os.ReadFile(cfg.PromptFile)
 		if err != nil {
-			return "", err
+			fmt.Fprintf(os.Stderr, "Error: cannot read prompt file: %v\n", err)
+			return 2
 		}
-		return string(content), nil
+		cfg.Prompt = string(data)
 	}
-
 	if cfg.UseStdin {
-		reader := bufio.NewReader(os.Stdin)
-		var prompt string
-		data, err := io.ReadAll(reader)
+		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return "", err
+			fmt.Fprintf(os.Stderr, "Error: cannot read stdin: %v\n", err)
+			return 2
 		}
-		prompt = string(data)
-		return prompt, nil
+		if cfg.Prompt != "" {
+			cfg.Prompt += "\n"
+		}
+		cfg.Prompt += string(data)
 	}
 
-	return "", fmt.Errorf("no prompt provided")
-}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-func outputResult(result *agent.Result, cfg *config.Config, duration time.Duration) error {
-	// Write to file if specified (do this first, before any early return)
-	if cfg.OutputFile != "" {
-		err := os.WriteFile(cfg.OutputFile, []byte(result.FinalOutput), tools.FilePermWrite)
-		if err != nil {
-			return fmt.Errorf("failed to write output file: %w", err)
+	switch cfg.Mode {
+	case config.WebMode:
+		srv := web.NewServer(cfg)
+		if err := srv.Serve(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
 		}
-	}
-
-	// When streaming is enabled, the reasoning and final answer were already
-	// streamed to stdout by the RunStream callback, so don't print them again
-	// (this would duplicate the output). Only the summary is printed if verbose.
-	if cfg.Streaming {
-		if cfg.Verbose {
-			fmt.Printf("\n%s=== Summary ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-			fmt.Printf("  %sSteps executed:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Steps))
-			fmt.Printf("  %sTokens used:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), result.TokenUsage)
-			if result.Reasoning != "" {
-				fmt.Printf("  %sReasoning:%s %d chars\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Reasoning))
-			}
-			fmt.Printf("  %sDuration:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), duration)
-		}
-		return nil
-	}
-
-	if cfg.Quiet {
-		// Minimal output - just the final answer
-		if result.Reasoning != "" {
-			fmt.Printf("%s[Reasoning]\n%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
-		}
-		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
-		return nil
-	}
-
-	// Summary-only mode - only output the final answer, minimal formatting
-	if cfg.SummaryOnly {
-		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
-		return nil
-	}
-
-	// Verbose output with tool calls
-	if cfg.Verbose {
-		fmt.Printf("%s=== Agent Execution Log ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-		for _, step := range result.Steps {
-			fmt.Printf("\n%s[Step]%s %s\n", colors.GetColor("blue"), colors.GetColor("reset"), step.Action)
-			if step.ToolCall != nil {
-				fmt.Printf("  %sTool:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), step.ToolCall.Name)
-				fmt.Printf("  %sParameters:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), step.ToolCall.Parameters)
-			}
-			if step.ToolResult != nil {
-				fmt.Printf("  %sResult:%s %s\n", colors.GetColor("green"), colors.GetColor("reset"), step.ToolResult.Output)
-			}
-		}
-		fmt.Printf("\n%s=== Reasoning ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-		if result.Reasoning != "" {
-			fmt.Printf("%s%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
-		} else {
-			fmt.Printf("%s(No reasoning provided)%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-		}
-		fmt.Printf("\n%s=== Final Output ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	}
-
-	// Display reasoning first if present
-	if result.Reasoning != "" {
-		fmt.Printf("%s[Reasoning]\n%s%s\n\n", colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
-	}
-
-	fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
-
-	// Summary statistics
-	if cfg.Verbose {
-		fmt.Printf("\n%s=== Summary ===%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-		fmt.Printf("  %sSteps executed:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Steps))
-		fmt.Printf("  %sTokens used:%s %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), result.TokenUsage)
-		if result.Reasoning != "" {
-			fmt.Printf("  %sReasoning:%s %d chars\n", colors.GetColor("cyan"), colors.GetColor("reset"), len(result.Reasoning))
-		}
-		fmt.Printf("  %sDuration:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), duration)
-	}
-
-	return nil
-}
-
-// handleInteractiveCommand handles interactive mode commands.
-// Returns (input string, shouldContinue bool).
-// If the command is handled (not /goal), input is unchanged and shouldContinue is true.
-// If the command is /goal, input is modified to the goal prompt and shouldContinue is false.
-func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TUI, cfg *config.Config) (string, bool) {
-	if !strings.HasPrefix(input, "/") {
-		return input, false
-	}
-
-	fullCommand := strings.TrimPrefix(input, "/")
-	parts := strings.SplitN(fullCommand, " ", 2)
-	command := parts[0]
-	arg := ""
-	if len(parts) > 1 {
-		arg = strings.TrimSpace(parts[1])
-	}
-
-	switch command {
-	case "stats":
-		stats := ag.GetStats()
-		tuiInstance.DisplayStats(stats)
-		return input, true
-	case "clear":
-		tuiInstance.ClearOutput()
-		return input, true
-	case "clear-history":
-		tuiInstance.ClearHistory()
-		return input, true
-	case "read-only":
-		on := arg != "off"
-		ag.GetToolExecutor().SetReadOnly(on)
-		if on {
-			fmt.Printf("%s[Read-only mode enabled: write operations disabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-		} else {
-			fmt.Printf("%s[Read-only mode disabled: write operations enabled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-		}
-		return input, true
-	case "compress":
-		fmt.Print("\n[Compressing context...]")
-		timeout := time.Duration(cfg.ReadTimeout) * time.Second
-		if timeout == 0 {
-			timeout = 24 * 60 * 60 * time.Second // Default to 24 hours if not set
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		err := ag.CompressContext(ctx)
-		cancel()
-		if err != nil {
-			fmt.Printf("%s[Compression failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		} else {
-			fmt.Printf("%s[Context compressed successfully]%s\n", colors.GetColor("green"), colors.GetColor("reset"))
-		}
-		return input, true
-	case "goal":
-		var goalPrompt string
-		if len(parts) > 1 {
-			goalPrompt = strings.TrimSpace(parts[1])
-		}
-		if goalPrompt == "" {
-			fmt.Printf("%sUsage: /goal <your goal here>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-			return input, true
-		}
-		ag.SetGoal(goalPrompt)
-		fmt.Printf("%s[Goal mode activated: %q]%s\n", colors.GetColor("magenta"), goalPrompt, colors.GetColor("reset"))
-		return goalPrompt, false
-	case "goal-off":
-		ag.ClearGoal()
-		fmt.Printf("%s[Goal mode deactivated]%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-		return input, true
-	case "dump":
-		path, err := ag.DumpContext()
-		if err != nil {
-			fmt.Printf("%s[Dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		} else {
-			fmt.Printf("%s[Context dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
-		}
-		return input, true
-	case "skill":
-		if arg == "" {
-			fmt.Printf("%sUsage: /skill <name>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-			return input, true
-		}
-		out, err := ag.ActivateSkill(arg)
-		if err != nil {
-			fmt.Printf("%s[Skill activation failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		} else {
-			fmt.Printf("%s[Skill: %s]%s\n", colors.GetColor("cyan"), out, colors.GetColor("reset"))
-		}
-		return input, true
-	case "skills":
-		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), ag.ListSkills(), colors.GetColor("reset"))
-		return input, true
-	case "create-skill":
-		if arg == "" {
-			fmt.Printf("%sUsage: /create-skill <description of the skill>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-			return input, true
-		}
-		fmt.Printf("%s[Create-skill: generating a skill from your description]%s\n", colors.GetColor("cyan"), colors.GetColor("reset"))
-		return buildCreateSkillPrompt(arg), false
+		return 0
+	case config.OneShotMode:
+		return runOneShot(ctx, cfg)
 	default:
-		fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-		return input, true
+		a := newAgent(cfg)
+		return tui.New(a, cfg).Run(ctx)
 	}
 }
 
-// buildCreateSkillPrompt returns the prompt injected to the model when the user
-// runs /create-skill <description>. It explains what a skill is, the SKILL.md
-// format, and where to place it, then asks the model to author a skill file
-// from the user's description. The model uses its write tools (write_file /
-// bash) to create the skill directory and SKILL.md.
-func buildCreateSkillPrompt(description string) string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
+// newAgent builds the agent and connects MCP servers (warnings are printed).
+func newAgent(cfg *config.Config) *agent.Agent {
+	a := agent.New(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, err := range a.ConnectMCP(ctx) {
+		fmt.Fprintf(os.Stderr, "warning: MCP: %v\n", err)
 	}
-
-	return fmt.Sprintf(`You are creating a new Agent Skill based on the user's description below.
-
-=== WHAT A SKILL IS ===
-A skill is a directory containing a SKILL.md file. It packages specialized
-instructions (and optionally scripts/, references/, and assets/ resources) that
-the agent can load on demand. The SKILL.md file has YAML frontmatter between
---- delimiters, followed by a Markdown body that is the skill's instructions.
-
-=== SKILL.md FORMAT ===
----
-name: <skill-name>
-description: <what it does AND when to use it>
-license: <optional short license>
-compatibility: <optional environment requirements>
-metadata:
-  <key>: <value>
-allowed-tools: <optional space-separated tools>
----
-
-# <Skill Name>
-
-## When to use this skill
-Describe the trigger conditions / scenarios where this skill applies.
-
-## Instructions
-Provide clear, step-by-step instructions, examples, and edge cases.
-
-## Resources (optional)
-List any bundled scripts/, references/, or assets/ files.
-
-=== RULES ===
-- name: 1-64 chars, lowercase alphanumerics + hyphens, must match the directory name.
-- description: 1-1024 chars; must state WHAT it does AND WHEN to use it (include trigger keywords).
-- The body is loaded wholesale on activation, so keep it focused (< 5000 tokens).
-
-=== PLACEMENT ===
-Create the skill as a directory under the project's skills location:
-  %s/.agents/skills/<skill-name>/SKILL.md
-or (client-native alternative):
-  %s/skills/<skill-name>/SKILL.md
-Use bash (mkdir -p) to create the directory and write_file to create its SKILL.md.
-
-=== USER'S SKILL DESCRIPTION ===
-%s
-`, cwd, cwd, description)
+	return a
 }
 
-// runAgentWithStreaming runs the agent with streaming and displays the result.
-func runAgentWithStreaming(ctx context.Context, ag *agent.Agent, tuiInstance *tui.TUI, cfg *config.Config, userInput string) {
-	var result *agent.Result
-	var err error
+// ---------------------------------------------------------------------------
+// one-shot mode (requirement 025)
+// ---------------------------------------------------------------------------
 
-	if cfg.Streaming {
-		// Use streaming mode - tokens appear as they arrive
-		result, err = ag.RunStream(ctx, userInput, func(chunk inference.StreamingChunk) {
-			// Stream each chunk immediately through TUI with appropriate coloring
-			switch chunk.ContentType {
-			case inference.StreamingContentTypeReasoning:
-				tuiInstance.StreamReasoningChunk(chunk.Text)
-			case inference.StreamingContentTypeGoal:
-				tuiInstance.StreamGoalChunk(chunk.Text)
-			default:
-				tuiInstance.StreamNormalChunk(chunk.Text)
-			}
-		})
-		// Ensure streaming session is ended even on error
-		defer tuiInstance.StreamEnd()
-	} else {
-		// Non-streaming mode
-		result, err = ag.Run(ctx, userInput)
+func runOneShot(ctx context.Context, cfg *config.Config) int {
+	a := newAgent(cfg)
+	if cfg.Goal != "" {
+		a.SetGoal(cfg.Goal)
 	}
 
-	// Check if we were cancelled
-	if err == context.Canceled || err == context.DeadlineExceeded {
-		fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-		return
-	}
-
-	if err != nil {
-		fmt.Printf("%sError: %v%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-		return
-	}
-
-	// Display final output if not already streamed
-	if !cfg.Streaming && result.FinalOutput != "" {
-		if result.Reasoning != "" {
-			tuiInstance.AddOutputf("\n%s[Assistant]%s %s[Reasoning]\n%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("dim"), result.Reasoning, colors.GetColor("reset"))
-		} else {
-			tuiInstance.AddOutputf("\n%s[Assistant]%s %s%s%s", colors.GetColor("blue"), colors.GetColor("reset"), colors.GetColor("cyan"), result.FinalOutput, colors.GetColor("reset"))
-		}
-	}
-
-	// Display summary if verbose
-	if cfg.Verbose {
-		tuiInstance.AddOutputf("\n--- Summary ---")
-		tuiInstance.AddOutputf("Steps: %d, Tokens: %d", len(result.Steps), result.TokenUsage)
-		if result.Reasoning != "" {
-			tuiInstance.AddOutputf("Reasoning: %d chars", len(result.Reasoning))
-		}
-	}
-}
-
-func runInteractiveMode(cfg *config.Config) error {
-	// Display welcome screen
-	displayVersion()
-	fmt.Printf("%sType your request below. Use Ctrl+C to exit.%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-	fmt.Println()
-
-	// Initialize TUI
-	tuiInstance := tui.NewTUI(cfg)
-
-	// Initialize agent
-	ag := agent.NewAgent(cfg)
+	// Load a previous context when requested.
 	if cfg.ContextFile != "" {
-		if err := ag.LoadContext(cfg.ContextFile); err != nil {
-			return fmt.Errorf("failed to load context: %w", err)
+		n, lastUser, err := a.LoadContext(cfg.ContextFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 2
 		}
-	}
-
-	// Detect terminal width and set max display width for tool call arguments
-	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
-		width, _, err := term.GetSize(fd)
-		if err == nil && width > 0 {
-			// Reserve space for UI elements and use remaining width for arguments
-			// Typically we want to leave ~30 chars for other UI elements (tool name, brackets, etc.)
-			ag.SetMaxDisplayWidth(width - 30)
-		}
-	}
-
-	// Ensure debug logger is closed on exit
-	// Automatic context dump on exit
-	defer func() {
-		if !cfg.NoDumpOnExit {
-			path, err := ag.DumpContext()
-			if err != nil {
-				fmt.Printf("%s[Automatic dump failed: %v]%s\n", colors.GetColor("red"), err, colors.GetColor("reset"))
-			} else {
-				fmt.Printf("%s[Context automatically dumped to: %s]%s\n", colors.GetColor("green"), path, colors.GetColor("reset"))
+		fmt.Printf("Loaded %d messages from %s\n", n, cfg.ContextFile)
+		if !cfg.Quiet {
+			if lastUser != "" {
+				fmt.Printf("Last user prompt: %s\n", truncate(lastUser, 200))
 			}
 		}
-	}()
-
-	if cfg.Debug {
-		defer func() {
-			ag.CloseDebugLogger()
-		}()
 	}
 
-	// Set context size callback
-	ag.SetContextSizeCallback(func(size, max int) {
-		tuiInstance.SetContextSize(size, max)
+	var final string
+	a.SetEventCallback(func(e agent.Event) {
+		switch e.Type {
+		case agent.EventContent:
+			if !cfg.Quiet {
+				fmt.Print(e.Text)
+			}
+		case agent.EventReasoning:
+			if cfg.Verbose {
+				fmt.Print(colors.GetColor("dim") + e.Text + colors.GetColor("reset"))
+			}
+		case agent.EventToolStart:
+			if !cfg.Quiet {
+				fmt.Printf("\n[Tool Call] %s (%s)\n", e.Tool, agent.FlattenArgs(e.Args))
+			}
+		case agent.EventToolResult:
+			if !cfg.Quiet {
+				if e.Failed {
+					fmt.Printf("Tool '%s' failed:\n%s\n", e.Tool, e.Result)
+				} else {
+					fmt.Printf("Tool '%s' executed successfully:\n%s\n", e.Tool, e.Result)
+				}
+			}
+		case agent.EventError:
+			fmt.Fprintf(os.Stderr, "\n%s\n", e.Text)
+		case agent.EventGoal, agent.EventCompressed, agent.EventSubagent:
+			if cfg.Verbose {
+				fmt.Printf("\n%s\n", e.Text)
+			}
+		}
 	})
 
-	// signalState holds the current root context state, protected by a mutex.
-	// This prevents race conditions during context recreation. Signal delivery
-	// for the interactive loop is handled separately by the prompt-aware handler.
-	type signalState struct {
-		rootCtx    context.Context
-		rootCancel context.CancelFunc
+	var err error
+	if cfg.Prompt != "" {
+		final, err = a.Submit(ctx, cfg.Prompt)
+	} else {
+		final, err = a.Continue(ctx)
 	}
-
-	var sigMu sync.Mutex
-	st := &signalState{}
-
-	// initSignalHandler sets up the root context. Must be called with sigMu held.
-	initSignalHandler := func(s *signalState) {
-		s.rootCtx, s.rootCancel = context.WithCancel(context.Background())
-	}
-	initSignalHandler(st)
-
-	// recreateSignalState creates a fresh root context when the current one is
-	// cancelled. Must be called with sigMu held. Thread-safe.
-	recreateSignalState := func() {
-		sigMu.Lock()
-		defer sigMu.Unlock()
-		initSignalHandler(st)
-	}
-
-	// promptState tracks whether we're at the input prompt.
-	// When true, signals are ignored (TUI handles Ctrl+C in raw mode).
-	// When false, signals trigger cancellation.
-	var promptMu sync.Mutex
-	atPrompt := false
-
-	// cancelSignal is sent when Ctrl+C should cancel the current operation.
-	cancelSignal := make(chan struct{}, 1)
-
-	// Start the prompt-aware signal handler goroutine.
-	// This goroutine runs for the lifetime of interactive mode.
-	// done is closed to shut down the prompt-aware signal handler goroutine.
-	// sigChan is deliberately never closed: signal.Notify may still target it,
-	// and sending on a closed channel would panic.
-	done := make(chan struct{})
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		for {
-			select {
-			case <-sigChan:
-				promptMu.Lock()
-				isPrompting := atPrompt
-				promptMu.Unlock()
-
-				if isPrompting {
-					// Signal during prompt input - let TUI handle it via its raw mode
-					// The TUI will detect the Ctrl+C byte directly
-					continue
-				}
-
-				// Signal during agent execution - cancel the operation
-				select {
-				case cancelSignal <- struct{}{}:
-				default:
-					// Already signalling cancellation
-				}
-			case <-done:
-				return
-			}
-		}
-	}()
-
-	// Wait group to track running agent operations
-	var wg sync.WaitGroup
-
-	// Main event loop
-	for {
-		// Wait for any previous operation to complete
-		wg.Wait()
-
-		// Ensure we have a valid root context (recreate if cancelled)
-		sigMu.Lock()
-		select {
-		case <-st.rootCtx.Done():
-			// Root context was cancelled, recreate everything
-			sigMu.Unlock()
-			recreateSignalState()
-		default:
-			sigMu.Unlock()
-		}
-
-		// Mark that we're at the prompt - signal handler will skip cancellation
-		promptMu.Lock()
-		atPrompt = true
-		promptMu.Unlock()
-
-		input, err := tuiInstance.Prompt()
-
-		// Mark that we're no longer at the prompt
-		promptMu.Lock()
-		atPrompt = false
-		promptMu.Unlock()
-
-		// Handle prompt errors
-		if err != nil {
-			if err.Error() == "cancelled" || err.Error() == "EOF" {
-				if err.Error() == "EOF" {
-					fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-				}
-				signal.Stop(sigChan)
-				close(done)
-				return nil
-			}
-			signal.Stop(sigChan)
-			close(done)
-			return err
-		}
-
-		if input == "" {
-			continue
-		}
-
-		// Handle commands (with / prefix)
-		input, shouldContinue := handleInteractiveCommand(input, ag, tuiInstance, cfg)
-		if shouldContinue {
-			continue
-		}
-		// Get current root context for this request
-		sigMu.Lock()
-		currentRootCtx := st.rootCtx
-		sigMu.Unlock()
-
-		// Create a cancellable context for this request derived from rootCtx.
-		// The context can be cancelled by:
-		// 1. Ctrl+C during agent execution (via cancelSignal channel)
-		// 2. Root context cancellation
-		ctx, cancel := context.WithCancel(currentRootCtx)
-
-		// Start a goroutine to forward cancelSignal to this context's cancel
-		go func() {
-			select {
-			case <-cancelSignal:
-				cancel()
-			case <-ctx.Done():
-				// Context already cancelled (e.g., by root or completion)
-			}
-		}()
-
-		// Show waiting indicator
+	if final != "" {
 		fmt.Println()
-		fmt.Printf("%sThinking...%s", colors.GetColor("dim"), colors.GetColor("reset"))
-
-		// Add to wait group
-		wg.Add(1)
-
-		// Run agent with the prompt
-		go func(userInput string) {
-			defer wg.Done()
-			defer cancel()
-			runAgentWithStreaming(ctx, ag, tuiInstance, cfg, userInput)
-		}(input)
-
-		// Loop continues, but wg.Wait() at top will block until done
 	}
+
+	if !cfg.Quiet {
+		fmt.Println("\n=== Final Output ===")
+		fmt.Println(final)
+	} else {
+		fmt.Println(final)
+	}
+
+	if cfg.Verbose {
+		snap := a.Stats().Snapshot()
+		fmt.Println("\n=== Summary ===")
+		fmt.Printf("Iterations executed: %d\n", snap.Iterations)
+		fmt.Printf("Tokens used: %d (input) + %d (output)\n", snap.InputTokens, snap.OutputTokens)
+		fmt.Printf("Tool calls: %d (%d failed)\n", snap.ToolCalls, snap.FailedToolCalls)
+		fmt.Printf("Duration: %s\n", agent.FormatDuration(time.Since(snap.StartTime)))
+	}
+
+	if cfg.OutputFile != "" {
+		if err := os.WriteFile(cfg.OutputFile, []byte(final), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot write output file: %v\n", err)
+			return 1
+		}
+	}
+
+	if err != nil {
+		return agent.ExitCodeFor(err)
+	}
+	return 0
 }
 
-// runWebMode starts the web UI server and blocks until it is shut down.
-// It serves the embedded web UI over the existing agent packages. Per-session
-// agents are created lazily by the session manager (which loads any --load
-// context file and applies --goal on creation). Graceful shutdown is handled
-// on SIGINT/SIGTERM.
-func runWebMode(cfg *config.Config) error {
-	// Create the web UI server.
-	server := webui.NewServer(cfg)
+func truncate(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
 
-	// Graceful shutdown on SIGINT/SIGTERM.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
-	}()
+// ---------------------------------------------------------------------------
+// usage
+// ---------------------------------------------------------------------------
 
-	return server.Serve()
+func printUsage(w io.Writer) {
+	fmt.Fprintf(w, `coding-agent %s — minimal coding agent harness
+
+Usage:
+  coding-agent [flags]
+  coding-agent -p "prompt" [flags]
+  echo "prompt" | coding-agent --stdin [flags]
+
+Prompt input:
+  -p, --prompt <text>        One-shot prompt
+  --stdin                    Read the prompt from stdin
+  --prompt-file <path>       Read the prompt from a file
+  --output <path>            Write the final output to a file
+  --verbose                  Show all tool interactions (one-shot)
+  --quiet                    Only show the final answer (one-shot)
+
+Inference backend:
+  --api-endpoint <url>       API base URL (default: %s)
+  --api-key <key>            API key (or CODING_AGENT_API_KEY)
+  --model <name>             Model name (default: %s)
+  --temperature <float>      Sampling temperature (only sent when set)
+  --max-tokens <n>           Maximum response tokens (0 = backend default)
+  --top-p <float>            Nucleus sampling parameter
+  --stream / --no-stream     Streaming inference (default: on)
+  --initial-token-timeout <s> Timeout for the first streamed token (default: %d)
+  --connect-timeout <s>      Connection timeout in seconds (default: 30)
+  --read-timeout <s>         Response-header timeout in seconds (0 = use initial token timeout)
+
+Context management:
+  --context-size <n>         Context window in tokens (default: %d)
+  --context-threshold <f>    Compression threshold fraction (default: %.2f)
+  --max-iterations <n>       Maximum agentic iterations (default: %d)
+  --no-compress              Disable automatic context compression
+  --load <path>              Load a dumped context and continue
+  --no-dump-on-exit          Do not dump the context when exiting interactive mode
+
+Behaviour:
+  --read-only                Only enable read-only tools
+  --persona <text>           Inject a persona into the system prompt
+  --summary-only             Lightweight mode: return a summary, not the full log
+  --goal <text>              Start in goal mode with the given goal
+  --theme <name>             %s
+  --debug                    Enable debug logging
+  --debug-log <path>         Debug log file (default: %s)
+  --config <path>            Configuration file (default: ~/.coding-agentrc)
+  --cwd <path>               Working directory for tools
+  --max-history <n>          Input history size (default: %d)
+  --subagent-timeout <s>     Subagent timeout in seconds (default: %d)
+
+Web UI:
+  --web                      Serve the web UI instead of the TUI
+  --web-addr <host>          Listen address (default: %s)
+  --web-port <port>          Listen port (default: %d)
+
+Skills:
+  --skills / --no-skills     Enable skill discovery (default: on)
+  --skills-dir <path>        Additional skill directory
+  --trust                    Trust project-local skill directories
+
+GitHub Copilot backend:
+  --api-endpoint https://api.githubcopilot.com
+  Token via GITHUB_TOKEN (a GitHub App user token from 'gh auth token',
+  NOT a personal access token) or --api-key. Copilot-hosted models such as
+  gpt-4o, claude-sonnet-4 and o3-mini work with --model.
+
+Misc:
+  -h, --help                 Show this help
+  -v, --version              Show version information
+
+Environment variables: CODING_AGENT_API_ENDPOINT, CODING_AGENT_API_KEY,
+CODING_AGENT_MODEL, CODING_AGENT_CONTEXT_SIZE, CODING_AGENT_MAX_ITERATIONS,
+CODING_AGENT_THEME, CODING_AGENT_DEBUG, CODING_AGENT_READ_ONLY,
+CODING_AGENT_PERSONA, CODING_AGENT_GOAL, CODING_AGENT_STREAM and others.
+
+Exit codes: 0 success, 1 runtime/inference failure, 2 usage error,
+3 authentication failure, 4 context too large.
+`, version.String(), config.DefaultAPIEndpoint, config.DefaultModel,
+		config.DefaultInitialTokenTimeout, config.DefaultContextSize,
+		config.DefaultContextThreshold, config.DefaultMaxIterations,
+		strings.Join(colors.ListThemes(), " | "), config.DefaultDebugLogFile,
+		config.DefaultHistorySize, config.DefaultSubagentTimeout,
+		config.DefaultWebAddr, config.DefaultWebPort)
 }

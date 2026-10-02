@@ -1,9 +1,5 @@
-// Package skills implements the open Agent Skills (SKILL.md) format for the
-// coding agent. It discovers skill directories from the cross-client
-// `.agents/skills/` convention (plus client-native `skills/` locations) at
-// project and user scope, parses SKILL.md frontmatter using only the Go
-// standard library, and builds the compact catalog surfaced to the model in
-// the system prompt.
+// Package skills implements the Agent Skills (SKILL.md) format: discovery,
+// stdlib-only frontmatter parsing, the system prompt catalog and activation.
 package skills
 
 import (
@@ -13,444 +9,621 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/coding-agent/coding-agent/config"
+	"github.com/coding-agent/coding-agent/debug"
 )
 
-// Skill represents a single discovered skill.
+// Skill is a discovered skill.
 type Skill struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description"`
+	Location      string            `json:"location"`
+	BaseDir       string            `json:"base_dir"`
+	Body          string            `json:"-"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 	License       string            `json:"license,omitempty"`
 	Compatibility string            `json:"compatibility,omitempty"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
-	// AllowedTools is the optional set of tools the skill is permitted to use.
-	// It is advisory only; the coding agent does not enforce it at execution
-	// time, but surfaces it to the model.
-	AllowedTools []string `json:"allowed_tools,omitempty"`
-	// Path is the absolute path to the skill's SKILL.md file.
-	Path string `json:"path"`
-	// Dir is the absolute path to the skill directory (containing scripts/,
-	// references/, assets/, etc.).
-	Dir string `json:"dir"`
-	// Instructions is the markdown body after the frontmatter closing `---`.
-	Instructions string `json:"instructions"`
-	// Resources lists the bundled resource files (scripts/, references/,
-	// assets/) without their contents being read eagerly into context.
-	Resources []string `json:"resources,omitempty"`
-	// Scope is "project" or "user" (used for trust gating and shadowing logs).
-	Scope string `json:"scope"`
+	AllowedTools  string            `json:"allowed_tools,omitempty"`
+	Scope         string            `json:"scope"` // "project" | "user" | "custom"
 }
 
-// Catalog is an in-memory collection of discovered skills keyed by name.
-type Catalog struct {
-	Skills map[string]*Skill
-	Order  []string // Deterministic display order (sorted by name)
+// Diagnostic records a non-fatal problem found while discovering skills.
+type Diagnostic struct {
+	Level   string `json:"level"` // warn | error
+	Path    string `json:"path"`
+	Message string `json:"message"`
 }
 
-// NewCatalog returns an empty catalog.
-func NewCatalog() *Catalog {
-	return &Catalog{Skills: make(map[string]*Skill)}
+// Manager holds the skill catalog.
+type Manager struct {
+	mu          sync.Mutex
+	byName      map[string]*Skill
+	order       []string
+	activated   map[string]bool
+	diagnostics []Diagnostic
+	scanned     []string
+	skipped     []string
 }
 
-// Has reports whether a skill with the given name exists in the catalog.
-func (c *Catalog) Has(name string) bool {
-	_, ok := c.Skills[name]
-	return ok
+const (
+	maxDepth    = 6
+	maxDirsSeen = 2000
+)
+
+var skipDirs = map[string]bool{
+	".git": true, ".hg": true, ".svn": true, "node_modules": true,
+	".venv": true, "venv": true, "__pycache__": true, ".idea": true,
+	".vscode": true, "dist": true, "build": true, ".next": true, "target": true,
 }
 
-// Get returns the skill with the given name, or nil if absent.
-func (c *Catalog) Get(name string) *Skill {
-	return c.Skills[name]
+// Discover scans the configured locations and returns a catalog.
+func Discover(cfg *config.Config, cwd string) *Manager {
+	m := &Manager{byName: map[string]*Skill{}, activated: map[string]bool{}}
+	if cfg == nil || !cfg.SkillsEnabled {
+		return m
+	}
+
+	projectTrusted := isTrusted(cfg, cwd)
+	if !projectTrusted {
+		m.addDiagnostic(Diagnostic{Level: "warn", Path: cwd, Message: "project skills skipped: the working directory is not trusted (pass --trust " + cwd + " to enable them)"})
+	}
+
+	type candidate struct {
+		dir   string
+		scope string
+	}
+	var dirs []candidate
+
+	// Project scope: cross-client convention first, then client native, then
+	// the compatibility location.
+	if projectTrusted {
+		for _, d := range []string{".agents/skills", "skills", ".claude/skills"} {
+			dirs = append(dirs, candidate{dir: filepath.Join(cwd, d), scope: "project"})
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		for _, d := range []string{".agents/skills", ".skills", ".claude/skills"} {
+			dirs = append(dirs, candidate{dir: filepath.Join(home, filepath.FromSlash(d)), scope: "user"})
+		}
+	}
+
+	for _, d := range cfg.SkillsDirs {
+		scope := "custom"
+		if projectTrusted && sameOrUnder(d, cwd) {
+			scope = "project"
+		}
+		dirs = append(dirs, candidate{dir: d, scope: scope})
+	}
+
+	for _, c := range dirs {
+		m.scanned = append(m.scanned, c.dir)
+		m.scanDir(c.dir, c.scope)
+	}
+	return m
 }
 
-// Names returns the skill names in deterministic (sorted) order.
-func (c *Catalog) Names() []string {
-	out := make([]string, len(c.Order))
-	copy(out, c.Order)
-	return out
-}
-
-// Len returns the number of skills in the catalog.
-func (c *Catalog) Len() int {
-	return len(c.Skills)
-}
-
-// add inserts a skill, returning a warning if it shadows an existing one.
-// Later-inserted skills take precedence (so higher-precedence scopes are
-// added last).
-func (c *Catalog) add(s *Skill) (shadowed bool) {
-	if _, exists := c.Skills[s.Name]; exists {
-		// A higher-precedence scope wins: replace the existing (shadowed) entry
-		// so the newly discovered skill takes precedence.
-		c.Skills[s.Name] = s
+func sameOrUnder(dir, root string) bool {
+	dir = filepath.Clean(dir)
+	root = filepath.Clean(root)
+	if dir == root {
 		return true
 	}
-	c.Skills[s.Name] = s
-	c.Order = append(c.Order, s.Name)
-	sort.Strings(c.Order)
-	return false
-}
-
-// Add inserts a skill into the catalog, returning true if it shadowed (and
-// replaced) an existing skill of the same name. It is exported for tests and
-// for programmatic catalog construction.
-func (c *Catalog) Add(s *Skill) bool {
-	return c.add(s)
-}
-
-// DiscoverOptions controls skill discovery.
-type DiscoverOptions struct {
-	// WorkingDir is the project working directory (project scope).
-	WorkingDir string
-	// HomeDir is the user's home directory (user scope).
-	HomeDir string
-	// SkillsDirs are additional custom search directories (--skills-dir).
-	SkillsDirs []string
-	// Trusted indicates whether the project directory is trusted. When false,
-	// project-level skills are skipped (but user-level skills are always loaded).
-	Trusted bool
-}
-
-// Discover scans the configured scopes and returns a catalog. It never fails
-// hard: individual malformed skills are skipped with a warning collected in
-// the returned slice. The catalog is always non-nil (possibly empty).
-func Discover(opts DiscoverOptions) (*Catalog, []string) {
-	catalog := NewCatalog()
-	var warnings []string
-
-	// User scope is always trusted and loaded first (lower precedence).
-	if opts.HomeDir != "" {
-		discoverScope(catalog, opts.HomeDir, "user", true, &warnings)
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return false
 	}
+	return !strings.HasPrefix(rel, "..")
+}
 
-	// Project scope is loaded only when the working directory is trusted.
-	if opts.WorkingDir != "" {
-		if !opts.Trusted {
-			if hasSkillDirs(opts.WorkingDir) {
-				warnings = append(warnings, fmt.Sprintf("skills: project scope skipped because the working directory is not trusted (use --trust to enable)"))
-			}
-		} else {
-			discoverScope(catalog, opts.WorkingDir, "project", true, &warnings)
+// isTrusted reports whether the working directory is trusted for project skills.
+func isTrusted(cfg *config.Config, cwd string) bool {
+	for _, t := range cfg.TrustDirs {
+		if sameOrUnder(cwd, t) {
+			return true
 		}
 	}
-
-	// Custom --skills-dir paths are treated as trusted user-supplied base
-	// directories that directly contain skill subdirectories.
-	for _, dir := range opts.SkillsDirs {
-		if dir == "" {
-			continue
-		}
-		scanBaseDir(catalog, dir, "custom", &warnings)
-	}
-
-	return catalog, warnings
-}
-
-// discoverScope scans a single scope root for skill directories. The scope
-// root may contain skills under `<root>/skills/`, `<root>/.agents/skills/`,
-// and (for compatibility) `<root>/.claude/skills/`. The `.agents/` convention
-// is scanned first so it is the interoperable default.
-func discoverScope(catalog *Catalog, root, scope string, trusted bool, warnings *[]string) {
-	// Ordered candidate directories: cross-client convention first.
-	baseDirs := []string{
-		filepath.Join(root, ".agents", "skills"),
-		filepath.Join(root, "skills"),
-		filepath.Join(root, ".claude", "skills"),
-	}
-	for _, base := range baseDirs {
-		scanBaseDir(catalog, base, scope, warnings)
-	}
-}
-
-// hasSkillDirs reports whether the given root contains any candidate skill
-// base directory (e.g. <root>/.agents/skills/, <root>/skills/). It is used to
-// decide whether to warn about an untrusted project scope that actually
-// bundles skills.
-func hasSkillDirs(root string) bool {
-	for _, base := range []string{
-		filepath.Join(root, ".agents", "skills"),
-		filepath.Join(root, "skills"),
-		filepath.Join(root, ".claude", "skills"),
-	} {
-		if info, err := os.Stat(base); err == nil && info.IsDir() {
+	for _, t := range loadPersistedTrust() {
+		if sameOrUnder(cwd, t) {
 			return true
 		}
 	}
 	return false
 }
 
-// scanBaseDir scans a single skill base directory (e.g. .agents/skills/) for
-// subdirectories that are skills (contain a SKILL.md).
-func scanBaseDir(catalog *Catalog, baseDir, scope string, warnings *[]string) {
-	entries, err := os.ReadDir(baseDir)
+// TrustFile returns the path of the persisted trust list.
+func TrustFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".coding-agent-trusted"
+	}
+	return filepath.Join(home, ".coding-agent-trusted")
+}
+
+func loadPersistedTrust() []string {
+	data, err := os.ReadFile(TrustFile())
 	if err != nil {
-		// Not an error: the directory simply doesn't exist or isn't readable.
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// Trust marks a directory as trusted and persists it.
+func Trust(dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	existing := loadPersistedTrust()
+	for _, e := range existing {
+		if e == abs {
+			return nil
+		}
+	}
+	existing = append(existing, abs)
+	return os.WriteFile(TrustFile(), []byte(strings.Join(existing, "\n")+"\n"), 0o600)
+}
+
+// scanDir walks a skills root and registers every directory containing SKILL.md.
+func (m *Manager) scanDir(root, scope string) {
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
 		return
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	seen := 0
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if depth > maxDepth || seen >= maxDirsSeen {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		hasSkillMD := false
+		for _, e := range entries {
+			if !e.IsDir() && e.Name() == "SKILL.md" {
+				hasSkillMD = true
+				break
+			}
+		}
+		if depth > 0 && hasSkillMD {
+			m.register(filepath.Join(dir, "SKILL.md"), scope)
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if skipDirs[e.Name()] || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			seen++
+			if seen >= maxDirsSeen {
+				return
+			}
+			walk(filepath.Join(dir, e.Name()), depth+1)
+		}
+	}
+	// The scope root itself never counts as a skill.
+	for _, e := range mustReadDir(root) {
+		if !e.IsDir() || skipDirs[e.Name()] || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		name := entry.Name()
-		if isSkippedDir(name) {
-			continue
+		seen++
+		if seen >= maxDirsSeen {
+			return
 		}
-		skillDir := filepath.Join(baseDir, name)
-		skill, warn := loadSkill(skillDir, scope)
-		if warn != "" {
-			*warnings = append(*warnings, warn)
-		}
-		if skill == nil {
-			continue
-		}
-		if catalog.add(skill) {
-			*warnings = append(*warnings, fmt.Sprintf("skills: skill %q shadowed by a higher-precedence scope (path: %s)", skill.Name, skill.Path))
-		}
+		walk(filepath.Join(root, e.Name()), 1)
 	}
 }
 
-// isSkippedDir reports whether a directory should be skipped during scanning.
-func isSkippedDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", ".svn", ".hg", ".DS_Store", "vendor":
-		return true
-	}
-	return strings.HasPrefix(name, ".")
+func mustReadDir(dir string) []os.DirEntry {
+	entries, _ := os.ReadDir(dir)
+	return entries
 }
 
-// loadSkill loads a single skill directory. It returns the parsed Skill, or
-// nil (plus a warning) if the directory is not a valid skill.
-func loadSkill(dir, scope string) (*Skill, string) {
-	skillPath := filepath.Join(dir, "SKILL.md")
-	info, err := os.Stat(skillPath)
-	if err != nil || info.IsDir() {
-		// Not a skill: a directory without a SKILL.md is ignored silently.
-		return nil, ""
-	}
-
-	skill, err := ParseSKILLMD(skillPath)
+// register parses and stores a skill.
+func (m *Manager) register(location, scope string) {
+	meta, body, err := loadSkillMD(location)
 	if err != nil {
-		return nil, fmt.Sprintf("skills: skipping %s: %v", skillPath, err)
+		m.addDiagnostic(Diagnostic{Level: "error", Path: location, Message: err.Error()})
+		if dbg := debug.Default(); dbg != nil {
+			dbg.Logf("skill skipped: %s: %v", location, err)
+		}
+		return
 	}
-	skill.Dir = dir
-	skill.Scope = scope
-	skill.Resources = listResources(dir)
-	return skill, ""
+	dirName := filepath.Base(filepath.Dir(location))
+	name := strings.TrimSpace(meta["name"])
+	if name == "" {
+		name = dirName
+		m.addDiagnostic(Diagnostic{Level: "warn", Path: location, Message: "missing 'name' in frontmatter, using directory name"})
+	}
+	desc := strings.TrimSpace(meta["description"])
+	if desc == "" {
+		m.addDiagnostic(Diagnostic{Level: "error", Path: location, Message: "missing 'description' in frontmatter; skill skipped"})
+		if dbg := debug.Default(); dbg != nil {
+			dbg.Logf("skill skipped (no description): %s", location)
+		}
+		return
+	}
+	if name != dirName {
+		m.addDiagnostic(Diagnostic{Level: "warn", Path: location, Message: fmt.Sprintf("skill name %q does not match parent directory %q", name, dirName)})
+	}
+	if len(name) > 64 {
+		m.addDiagnostic(Diagnostic{Level: "warn", Path: location, Message: "skill name exceeds 64 characters"})
+	}
+	if len(desc) > 1024 {
+		desc = desc[:1024]
+		m.addDiagnostic(Diagnostic{Level: "warn", Path: location, Message: "skill description truncated to 1024 characters"})
+	}
+
+	sk := &Skill{
+		Name:          name,
+		Description:   desc,
+		Location:      location,
+		BaseDir:       filepath.Dir(location),
+		Body:          body,
+		Metadata:      meta,
+		License:       meta["license"],
+		Compatibility: meta["compatibility"],
+		AllowedTools:  meta["allowed-tools"],
+		Scope:         scope,
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if prev, ok := m.byName[name]; ok {
+		// Project scope always wins; within a scope later scans win.
+		if prev.Scope == "project" && sk.Scope != "project" {
+			m.addDiagnosticLocked(Diagnostic{Level: "warn", Path: location, Message: fmt.Sprintf("skill %q shadowed by %s", name, prev.Location)})
+			return
+		}
+		m.addDiagnosticLocked(Diagnostic{Level: "warn", Path: location, Message: fmt.Sprintf("skill %q from %s overrides %s", name, location, prev.Location)})
+	} else {
+		m.order = append(m.order, name)
+	}
+	m.byName[name] = sk
 }
 
-// listResources lists bundled resource files under the standard subdirectories
-// (scripts/, references/, assets/) without reading their contents.
-func listResources(dir string) []string {
-	var resources []string
+func (m *Manager) addDiagnostic(d Diagnostic) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addDiagnosticLocked(d)
+}
+
+// addDiagnosticLocked appends a diagnostic; the caller must hold m.mu.
+func (m *Manager) addDiagnosticLocked(d Diagnostic) {
+	m.diagnostics = append(m.diagnostics, d)
+}
+
+// List returns the catalog sorted by name.
+func (m *Manager) List() []*Skill {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Skill, 0, len(m.order))
+	for _, n := range m.order {
+		out = append(out, m.byName[n])
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Names returns the skill names.
+func (m *Manager) Names() []string {
+	out := []string{}
+	for _, s := range m.List() {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
+// Count returns the number of discovered skills.
+func (m *Manager) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.byName)
+}
+
+// Diagnostics returns discovery diagnostics.
+func (m *Manager) Diagnostics() []Diagnostic {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Diagnostic, len(m.diagnostics))
+	copy(out, m.diagnostics)
+	return out
+}
+
+// ScannedDirs returns the directories that were searched.
+func (m *Manager) ScannedDirs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, len(m.scanned))
+	copy(out, m.scanned)
+	return out
+}
+
+// Catalog renders the AVAILABLE SKILLS section for the system prompt.
+// It returns an empty string when no skills were discovered.
+func (m *Manager) Catalog() string {
+	skills := m.List()
+	if len(skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("AVAILABLE SKILLS:\n")
+	for _, s := range skills {
+		b.WriteString(fmt.Sprintf("- %s: %s\n", s.Name, s.Description))
+		b.WriteString(fmt.Sprintf("  (SKILL.md: %s)\n", s.Location))
+	}
+	b.WriteString("\nThe following skills provide specialized instructions for specific tasks.\n")
+	b.WriteString("When a task matches a skill's description, call the activate_skill tool with\n")
+	b.WriteString("the skill's name to load its full instructions, or use read_file to load the\n")
+	b.WriteString("SKILL.md at the listed location before proceeding.\n")
+	b.WriteString("When a skill references relative paths, resolve them against the skill's\n")
+	b.WriteString("directory (the parent of SKILL.md) and use absolute paths in tool calls.")
+	return b.String()
+}
+
+// Activate returns the skill body wrapped in identifying tags, plus a listing of
+// bundled resources. Re-activating an already loaded skill is a no-op.
+func (m *Manager) Activate(name string) (string, error) {
+	m.mu.Lock()
+	sk, ok := m.byName[name]
+	already := m.activated[name]
+	if ok {
+		m.activated[name] = true
+	}
+	m.mu.Unlock()
+	if !ok {
+		return "", fmt.Errorf("skill %q is not available", name)
+	}
+	body := sk.Body
+	if strings.TrimSpace(body) == "" {
+		meta, b, err := loadSkillMD(sk.Location)
+		if err != nil {
+			return "", err
+		}
+		body = b
+		_ = meta
+	}
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("Skill '%s' activated (scope: %s).\n", sk.Name, sk.Scope))
+	if already {
+		out.WriteString("(this skill was already loaded earlier in the session; the instructions below are repeated for convenience)\n")
+	}
+	out.WriteString("--- BEGIN SKILL INSTRUCTIONS ---\n")
+	out.WriteString(strings.TrimSpace(body) + "\n")
+	out.WriteString("--- END SKILL INSTRUCTIONS ---\n")
+	out.WriteString(fmt.Sprintf("Skill directory: %s\n", sk.BaseDir))
+	out.WriteString("Relative paths in this skill are relative to the skill directory.\n")
+	res := resources(sk.BaseDir)
+	if len(res) > 0 {
+		out.WriteString("Bundled resources (not loaded):\n")
+		for _, r := range res {
+			out.WriteString(r + "\n")
+		}
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// resources lists scripts/, references/ and assets/ without reading them.
+func resources(base string) []string {
+	var out []string
 	for _, sub := range []string{"scripts", "references", "assets"} {
-		subDir := filepath.Join(dir, sub)
-		entries, err := os.ReadDir(subDir)
+		dir := filepath.Join(base, sub)
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
+		for _, e := range entries {
+			if e.IsDir() {
+				out = append(out, sub+"/"+e.Name()+"/")
+			} else {
+				out = append(out, sub+"/"+e.Name())
 			}
-			resources = append(resources, filepath.Join(sub, entry.Name()))
 		}
 	}
-	sort.Strings(resources)
-	return resources
+	sort.Strings(out)
+	if len(out) > 100 {
+		out = out[:100]
+	}
+	return out
 }
 
-// ParseSKILLMD reads and parses a SKILL.md file. It returns the parsed skill
-// with its instructions (the markdown body after frontmatter). A skill is
-// rejected (returning an error) when its frontmatter is unparseable or its
-// description is missing/empty.
-func ParseSKILLMD(path string) (*Skill, error) {
-	content, err := os.ReadFile(path)
+// IsSkillContent reports whether a tool result carries skill instructions
+// (used to protect it from context compression).
+func IsSkillContent(s string) bool {
+	return strings.Contains(s, "--- BEGIN SKILL INSTRUCTIONS ---")
+}
+
+// Body returns the cached body of a skill.
+func (m *Manager) Body(name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.byName[name]; ok {
+		return s.Body
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// SKILL.md parsing (stdlib only)
+// ---------------------------------------------------------------------------
+
+// loadSkillMD reads SKILL.md and returns the frontmatter map plus the body.
+func loadSkillMD(path string) (map[string]string, string, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("read SKILL.md: %w", err)
+		return nil, "", err
 	}
-	return ParseSKILLMDContent(string(content), path)
-}
+	defer f.Close()
 
-// ParseSKILLMDContent parses SKILL.md content. The path is used only for
-// reporting the skill location; it may be empty in tests.
-func ParseSKILLMDContent(content, path string) (*Skill, error) {
-	frontmatter, body, hasFrontmatter := splitFrontmatter(content)
-	if !hasFrontmatter {
-		return nil, fmt.Errorf("missing frontmatter (no leading '---' block)")
-	}
-
-	fields := parseFrontmatter(frontmatter)
-
-	name := strings.TrimSpace(fields["name"])
-	if name == "" {
-		// Fall back to the directory name as a best-effort default.
-		if dir := filepath.Dir(path); dir != "." && dir != "" {
-			name = filepath.Base(dir)
-		}
-	}
-	if name == "" {
-		return nil, fmt.Errorf("missing required 'name' in frontmatter")
-	}
-
-	description := strings.TrimSpace(fields["description"])
-	if description == "" {
-		return nil, fmt.Errorf("missing or empty 'description' in frontmatter")
-	}
-
-	skill := &Skill{
-		Name:          name,
-		Description:   description,
-		License:       strings.TrimSpace(fields["license"]),
-		Compatibility: strings.TrimSpace(fields["compatibility"]),
-		Metadata:      collectMetadata(fields),
-		AllowedTools:  splitTools(fields["allowed-tools"]),
-		Path:          path,
-		Instructions:  strings.TrimSpace(body),
-	}
-	return skill, nil
-}
-
-// collectMetadata merges the inline `metadata: {...}` value with any indented
-// `metadata.<key>: <value>` sub-fields into a single flat map.
-func collectMetadata(fields map[string]string) map[string]string {
-	m := parseMetadata(fields["metadata"])
-	for k, v := range fields {
-		if strings.HasPrefix(k, "metadata.") {
-			key := strings.TrimPrefix(k, "metadata.")
-			if m == nil {
-				m = make(map[string]string)
-			}
-			m[key] = v
-		}
-	}
-	return m
-}
-
-// splitFrontmatter splits SKILL.md content into the frontmatter block and the
-// body. It returns hasFrontmatter=false if there is no leading `---` delimiter.
-func splitFrontmatter(content string) (frontmatter, body string, hasFrontmatter bool) {
-	lines := strings.Split(content, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
-		return "", content, false
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "---" {
-			return strings.Join(lines[1:i], "\n"), strings.Join(lines[i+1:], "\n"), true
-		}
-	}
-	// No closing delimiter: treat the whole thing as frontmatter with no body.
-	return strings.Join(lines[1:], "\n"), "", true
-}
-
-// parseFrontmatter parses the lenient YAML-subset frontmatter block into a
-// flat key/value map. It handles top-level scalar fields and a flat
-// `metadata` map. Values may be single- or double-quoted; unquoted values are
-// taken verbatim after the first `:` so values containing colons (a common
-// cross-client authoring mistake) still parse.
-func parseFrontmatter(frontmatter string) map[string]string {
-	fields := make(map[string]string)
-	scanner := bufio.NewScanner(strings.NewReader(frontmatter))
-	var currentKey string
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		line := scanner.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		lines = append(lines, scanner.Text())
+		if len(lines) > 20000 {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(lines) == 0 {
+		return nil, "", fmt.Errorf("empty file")
+	}
+
+	// The opening delimiter must be the first line.
+	start := -1
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
 			continue
 		}
+		if trimmed == "---" {
+			start = i
+		}
+		break
+	}
+	if start < 0 {
+		// No frontmatter: the description is missing, so the skill will be
+		// skipped by register() with a diagnostic (spec 4.3).
+		body := strings.TrimSpace(strings.Join(lines, "\n"))
+		return map[string]string{}, body, nil
+	}
+	end := -1
+	for i := start + 1; i < len(lines); i++ {
+		t := strings.TrimSpace(lines[i])
+		if t == "---" || t == "..." {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return nil, "", fmt.Errorf("unterminated frontmatter (missing closing ---)")
+	}
 
-		// Determine indentation level (spaces).
-		indent := len(line) - len(strings.TrimLeft(line, " "))
+	meta, diags := parseFrontmatter(lines[start+1 : end])
+	if strings.TrimSpace(meta["name"]) == "" && strings.TrimSpace(meta["description"]) == "" {
+		// Recoverable YAML issues: retry with a lenient repair pass.
+		repaired := repairFrontmatter(lines[start+1 : end])
+		meta2, _ := parseFrontmatter(repaired)
+		if strings.TrimSpace(meta2["description"]) != "" {
+			meta = meta2
+		}
+	}
+	if len(diags) > 0 {
+		if dbg := debug.Default(); dbg != nil {
+			for _, d := range diags {
+				dbg.Logf("skill frontmatter warning in %s: %s", path, d)
+			}
+		}
+	}
+	body := strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
+	return meta, body, nil
+}
 
-		if indent == 0 {
-			key, val, ok := splitKeyValue(trimmed)
-			if !ok {
+// parseFrontmatter parses the supported YAML subset: top-level scalars plus a
+// flat metadata map. Values may be quoted and may span continuation lines.
+func parseFrontmatter(lines []string) (map[string]string, []string) {
+	meta := map[string]string{}
+	var diags []string
+	currentKey := ""
+	inMetadata := false
+
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		indented := strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")
+		trimmed := strings.TrimSpace(line)
+
+		colon := strings.Index(trimmed, ":")
+		if colon < 0 {
+			// Continuation of a folded value.
+			if currentKey != "" {
+				meta[currentKey] = strings.TrimSpace(meta[currentKey] + " " + trimmed)
 				continue
 			}
-			fields[key] = val
-			currentKey = key
+			diags = append(diags, fmt.Sprintf("ignored unsupported line %q", trimmed))
 			continue
 		}
+		key := strings.TrimSpace(trimmed[:colon])
+		value := strings.TrimSpace(trimmed[colon+1:])
 
-		// Indented line: a metadata sub-field under the previous top-level key.
-		if currentKey == "metadata" {
-			key, val, ok := splitKeyValue(trimmed)
-			if ok {
-				fields["metadata."+key] = val
-			}
+		if !indented && key == "metadata" {
+			inMetadata = true
+			currentKey = ""
+			continue
+		}
+		if inMetadata && indented {
+			meta["metadata."+key] = unquote(value)
+			continue
+		}
+		inMetadata = false
+		if !indented {
+			currentKey = key
+			meta[key] = unquote(value)
+			continue
+		}
+		// Indented unknown key: ignore with a warning.
+		diags = append(diags, fmt.Sprintf("ignored unsupported nested field %q", key))
+	}
+	return meta, diags
+}
+
+// repairFrontmatter quotes values that contain ": " (a common authoring mistake
+// that strict YAML rejects) and retries.
+func repairFrontmatter(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			out = append(out, l)
+			continue
+		}
+		colon := strings.Index(trimmed, ":")
+		if colon < 0 {
+			out = append(out, l)
+			continue
+		}
+		value := strings.TrimSpace(trimmed[colon+1:])
+		if value != "" && !strings.HasPrefix(value, "\"") && !strings.HasPrefix(value, "'") &&
+			(strings.Contains(value, ": ") || strings.HasSuffix(value, ":")) {
+			indent := l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+			out = append(out, indent+trimmed[:colon+1]+" \""+strings.ReplaceAll(value, "\"", "\\\"")+"\"")
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func unquote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			return strings.ReplaceAll(s[1:len(s)-1], "\\\"", "\"")
 		}
 	}
-	return fields
-}
-
-// splitKeyValue splits a `key: value` line into a normalized key and value.
-// The value has surrounding quotes stripped. It returns ok=false for lines
-// that are not a key/value pair.
-func splitKeyValue(line string) (key, value string, ok bool) {
-	idx := strings.Index(line, ":")
-	if idx < 0 {
-		return "", "", false
-	}
-	key = strings.TrimSpace(line[:idx])
-	value = strings.TrimSpace(line[idx+1:])
-	value = strings.Trim(value, "\"'")
-	return key, value, true
-}
-
-// parseMetadata flattens the parsed `metadata` block (both `metadata: {a: b}`
-// inline and indented `a: b` lines) into a map.
-func parseMetadata(raw string) map[string]string {
-	if raw == "" {
-		return nil
-	}
-	m := make(map[string]string)
-	// Inline map form: `{a: b, c: d}`.
-	inline := strings.TrimSpace(raw)
-	inline = strings.TrimPrefix(inline, "{")
-	inline = strings.TrimSuffix(inline, "}")
-	for _, part := range strings.Split(inline, ",") {
-		key, val, ok := splitKeyValue(part)
-		if ok {
-			m[key] = val
-		}
-	}
-	return m
-}
-
-// splitTools splits an `allowed-tools` value on whitespace or commas.
-func splitTools(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	fields := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == ',' || r == '\n'
-	})
-	if len(fields) == 0 {
-		return nil
-	}
-	return fields
-}
-
-// BuildCatalogSection builds the "AVAILABLE SKILLS" section added to the
-// system prompt. It returns an empty string when no skills are discovered, so
-// the section (and its behavioral instructions) is omitted entirely.
-func BuildCatalogSection(catalog *Catalog) string {
-	if catalog == nil || catalog.Len() == 0 {
+	if s == "|" || s == ">" || s == "|-" || s == ">-" {
 		return ""
 	}
-
-	var sb strings.Builder
-	sb.WriteString("AVAILABLE SKILLS:\n")
-	sb.WriteString("You may load a skill to gain specialized knowledge and workflows. ")
-	sb.WriteString("To use a skill, read its SKILL.md at the given path (or call activate_skill), then follow its instructions. ")
-	sb.WriteString("Only load a skill that is relevant to the current task; do not load unrelated skills.\n\n")
-
-	for _, name := range catalog.Names() {
-		skill := catalog.Skills[name]
-		if skill == nil {
-			continue
-		}
-		sb.WriteString(fmt.Sprintf("- %s: %s\n", skill.Name, skill.Description))
-	}
-
-	return sb.String()
+	return s
 }

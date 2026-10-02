@@ -1,693 +1,935 @@
-// Package config handles configuration for the coding agent.
+// Package config resolves the coding agent configuration from (in order of
+// increasing precedence) built-in defaults, a config file, environment
+// variables and command line flags.
 package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/coding-agent/coding-agent/colors"
 )
 
-// IsGitHubCopilotEndpoint checks whether the given API endpoint URL
-// points to a GitHub Copilot API.  This is a shared utility to avoid
-// duplicating the detection logic across packages (see also
-// InferenceClient.isCopilotEndpoint in inference/inference.go).
-//
-// Detection is based on the URL host rather than a raw substring match,
-// which avoids false positives from unrelated strings (e.g. an attacker
-// hosting a service at "githubcopilot.com.evil.example").
-func IsGitHubCopilotEndpoint(endpoint string) bool {
-	return isHostOrSubdomain(endpoint, "githubcopilot.com")
+// RunMode selects the interactive or the one-shot execution mode.
+type RunMode int
+
+const (
+	// InteractiveMode runs the TUI loop.
+	InteractiveMode RunMode = iota
+	// OneShotMode runs a single prompt and exits.
+	OneShotMode
+	// WebMode serves the browser based UI.
+	WebMode
+)
+
+// Default values for the harness.
+const (
+	DefaultModel               = "llama3"
+	DefaultAPIEndpoint         = "http://localhost:8080"
+	DefaultContextSize         = 128000
+	DefaultContextThreshold    = 0.8
+	DefaultMaxIterations       = 1000
+	DefaultMaxTokens           = 0 // 0 => omit max_tokens, let the backend decide
+	DefaultInitialTokenTimeout = 86400
+	DefaultConnectTimeout      = 30
+	DefaultReadTimeout         = 0 // 0: derived from the initial token timeout
+	DefaultHistorySize         = 100
+	DefaultSubagentTimeout     = 1800
+	DefaultWebAddr             = "127.0.0.1"
+	DefaultWebPort             = 8080
+	DefaultDebugLogFile        = "debug.log"
+	DefaultBashTimeoutMs       = 30000
+	DefaultBashMaxOutputLines  = 200
+)
+
+// MCPServerConfig configures a single MCP server connection.
+type MCPServerConfig struct {
+	Name       string            `json:"name"`
+	Transport  string            `json:"transport"` // stdio | sse
+	Command    string            `json:"command,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	CWD        string            `json:"cwd,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Endpoint   string            `json:"endpoint,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	Enabled    bool              `json:"enabled"`
+	Timeout    int               `json:"timeout,omitempty"` // seconds
+	Reconnect  bool              `json:"reconnect,omitempty"`
+	MaxRetries int               `json:"maxRetries,omitempty"`
 }
 
-// IsGitHubModelsEndpoint checks whether the given API endpoint URL points
-// to a GitHub Models API (models.github.ai).
-func IsGitHubModelsEndpoint(endpoint string) bool {
-	return isHostOrSubdomain(endpoint, "github.ai")
-}
-
-// isHostOrSubdomain reports whether the endpoint's host equals domain or
-// is a subdomain of it. Any existing scheme or path is ignored. Malformed
-// URLs are treated as not matching.
-func isHostOrSubdomain(endpoint, domain string) bool {
-	if !strings.HasPrefix(domain, ".") {
-		domain = "." + domain
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return false
-	}
-	host := u.Hostname()
-	return host == strings.TrimPrefix(domain, ".") || strings.HasSuffix(host, domain)
-}
-
-// Config holds all configuration for the agent.
+// Config is the fully resolved runtime configuration.
 type Config struct {
-	// Mode
-	Prompt      string
-	PromptFile  string
-	UseStdin    bool
-	Goal        string
-	ContextFile string // Path to context file for loading (new)
-	ShowHelp    bool
-	ShowVersion bool
-	ConfigFile  string
-	ListTools   bool // When true, list available tools and exit
+	// Run mode / entry points
+	Mode           RunMode
+	Prompt         string
+	PromptFile     string
+	UseStdin       bool
+	ContextFile    string
+	NoDumpOnExit   bool
+	Verbose        bool
+	Quiet          bool
+	OutputFile     string
+	ShowHelp       bool
+	ShowVersion    bool
+	WorkingDir     string
+	ExecutablePath string
 
-	// Tools customization
-	Tools []string // Custom tool list (comma-separated tool names)
-
-	// Read-only mode
-	// Experimental mode
-	Experimental bool // When true, enables experimental features like subagent tool
-	ReadOnly     bool
-	NoDumpOnExit bool // Disable automatic context dump on exit (new)
-
-	// Inference settings
-	Model       string
-	Temperature *float64
-	MaxTokens   int
-	ContextSize int
-	Streaming   bool
-
-	// API settings
-	APIEndpoint string
-	APIKey      string
-
-	// Output settings
-	Verbose    bool
-	Quiet      bool
-	OutputFile string
-
-	// Theme settings
-	Theme string
-
-	// Web UI settings
-	Web                   bool   // When true, start the web UI server instead of the terminal UI
-	WebAddr               string // Listen address for the web UI (default: 127.0.0.1)
-	WebPort               int    // Listen port for the web UI (default: 8080)
-	WebSessionIdleTimeout int    // Idle timeout for web sessions in seconds (0 disables reaping)
-
-	// Persona settings
-	Persona     string
-	SummaryOnly bool // When true, only output the final summary (used by subagents)
-
-	// Skills settings
-	Skills     bool     // When true, enable Agent Skills discovery (default: on)
-	SkillsDirs []string // Custom skill search directories (--skills-dir, repeatable)
-	TrustDirs  []string // Directories trusted for project-level skill loading (--trust, repeatable)
-
-	// Timeout settings (in seconds)
+	// Inference backend
+	APIEndpoint         string
+	APIKey              string
+	Model               string
+	Temperature         *float64
+	MaxTokens           int
+	TopP                *float64
+	Stream              bool
 	InitialTokenTimeout int
-	ConnectionTimeout   int
+	ConnectTimeout      int
 	ReadTimeout         int
+	ContextSize         int
+	ContextThreshold    float64
+	MaxIterations       int
+	AutoCompress        bool
 
-	// Agent settings
-	MaxIterations int
+	// Behaviour
+	ReadOnly        bool
+	Persona         string
+	SummaryOnly     bool
+	Goal            string
+	Theme           string
+	Debug           bool
+	DebugLog        string
+	ConfigFile      string
+	MaxHistory      int
+	SubagentTimeout int
 
-	// Debug settings
-	Debug               bool
-	DebugLog            string
-	DebugVerbose        bool
-	DebugVerboseVerbose bool
+	// Web UI
+	Web     bool
+	WebAddr string
+	WebPort int
+
+	// Skills
+	SkillsEnabled bool
+	SkillsDirs    []string
+	TrustDirs     []string
+
+	// MCP servers keyed by name
+	MCPServers map[string]MCPServerConfig
+
+	// Errors collects non fatal configuration problems (surfaced in help output).
+	Warnings []string
 }
 
-// DefaultConfig returns a config with default values.
-func DefaultConfig() *Config {
+// NewDefault returns the configuration with built-in defaults applied.
+func NewDefault() *Config {
+	cwd, _ := os.Getwd()
+	exe, _ := os.Executable()
 	return &Config{
-		Model:                 "llama3",
-		Temperature:           nil,
-		MaxTokens:             64000,
-		ContextSize:           128000,
-		Streaming:             true,
-		InitialTokenTimeout:   24 * 60 * 60,            // 24 hours default
-		ConnectionTimeout:     24 * 60 * 60,            // 24 hours default
-		ReadTimeout:           24 * 60 * 60,            // 24 hours default
-		APIEndpoint:           "http://localhost:8080", // llama.cpp default
-		MaxIterations:         1000,                    // Default max iterations for loop protection
-		Debug:                 false,
-		DebugLog:              "debug.log",
-		WebAddr:               "127.0.0.1",
-		WebPort:               8080,
-		WebSessionIdleTimeout: 1800, // 30 minutes; 0 disables reaping
-		Skills:                true, // Skill discovery is on by default
+		Mode:                InteractiveMode,
+		APIEndpoint:         DefaultAPIEndpoint,
+		Model:               DefaultModel,
+		MaxTokens:           DefaultMaxTokens,
+		Stream:              true,
+		InitialTokenTimeout: DefaultInitialTokenTimeout,
+		ConnectTimeout:      DefaultConnectTimeout,
+		ReadTimeout:         DefaultReadTimeout,
+		ContextSize:         DefaultContextSize,
+		ContextThreshold:    DefaultContextThreshold,
+		MaxIterations:       DefaultMaxIterations,
+		AutoCompress:        true,
+		Theme:               colors.DefaultTheme,
+		DebugLog:            DefaultDebugLogFile,
+		MaxHistory:          DefaultHistorySize,
+		SubagentTimeout:     DefaultSubagentTimeout,
+		WebAddr:             DefaultWebAddr,
+		WebPort:             DefaultWebPort,
+		SkillsEnabled:       true,
+		WorkingDir:          cwd,
+		ExecutablePath:      exe,
+		MCPServers:          map[string]MCPServerConfig{},
 	}
 }
 
-// ParseArgs parses command-line arguments and returns a Config.
-func ParseArgs(args []string) (*Config, error) {
-	cfg := DefaultConfig()
+// Load builds the configuration from defaults, config file, environment and
+// command line arguments.
+func Load(args []string) (*Config, error) {
+	cfg := NewDefault()
 
-	// First pass: check for config file flag
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--config" && i+1 < len(args) {
-			cfg.ConfigFile = args[i+1]
-			break
+	// A config file can be provided via env or flag; probe the flags first so
+	// that --config is honoured before environment variables are applied.
+	probe, err := probeFlags(args)
+	if err != nil {
+		return nil, err
+	}
+	if probe.ConfigFile != "" {
+		if err := cfg.LoadFile(probe.ConfigFile); err != nil {
+			return nil, err
+		}
+	} else if path := DefaultConfigPath(); path != "" {
+		_ = cfg.LoadFile(path) // optional, ignore missing
+	}
+
+	cfg.LoadEnv()
+
+	if err := cfg.ParseFlags(args); err != nil {
+		return nil, err
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// DefaultConfigPath returns the optional per-user config file path.
+func DefaultConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".coding-agentrc")
+}
+
+// LoadFile applies an INI style configuration file.
+func (c *Config) LoadFile(path string) error {
+	sections, global, err := parseINI(path)
+	if err != nil {
+		return err
+	}
+	for key, value := range global {
+		if err := c.applyKV(key, value); err != nil {
+			return fmt.Errorf("config file %s: %w", path, err)
+		}
+	}
+	for name, kv := range sections {
+		if !strings.HasPrefix(name, "mcp_server.") {
+			continue
+		}
+		serverName := strings.TrimPrefix(name, "mcp_server.")
+		if serverName == "" {
+			continue
+		}
+		srv, ok := c.MCPServers[serverName]
+		if !ok {
+			srv = MCPServerConfig{Name: serverName, Transport: "stdio", Timeout: 30, MaxRetries: 5, Reconnect: true}
+		}
+		for key, value := range kv {
+			switch strings.ToLower(key) {
+			case "enabled":
+				srv.Enabled = parseBool(value)
+			case "transport":
+				srv.Transport = strings.ToLower(value)
+			case "command":
+				srv.Command = value
+			case "args":
+				srv.Args = splitArgs(value)
+			case "cwd":
+				srv.CWD = value
+			case "url":
+				srv.URL = value
+			case "endpoint":
+				srv.Endpoint = value
+			case "timeout":
+				srv.Timeout = atoiDefault(value, srv.Timeout)
+			case "reconnect":
+				srv.Reconnect = parseBool(value)
+			case "max_retries", "maxretries":
+				srv.MaxRetries = atoiDefault(value, srv.MaxRetries)
+			default:
+				if strings.HasPrefix(key, "env.") {
+					if srv.Env == nil {
+						srv.Env = map[string]string{}
+					}
+					srv.Env[strings.TrimPrefix(key, "env.")] = value
+				} else if strings.HasPrefix(key, "headers.") {
+					if srv.Headers == nil {
+						srv.Headers = map[string]string{}
+					}
+					srv.Headers[strings.TrimPrefix(key, "headers.")] = value
+				}
+			}
+		}
+		c.MCPServers[serverName] = srv
+	}
+	return nil
+}
+
+// applyKV applies a single key/value pair from a config file.
+func (c *Config) applyKV(key, value string) error {
+	switch strings.ToLower(key) {
+	case "api_endpoint":
+		c.APIEndpoint = strings.TrimRight(value, "/")
+	case "api_key":
+		c.APIKey = value
+	case "model":
+		c.Model = value
+	case "temperature":
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("invalid temperature %q", value)
+		}
+		c.Temperature = &f
+	case "max_tokens":
+		c.MaxTokens = atoiDefault(value, c.MaxTokens)
+	case "top_p":
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("invalid top_p %q", value)
+		}
+		c.TopP = &f
+	case "stream":
+		c.Stream = parseBool(value)
+	case "no_stream":
+		c.Stream = !parseBool(value)
+	case "initial_token_timeout":
+		c.InitialTokenTimeout = atoiDefault(value, c.InitialTokenTimeout)
+	case "connect_timeout":
+		c.ConnectTimeout = atoiDefault(value, c.ConnectTimeout)
+	case "read_timeout":
+		c.ReadTimeout = atoiDefault(value, c.ReadTimeout)
+	case "context_size":
+		c.ContextSize = atoiDefault(value, c.ContextSize)
+	case "context_threshold":
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("invalid context_threshold %q", value)
+		}
+		c.ContextThreshold = f
+	case "max_iterations":
+		c.MaxIterations = atoiDefault(value, c.MaxIterations)
+	case "auto_compress":
+		c.AutoCompress = parseBool(value)
+	case "read_only":
+		c.ReadOnly = parseBool(value)
+	case "persona":
+		c.Persona = value
+	case "summary_only":
+		c.SummaryOnly = parseBool(value)
+	case "goal":
+		c.Goal = value
+	case "theme":
+		c.Theme = value
+	case "debug":
+		c.Debug = parseBool(value)
+	case "debug_log":
+		c.DebugLog = value
+	case "verbose":
+		c.Verbose = parseBool(value)
+	case "quiet":
+		c.Quiet = parseBool(value)
+	case "output":
+		c.OutputFile = value
+	case "load":
+		c.ContextFile = value
+	case "no_dump_on_exit":
+		c.NoDumpOnExit = parseBool(value)
+	case "max_history":
+		c.MaxHistory = atoiDefault(value, c.MaxHistory)
+	case "subagent_timeout":
+		c.SubagentTimeout = atoiDefault(value, c.SubagentTimeout)
+	case "web":
+		c.Web = parseBool(value)
+	case "web_addr":
+		c.WebAddr = value
+	case "web_port":
+		c.WebPort = atoiDefault(value, c.WebPort)
+	case "skills":
+		c.SkillsEnabled = parseBool(value)
+	case "skills_dir":
+		for _, p := range filepath.SplitList(value) {
+			if p != "" {
+				c.SkillsDirs = append(c.SkillsDirs, p)
+			}
+		}
+	case "trust":
+		c.TrustDirs = append(c.TrustDirs, value)
+	case "prompt":
+		c.Prompt = value
+	case "prompt_file":
+		c.PromptFile = value
+	default:
+		c.Warnings = append(c.Warnings, fmt.Sprintf("unknown config key %q", key))
+	}
+	return nil
+}
+
+// LoadEnv applies CODING_AGENT_* environment variables.
+func (c *Config) LoadEnv() {
+	setStr := func(name string, target *string) {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			*target = v
+		}
+	}
+	setInt := func(name string, target *int) {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				*target = n
+			}
+		}
+	}
+	setFloat := func(name string, target **float64) {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				*target = &f
+			}
+		}
+	}
+	setBool := func(name string, target *bool) {
+		if v, ok := os.LookupEnv(name); ok && v != "" {
+			*target = parseBool(v)
 		}
 	}
 
-	// Load config file if specified
-	if cfg.ConfigFile != "" {
-		if err := loadConfigFile(cfg.ConfigFile, cfg); err != nil {
-			return nil, fmt.Errorf("failed to load config file: %w", err)
+	if v, ok := os.LookupEnv("CODING_AGENT_API_ENDPOINT"); ok && v != "" {
+		c.APIEndpoint = strings.TrimRight(v, "/")
+	}
+	setStr("CODING_AGENT_API_KEY", &c.APIKey)
+	setStr("CODING_AGENT_MODEL", &c.Model)
+	setFloat("CODING_AGENT_TEMPERATURE", &c.Temperature)
+	setInt("CODING_AGENT_MAX_TOKENS", &c.MaxTokens)
+	setFloat("CODING_AGENT_TOP_P", &c.TopP)
+	setBool("CODING_AGENT_STREAM", &c.Stream)
+	setInt("CODING_AGENT_INITIAL_TOKEN_TIMEOUT", &c.InitialTokenTimeout)
+	setInt("CODING_AGENT_CONNECT_TIMEOUT", &c.ConnectTimeout)
+	setInt("CODING_AGENT_MAX_HISTORY", &c.MaxHistory)
+	setInt("CODING_AGENT_READ_TIMEOUT", &c.ReadTimeout)
+	setInt("CODING_AGENT_CONTEXT_SIZE", &c.ContextSize)
+	if v, ok := os.LookupEnv("CODING_AGENT_CONTEXT_THRESHOLD"); ok && v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			c.ContextThreshold = f
+		}
+	}
+	setInt("CODING_AGENT_MAX_ITERATIONS", &c.MaxIterations)
+	setStr("CODING_AGENT_THEME", &c.Theme)
+	setBool("CODING_AGENT_DEBUG", &c.Debug)
+	setStr("CODING_AGENT_DEBUG_LOG", &c.DebugLog)
+	setBool("CODING_AGENT_READ_ONLY", &c.ReadOnly)
+	setStr("CODING_AGENT_PERSONA", &c.Persona)
+	setBool("CODING_AGENT_SUMMARY_ONLY", &c.SummaryOnly)
+	setStr("CODING_AGENT_GOAL", &c.Goal)
+	setStr("CODING_AGENT_CONFIG", &c.ConfigFile)
+	setBool("CODING_AGENT_NO_DUMP_ON_EXIT", &c.NoDumpOnExit)
+	setInt("CODING_AGENT_SUBAGENT_TIMEOUT", &c.SubagentTimeout)
+	setBool("CODING_AGENT_SKILLS", &c.SkillsEnabled)
+	if v, ok := os.LookupEnv("CODING_AGENT_SKILLS_DIR"); ok && v != "" {
+		for _, p := range filepath.SplitList(v) {
+			if p != "" {
+				c.SkillsDirs = append(c.SkillsDirs, p)
+			}
 		}
 	}
 
-	// Load from environment variables (overrides config file)
-	loadEnv(cfg)
+	// GITHUB_TOKEN is a fallback API key (never overrides an explicit key).
+	if c.APIKey == "" {
+		if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+			c.APIKey = v
+		}
+	}
 
-	// Parse command-line arguments (overrides env and config file)
+	c.loadMCPServerEnv()
+}
+
+// loadMCPServerEnv reads CODING_AGENT_MCP_<NAME>_<FIELD> variables.
+func (c *Config) loadMCPServerEnv() {
+	const prefix = "CODING_AGENT_MCP_"
+	fields := []string{"ENABLED", "TRANSPORT", "COMMAND", "ARGS", "URL", "ENDPOINT", "TIMEOUT", "CWD", "RECONNECT", "MAX_RETRIES"}
+	for _, entry := range os.Environ() {
+		parts := strings.SplitN(entry, "=", 2)
+		if len(parts) != 2 || !strings.HasPrefix(parts[0], prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(parts[0], prefix)
+		if rest == "" {
+			continue
+		}
+		name, field := "", ""
+		if idx := strings.Index(rest, "_ENV_"); idx >= 0 {
+			name = rest[:idx]
+			field = "ENV"
+		} else {
+			for _, f := range fields {
+				if strings.HasSuffix(rest, "_"+f) {
+					name = rest[:len(rest)-len(f)-1]
+					field = f
+					break
+				}
+			}
+		}
+		if name == "" {
+			continue
+		}
+		name = strings.ToLower(name)
+		srv, ok := c.MCPServers[name]
+		if !ok {
+			srv = MCPServerConfig{Name: name, Transport: "stdio", Timeout: 30, MaxRetries: 5, Reconnect: true}
+		}
+		switch field {
+		case "ENABLED":
+			srv.Enabled = parseBool(parts[1])
+		case "TRANSPORT":
+			srv.Transport = strings.ToLower(parts[1])
+		case "COMMAND":
+			srv.Command = parts[1]
+		case "ARGS":
+			srv.Args = splitArgs(parts[1])
+		case "URL":
+			srv.URL = parts[1]
+		case "ENDPOINT":
+			srv.Endpoint = parts[1]
+		case "TIMEOUT":
+			srv.Timeout = atoiDefault(parts[1], srv.Timeout)
+		case "CWD":
+			srv.CWD = parts[1]
+		case "RECONNECT":
+			srv.Reconnect = parseBool(parts[1])
+		case "MAX_RETRIES":
+			srv.MaxRetries = atoiDefault(parts[1], srv.MaxRetries)
+		case "ENV":
+			key := strings.TrimPrefix(strings.TrimPrefix(rest, name), "_ENV_")
+			if key != "" {
+				if srv.Env == nil {
+					srv.Env = map[string]string{}
+				}
+				srv.Env[key] = parts[1]
+			}
+		}
+		c.MCPServers[name] = srv
+	}
+}
+
+// probeFlags performs a minimal scan for flags that influence config loading.
+func probeFlags(args []string) (*Config, error) {
+	probe := &Config{}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-
-		switch arg {
-		case "-h", "--help":
-			cfg.ShowHelp = true
-		case "-v", "--version":
-			cfg.ShowVersion = true
-		case "-p", "--prompt":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--prompt requires an argument")
-			}
-			i++
-			cfg.Prompt = args[i]
-		case "--stdin":
-			cfg.UseStdin = true
-		case "--goal":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--goal requires an argument")
-			}
-			i++
-			cfg.Goal = args[i]
-		case "--prompt-file":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--prompt-file requires an argument")
-			}
-			i++
-			cfg.PromptFile = args[i]
-		case "--load":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--load requires an argument")
-			}
-			i++
-			cfg.ContextFile = args[i]
-		case "--no-dump-on-exit":
-			cfg.NoDumpOnExit = true
-		case "--config":
+		switch {
+		case arg == "--config":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--config requires an argument")
 			}
 			i++
-			cfg.ConfigFile = args[i]
-		case "--model":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--model requires an argument")
-			}
-			i++
-			cfg.Model = args[i]
-		case "--temperature":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--temperature requires an argument")
-			}
-			i++
-			tempVal, err := strconv.ParseFloat(args[i], 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid temperature: %v", err)
-			}
-			cfg.Temperature = &tempVal
-		case "--max-tokens":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--max-tokens requires an argument")
-			}
-			i++
-			maxTokens, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid max-tokens: %v", err)
-			}
-			cfg.MaxTokens = maxTokens
-		case "--initial-token-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--initial-token-timeout requires an argument")
-			}
-			i++
-			initTimeout, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid initial-token-timeout: %v", err)
-			}
-			cfg.InitialTokenTimeout = initTimeout
-		case "--max-iterations":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--max-iterations requires an argument")
-			}
-			i++
-			maxIterations, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid max-iterations: %v", err)
+			probe.ConfigFile = args[i]
+		case strings.HasPrefix(arg, "--config="):
+			probe.ConfigFile = strings.TrimPrefix(arg, "--config=")
+		}
+	}
+	return probe, nil
+}
 
+// ParseFlags applies command line flags on top of the current configuration.
+func (c *Config) ParseFlags(args []string) error {
+	need := func(i *int, name string) (string, error) {
+		if *i+1 >= len(args) {
+			return "", fmt.Errorf("%s requires an argument", name)
+		}
+		*i++
+		return args[*i], nil
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value := ""
+		inline := false
+		if idx := strings.Index(arg, "="); idx > 0 && strings.HasPrefix(arg, "--") {
+			value = arg[idx+1:]
+			arg = arg[:idx]
+			inline = true
+		}
+		take := func(name string) (string, error) {
+			if inline {
+				return value, nil
 			}
-			cfg.MaxIterations = maxIterations
-		case "--context-size":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--context-size requires an argument")
-			}
-			i++
-			ctxSize, err := strconv.Atoi(args[i])
+			return need(&i, name)
+		}
+
+		switch arg {
+		case "-p", "--prompt":
+			v, err := take(arg)
 			if err != nil {
-				return nil, fmt.Errorf("invalid context-size: %v", err)
+				return err
 			}
-			cfg.ContextSize = ctxSize
-		case "--no-stream":
-			cfg.Streaming = false
-		case "--api-endpoint":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--api-endpoint requires an argument")
-			}
-			i++
-			cfg.APIEndpoint = args[i]
-		case "--connection-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--connection-timeout requires an argument")
-			}
-			i++
-			connTimeout, err := strconv.Atoi(args[i])
+			c.Prompt = v
+		case "--stdin":
+			c.UseStdin = true
+		case "--prompt-file":
+			v, err := take("--prompt-file")
 			if err != nil {
-				return nil, fmt.Errorf("invalid connection-timeout: %v", err)
+				return err
 			}
-			cfg.ConnectionTimeout = connTimeout
-		case "--read-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--read-timeout requires an argument")
-			}
-			i++
-			readTimeout, err := strconv.Atoi(args[i])
-			if err != nil {
-				return nil, fmt.Errorf("invalid read-timeout: %v", err)
-			}
-			cfg.ReadTimeout = readTimeout
-		case "--verbose":
-			cfg.Verbose = true
-		case "--quiet":
-			cfg.Quiet = true
-		case "--read-only":
-			cfg.ReadOnly = true
-		case "--experimental":
-			cfg.Experimental = true
+			c.PromptFile = v
 		case "--output":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--output requires an argument")
+			v, err := take("--output")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.OutputFile = args[i]
-		case "--debug":
-			cfg.Debug = true
-		case "--debug-log":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--debug-log requires an argument")
+			c.OutputFile = v
+		case "--verbose":
+			c.Verbose = true
+		case "--quiet":
+			c.Quiet = true
+		case "--api-endpoint":
+			v, err := take("--api-endpoint")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.DebugLog = args[i]
-		case "--debug-verbose":
-			cfg.DebugVerbose = true
-		case "--debug-verbose-verbose":
-			cfg.DebugVerboseVerbose = true
+			c.APIEndpoint = strings.TrimRight(v, "/")
 		case "--api-key":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--api-key requires an argument")
+			v, err := take("--api-key")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.APIKey = args[i]
+			c.APIKey = v
+		case "--model":
+			v, err := take("--model")
+			if err != nil {
+				return err
+			}
+			c.Model = v
+		case "--temperature":
+			v, err := take("--temperature")
+			if err != nil {
+				return err
+			}
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid --temperature value %q", v)
+			}
+			c.Temperature = &f
+		case "--max-tokens":
+			v, err := take("--max-tokens")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --max-tokens value %q", v)
+			}
+			c.MaxTokens = n
+		case "--top-p":
+			v, err := take("--top-p")
+			if err != nil {
+				return err
+			}
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid --top-p value %q", v)
+			}
+			c.TopP = &f
+		case "--stream":
+			c.Stream = true
+		case "--no-stream":
+			c.Stream = false
+		case "--initial-token-timeout":
+			v, err := take("--initial-token-timeout")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --initial-token-timeout value %q", v)
+			}
+			c.InitialTokenTimeout = n
+		case "--connect-timeout":
+			v, err := take("--connect-timeout")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --connect-timeout value %q", v)
+			}
+			c.ConnectTimeout = n
+		case "--read-timeout":
+			v, err := take("--read-timeout")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --read-timeout value %q", v)
+			}
+			c.ReadTimeout = n
+		case "--context-size":
+			v, err := take("--context-size")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --context-size value %q", v)
+			}
+			c.ContextSize = n
+		case "--context-threshold":
+			v, err := take("--context-threshold")
+			if err != nil {
+				return err
+			}
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid --context-threshold value %q", v)
+			}
+			c.ContextThreshold = f
+		case "--max-iterations":
+			v, err := take("--max-iterations")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --max-iterations value %q", v)
+			}
+			c.MaxIterations = n
+		case "--no-compress":
+			c.AutoCompress = false
+		case "--read-only":
+			c.ReadOnly = true
 		case "--persona":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--persona requires an argument")
+			v, err := take("--persona")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.Persona = args[i]
+			c.Persona = v
 		case "--summary-only":
-			cfg.SummaryOnly = true
+			c.SummaryOnly = true
+		case "--goal":
+			v, err := take("--goal")
+			if err != nil {
+				return err
+			}
+			c.Goal = v
 		case "--theme":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--theme requires an argument")
+			v, err := take("--theme")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.Theme = args[i]
-		case "--tools":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--tools requires a comma-separated list of tool names")
+			c.Theme = v
+		case "--debug":
+			c.Debug = true
+		case "--debug-log":
+			v, err := take("--debug-log")
+			if err != nil {
+				return err
 			}
-			i++
-			// Parse comma-separated tool names
-			toolStr := args[i]
-			cfg.Tools = strings.Split(toolStr, ",")
-			// Trim whitespace from each tool name
-			for j, t := range cfg.Tools {
-				cfg.Tools[j] = strings.TrimSpace(t)
+			c.DebugLog = v
+		case "--config":
+			if !inline {
+				if _, err := need(&i, "--config"); err != nil {
+					return err
+				}
 			}
-		case "--list-tools":
-			cfg.ListTools = true
+		case "--load":
+			v, err := take("--load")
+			if err != nil {
+				return err
+			}
+			c.ContextFile = v
+		case "--no-dump-on-exit":
+			c.NoDumpOnExit = true
+		case "--cwd":
+			v, err := take("--cwd")
+			if err != nil {
+				return err
+			}
+			c.WorkingDir = v
+		case "--max-history":
+			v, err := take("--max-history")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --max-history value %q", v)
+			}
+			c.MaxHistory = n
+		case "--subagent-timeout":
+			v, err := take("--subagent-timeout")
+			if err != nil {
+				return err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fmt.Errorf("invalid --subagent-timeout value %q", v)
+			}
+			c.SubagentTimeout = n
 		case "--web":
-			cfg.Web = true
+			c.Web = true
 		case "--web-addr":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--web-addr requires an argument")
+			v, err := take("--web-addr")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.WebAddr = args[i]
+			c.WebAddr = v
 		case "--web-port":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--web-port requires an argument")
-			}
-			i++
-			webPort, err := strconv.Atoi(args[i])
+			v, err := take("--web-port")
 			if err != nil {
-				return nil, fmt.Errorf("invalid web-port: %v", err)
+				return err
 			}
-			cfg.WebPort = webPort
-		case "--web-session-idle-timeout":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--web-session-idle-timeout requires an argument")
-			}
-			i++
-			idleTimeout, err := strconv.Atoi(args[i])
+			n, err := strconv.Atoi(v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid web-session-idle-timeout: %v", err)
+				return fmt.Errorf("invalid --web-port value %q", v)
 			}
-			cfg.WebSessionIdleTimeout = idleTimeout
+			c.WebPort = n
 		case "--skills":
-			cfg.Skills = true
+			c.SkillsEnabled = true
 		case "--no-skills":
-			cfg.Skills = false
+			c.SkillsEnabled = false
 		case "--skills-dir":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--skills-dir requires an argument")
+			v, err := take("--skills-dir")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.SkillsDirs = append(cfg.SkillsDirs, args[i])
+			c.SkillsDirs = append(c.SkillsDirs, v)
 		case "--trust":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--trust requires an argument")
+			v, err := take("--trust")
+			if err != nil {
+				return err
 			}
-			i++
-			cfg.TrustDirs = append(cfg.TrustDirs, args[i])
+			c.TrustDirs = append(c.TrustDirs, v)
+		case "-h", "--help":
+			c.ShowHelp = true
+		case "-v", "--version":
+			c.ShowVersion = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return nil, fmt.Errorf("unknown flag: %s", arg)
+				return fmt.Errorf("unknown flag: %s", arg)
+			}
+			// Positional argument: treat as a one-shot prompt when nothing else was given.
+			if c.Prompt == "" {
+				c.Prompt = arg
 			}
 		}
 	}
-
-	// Validate config
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
-}
-
-// loadConfigFile loads configuration from a config file.
-// Supports simple KEY=VALUE format (one per line, # for comments).
-func loadConfigFile(path string, cfg *Config) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid config line (expected KEY=VALUE format): %s", line)
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove quotes if present
-		value = strings.Trim(value, "\"'")
-
-		switch key {
-		case "model":
-			cfg.Model = value
-		case "temperature":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				tempVal := v
-				cfg.Temperature = &tempVal
-			}
-		case "max_tokens":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxTokens = v
-			}
-		case "max_iterations":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxIterations = v
-			}
-		case "context_size":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ContextSize = v
-			}
-		case "streaming":
-			cfg.Streaming = value == "true" || value == "1"
-		case "api_endpoint":
-			cfg.APIEndpoint = value
-		case "api_key":
-			cfg.APIKey = value
-		case "initial_token_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.InitialTokenTimeout = v
-			}
-		case "connection_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ConnectionTimeout = v
-			}
-		case "read_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ReadTimeout = v
-
-			}
-		case "verbose":
-			cfg.Verbose = value == "true" || value == "1"
-		case "quiet":
-			cfg.Quiet = value == "true" || value == "1"
-		case "debug":
-			cfg.Debug = value == "true" || value == "1"
-		case "skills":
-			cfg.Skills = value == "true" || value == "1"
-		case "skills_dirs", "skills-dirs":
-			cfg.SkillsDirs = splitList(value)
-		case "trust_dirs", "trust-dirs":
-			cfg.TrustDirs = splitList(value)
-		case "debug_log":
-			cfg.DebugLog = value
-		case "read_only", "read-only":
-			cfg.ReadOnly = value == "true" || value == "1"
-		case "theme":
-			cfg.Theme = value
-		case "goal":
-			cfg.Goal = value
-		case "tools":
-			// Parse comma-separated tool names
-			cfg.Tools = strings.Split(value, ",")
-			for j, t := range cfg.Tools {
-				cfg.Tools[j] = strings.TrimSpace(t)
-			}
-		case "web":
-			cfg.Web = value == "true" || value == "1"
-		case "web_addr":
-			cfg.WebAddr = value
-		case "web_port":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.WebPort = v
-			}
-		default:
-			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
-		}
-	}
-
+	c.DetectMode()
 	return nil
 }
 
-// loadEnv loads configuration from environment variables.
-func loadEnv(cfg *Config) {
-	if val := os.Getenv("CODING_AGENT_MODEL"); val != "" {
-		cfg.Model = val
-	}
-	if val := os.Getenv("CODING_AGENT_TEMPERATURE"); val != "" {
-		if tempVal, err := strconv.ParseFloat(val, 64); err == nil {
-			cfg.Temperature = &tempVal
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_MAX_TOKENS"); val != "" {
-		if maxTokens, err := strconv.Atoi(val); err == nil {
-			cfg.MaxTokens = maxTokens
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_MAX_ITERATIONS"); val != "" {
-		if maxIterations, err := strconv.Atoi(val); err == nil {
-			cfg.MaxIterations = maxIterations
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); val != "" {
-		if ctxSize, err := strconv.Atoi(val); err == nil {
-			cfg.ContextSize = ctxSize
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_API_ENDPOINT"); val != "" {
-		cfg.APIEndpoint = val
-	}
-	if val := os.Getenv("CODING_AGENT_API_KEY"); val != "" {
-		cfg.APIKey = val
-	}
-	if val := os.Getenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.InitialTokenTimeout = timeout
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_CONNECTION_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ConnectionTimeout = timeout
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_READ_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ReadTimeout = timeout
-		}
-	}
-	// Streaming can be disabled via env var
-	if val := os.Getenv("CODING_AGENT_STREAMING"); val != "" {
-		if val == "false" || val == "0" {
-			cfg.Streaming = false
-		}
-	}
-	// Debug settings
-	if val := os.Getenv("CODING_AGENT_DEBUG"); val != "" {
-		cfg.Debug = val == "true" || val == "1"
-	}
-	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
-		cfg.DebugLog = val
-	}
-	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE"); val != "" {
-		cfg.DebugVerbose = val == "true" || val == "1"
-	}
-	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE_VERBOSE"); val != "" {
-		cfg.DebugVerboseVerbose = val == "true" || val == "1"
-	}
-	// Read-only mode can be enabled via environment variable
-	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
-		cfg.ReadOnly = val == "true" || val == "1"
-	}
-	// Experimental mode can be enabled via environment variable
-	if val := os.Getenv("CODING_AGENT_EXPERIMENTAL"); val != "" {
-		cfg.Experimental = val == "true" || val == "1"
-	}
-	// Persona can be set via environment variable
-	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {
-		cfg.Persona = val
-	}
-	// Theme can be set via environment variable
-	if val := os.Getenv("CODING_AGENT_THEME"); val != "" {
-		cfg.Theme = val
-	}
-	// Summary-only mode can be enabled via environment variable
-	if val := os.Getenv("CODING_AGENT_SUMMARY_ONLY"); val != "" {
-		cfg.SummaryOnly = val == "true" || val == "1"
-	}
-	// Goal can be set via environment variable
-	if val := os.Getenv("CODING_AGENT_GOAL"); val != "" {
-		cfg.Goal = val
-	}
-	// Tools can be set via environment variable
-	if val := os.Getenv("CODING_AGENT_TOOLS"); val != "" {
-		cfg.Tools = strings.Split(val, ",")
-		for j, t := range cfg.Tools {
-			cfg.Tools[j] = strings.TrimSpace(t)
-		}
-	}
-	// Web UI settings via environment variables
-	if val := os.Getenv("CODING_AGENT_WEB"); val != "" {
-		cfg.Web = val == "true" || val == "1"
-	}
-	if val := os.Getenv("CODING_AGENT_WEB_ADDR"); val != "" {
-		cfg.WebAddr = val
-	}
-	if val := os.Getenv("CODING_AGENT_WEB_PORT"); val != "" {
-		if v, err := strconv.Atoi(val); err == nil {
-			cfg.WebPort = v
-		}
-	}
-	if val := os.Getenv("CODING_AGENT_WEB_SESSION_IDLE_TIMEOUT"); val != "" {
-		if v, err := strconv.Atoi(val); err == nil {
-			cfg.WebSessionIdleTimeout = v
-		}
-	}
-	// Skills settings via environment variables
-	if val := os.Getenv("CODING_AGENT_SKILLS"); val != "" {
-		cfg.Skills = val == "true" || val == "1"
-	}
-	if val := os.Getenv("CODING_AGENT_SKILLS_DIRS"); val != "" {
-		cfg.SkillsDirs = splitList(val)
-	}
-	if val := os.Getenv("CODING_AGENT_TRUST_DIRS"); val != "" {
-		cfg.TrustDirs = splitList(val)
-	}
-
-	// Fallback: use GITHUB_TOKEN if API key is not set and endpoint is a GitHub
-	// Copilot or GitHub Models URL (both accept GitHub tokens).
-	if cfg.APIKey == "" {
-		if val := os.Getenv("GITHUB_TOKEN"); val != "" {
-			if IsGitHubCopilotEndpoint(cfg.APIEndpoint) || IsGitHubModelsEndpoint(cfg.APIEndpoint) {
-				cfg.APIKey = val
-			}
-		}
-	}
-}
-
-// Validate validates the configuration.
+// Validate checks the resolved configuration and applies the theme.
 func (c *Config) Validate() error {
 	if c.ContextSize <= 0 {
-		return fmt.Errorf("context size must be positive")
+		return fmt.Errorf("context size must be positive (got %d)", c.ContextSize)
+	}
+	if c.ContextThreshold <= 0 || c.ContextThreshold > 1 {
+		return fmt.Errorf("context threshold must be in (0, 1] (got %v)", c.ContextThreshold)
 	}
 	if c.MaxIterations <= 0 {
-		return fmt.Errorf("max iterations must be positive")
+		return fmt.Errorf("max iterations must be positive (got %d)", c.MaxIterations)
 	}
 	if c.InitialTokenTimeout < 10 {
-		return fmt.Errorf("initial token timeout must be at least 10 seconds")
+		return fmt.Errorf("initial token timeout must be at least 10 seconds (got %d)", c.InitialTokenTimeout)
 	}
-	// ConnectionTimeout and ReadTimeout have non-zero defaults (24h).
-	// The !=0 check allows explicit 0 (no timeout) to skip validation,
-	// while ensuring non-zero values meet minimum thresholds.
-	if c.ConnectionTimeout != 0 && c.ConnectionTimeout < 5 {
-		return fmt.Errorf("connection timeout must be at least 5 seconds")
+	if c.ConnectTimeout <= 0 {
+		return fmt.Errorf("connect timeout must be positive (got %d)", c.ConnectTimeout)
 	}
-	if c.ReadTimeout != 0 && c.ReadTimeout < 10 {
-		return fmt.Errorf("read timeout must be at least 10 seconds")
+	if c.ReadTimeout < 0 {
+		return fmt.Errorf("read timeout must not be negative (got %d)", c.ReadTimeout)
 	}
-	if c.WebPort < 1 || c.WebPort > 65535 {
-		return fmt.Errorf("web port must be between 1 and 65535")
+	if c.Temperature != nil && (*c.Temperature < 0 || *c.Temperature > 2) {
+		return fmt.Errorf("temperature must be between 0 and 2 (got %v)", *c.Temperature)
 	}
-	if c.WebSessionIdleTimeout < 0 {
-		return fmt.Errorf("web session idle timeout must be >= 0 seconds")
+	if !colors.ValidTheme(c.Theme) {
+		return fmt.Errorf("invalid theme %q: valid themes are: %s", c.Theme, strings.Join(colors.ListThemes(), ", "))
 	}
+	if err := colors.SetTheme(c.Theme); err != nil {
+		return err
+	}
+	if c.WebPort <= 0 || c.WebPort > 65535 {
+		return fmt.Errorf("web port must be between 1 and 65535 (got %d)", c.WebPort)
+	}
+	if c.APIEndpoint == "" {
+		return fmt.Errorf("api endpoint must not be empty")
+	}
+	if c.Model == "" {
+		return fmt.Errorf("model must not be empty")
+	}
+	c.DetectMode()
 	return nil
 }
 
-// splitList splits a comma-separated config value into a trimmed, non-empty
-// slice. It is used for repeatable list settings (skills dirs, trust dirs).
-func splitList(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
+// DetectMode resolves the run mode from the provided options.
+func (c *Config) DetectMode() {
+	switch {
+	case c.Web:
+		c.Mode = WebMode
+	case c.Prompt != "" || c.PromptFile != "" || c.UseStdin || c.ContextFile != "":
+		c.Mode = OneShotMode
+	default:
+		c.Mode = InteractiveMode
 	}
-	parts := strings.Split(value, ",")
-	var out []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+}
+
+// IsCopilotEndpoint reports whether a base URL points at GitHub Copilot.
+func IsCopilotEndpoint(base string) bool {
+	u := strings.ToLower(strings.TrimRight(base, "/"))
+	return strings.Contains(u, "api.githubcopilot.com")
+}
+
+// IsGitHubModelsEndpoint reports whether a base URL points at GitHub Models.
+func IsGitHubModelsEndpoint(base string) bool {
+	u := strings.ToLower(strings.TrimRight(base, "/"))
+	return strings.Contains(u, "models.github.ai") || strings.Contains(u, "inference.github.ai")
+}
+
+// IsCopilotEndpoint reports whether the configured endpoint is GitHub Copilot.
+func (c *Config) IsCopilotEndpoint() bool { return IsCopilotEndpoint(c.APIEndpoint) }
+
+// IsGitHubModelsEndpoint reports whether the endpoint is GitHub Models.
+func (c *Config) IsGitHubModelsEndpoint() bool { return IsGitHubModelsEndpoint(c.APIEndpoint) }
+
+// EnabledMCPServers returns the MCP servers that are enabled.
+func (c *Config) EnabledMCPServers() []MCPServerConfig {
+	out := make([]MCPServerConfig, 0, len(c.MCPServers))
+	for _, srv := range c.MCPServers {
+		if srv.Enabled {
+			out = append(out, srv)
 		}
+	}
+	return out
+}
+
+func parseBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func atoiDefault(v string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+		return n
+	}
+	return def
+}
+
+// splitArgs splits a command argument string, honouring simple quoting.
+func splitArgs(v string) []string {
+	var out []string
+	var cur strings.Builder
+	quote := rune(0)
+	for _, r := range v {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote != 0:
+			cur.WriteRune(r)
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ' ' || r == '\t':
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
 	}
 	return out
 }

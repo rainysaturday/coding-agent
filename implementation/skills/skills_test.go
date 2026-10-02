@@ -5,282 +5,263 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coding-agent/coding-agent/config"
 )
 
-func TestParseSKILLMDContent_Valid(t *testing.T) {
-	content := `---
-name: pdf-processor
-description: Extract and summarize PDF documents.
-license: MIT
-allowed-tools: bash, read_file
-metadata:
-  category: document
-  version: 1.2
----
-# PDF Processing
-
-Use pdftotext to extract text, then summarize.
-`
-	skill, err := ParseSKILLMDContent(content, "/skills/pdf-processor/SKILL.md")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if skill.Name != "pdf-processor" {
-		t.Errorf("Name = %q, want %q", skill.Name, "pdf-processor")
-	}
-	if skill.Description != "Extract and summarize PDF documents." {
-		t.Errorf("Description = %q", skill.Description)
-	}
-	if skill.License != "MIT" {
-		t.Errorf("License = %q", skill.License)
-	}
-	if len(skill.AllowedTools) != 2 || skill.AllowedTools[0] != "bash" || skill.AllowedTools[1] != "read_file" {
-		t.Errorf("AllowedTools = %v", skill.AllowedTools)
-	}
-	if skill.Metadata["category"] != "document" || skill.Metadata["version"] != "1.2" {
-		t.Errorf("Metadata = %v", skill.Metadata)
-	}
-	if !strings.Contains(skill.Instructions, "# PDF Processing") {
-		t.Errorf("Instructions missing body: %q", skill.Instructions)
-	}
-	if strings.Contains(skill.Instructions, "---") {
-		t.Errorf("Instructions should not include frontmatter")
-	}
-}
-
-func TestParseSKILLMDContent_MissingFrontmatter(t *testing.T) {
-	_, err := ParseSKILLMDContent("# Just a body\n", "")
-	if err == nil {
-		t.Fatal("expected error for missing frontmatter")
-	}
-}
-
-func TestParseSKILLMDContent_MissingDescription(t *testing.T) {
-	content := "---\nname: foo\n---\nbody"
-	_, err := ParseSKILLMDContent(content, "")
-	if err == nil {
-		t.Fatal("expected error for missing description")
-	}
-}
-
-func TestParseSKILLMDContent_NameFallbackToDir(t *testing.T) {
-	content := "---\ndescription: has no name\n---\nbody"
-	skill, err := ParseSKILLMDContent(content, "/some/dir/my-skill/SKILL.md")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if skill.Name != "my-skill" {
-		t.Errorf("Name = %q, want %q", skill.Name, "my-skill")
-	}
-}
-
-func TestParseSKILLMDContent_UnquotedValueWithColon(t *testing.T) {
-	// Cross-client authoring mistake: unquoted value containing a colon.
-	content := `---
-name: foo
-description: Handles time: 10:30 and other cases
----
-body`
-	skill, err := ParseSKILLMDContent(content, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if skill.Description != "Handles time: 10:30 and other cases" {
-		t.Errorf("Description = %q", skill.Description)
-	}
-}
-
-func TestParseSKILLMDContent_InlineMetadata(t *testing.T) {
-	content := `---
-name: foo
-description: desc
-metadata: {category: doc, priority: high}
----`
-	skill, err := ParseSKILLMDContent(content, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if skill.Metadata["category"] != "doc" || skill.Metadata["priority"] != "high" {
-		t.Errorf("Metadata = %v", skill.Metadata)
-	}
-}
-
-func TestParseSKILLMDContent_AllowedToolsCommaSpace(t *testing.T) {
-	content := `---
-name: foo
-description: desc
-allowed-tools: bash,grep read_file
----`
-	skill, err := ParseSKILLMDContent(content, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(skill.AllowedTools) != 3 {
-		t.Errorf("AllowedTools = %v", skill.AllowedTools)
-	}
-}
-
-func TestBuildCatalogSection_Empty(t *testing.T) {
-	catalog := NewCatalog()
-	if got := BuildCatalogSection(catalog); got != "" {
-		t.Errorf("empty catalog should produce empty section, got %q", got)
-	}
-	if got := BuildCatalogSection(nil); got != "" {
-		t.Errorf("nil catalog should produce empty section, got %q", got)
-	}
-}
-
-func TestBuildCatalogSection_NonEmpty(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.add(&Skill{Name: "alpha", Description: "A skill"})
-	catalog.add(&Skill{Name: "beta", Description: "B skill"})
-	section := BuildCatalogSection(catalog)
-	if !strings.Contains(section, "AVAILABLE SKILLS:") {
-		t.Errorf("section missing header: %q", section)
-	}
-	if !strings.Contains(section, "alpha: A skill") {
-		t.Errorf("section missing alpha: %q", section)
-	}
-	if !strings.Contains(section, "beta: B skill") {
-		t.Errorf("section missing beta: %q", section)
-	}
-}
-
-// TestDiscover_Shadowing verifies that a higher-precedence scope (project)
-// overrides a lower-precedence scope (user) on a name collision, with a
-// warning about the shadowed skill.
-func TestDiscover_Shadowing(t *testing.T) {
-	dir := t.TempDir()
-	userDir := filepath.Join(dir, "user")
-	projDir := filepath.Join(dir, "proj")
-
-	writeSkill(t, filepath.Join(userDir, ".agents", "skills", "dup", "SKILL.md"),
-		"---\nname: dup\ndescription: user version\n---\nuser body")
-	writeSkill(t, filepath.Join(projDir, ".agents", "skills", "dup", "SKILL.md"),
-		"---\nname: dup\ndescription: project version\n---\nproj body")
-
-	catalog, warnings := Discover(DiscoverOptions{
-		WorkingDir: projDir,
-		HomeDir:    userDir,
-		Trusted:    true,
-	})
-	if catalog.Len() != 1 {
-		t.Fatalf("expected 1 skill, got %d", catalog.Len())
-	}
-	skill := catalog.Get("dup")
-	if skill == nil {
-		t.Fatal("dup skill not found")
-	}
-	if skill.Description != "project version" {
-		t.Errorf("expected project version to win, got %q", skill.Description)
-	}
-	if skill.Scope != "project" {
-		t.Errorf("Scope = %q, want project", skill.Scope)
-	}
-	foundWarning := false
-	for _, w := range warnings {
-		if strings.Contains(w, "shadowed") {
-			foundWarning = true
-		}
-	}
-	if !foundWarning {
-		t.Errorf("expected shadowed warning, got %v", warnings)
-	}
-}
-
-// TestDiscover_TrustGating verifies that project skills are skipped when the
-// working directory is not trusted, while user skills still load.
-func TestDiscover_TrustGating(t *testing.T) {
-	dir := t.TempDir()
-	userDir := filepath.Join(dir, "user")
-	projDir := filepath.Join(dir, "proj")
-
-	writeSkill(t, filepath.Join(userDir, ".agents", "skills", "user-skill", "SKILL.md"),
-		"---\nname: user-skill\ndescription: user\n---\nuser body")
-	writeSkill(t, filepath.Join(projDir, ".agents", "skills", "proj-skill", "SKILL.md"),
-		"---\nname: proj-skill\ndescription: proj\n---\nproj body")
-
-	catalog, warnings := Discover(DiscoverOptions{
-		WorkingDir: projDir,
-		HomeDir:    userDir,
-		Trusted:    false,
-	})
-	if !catalog.Has("user-skill") {
-		t.Error("user skill should load even when project untrusted")
-	}
-	if catalog.Has("proj-skill") {
-		t.Error("project skill should be skipped when untrusted")
-	}
-	foundWarning := false
-	for _, w := range warnings {
-		if strings.Contains(w, "not trusted") {
-			foundWarning = true
-		}
-	}
-	if !foundWarning {
-		t.Errorf("expected not-trusted warning, got %v", warnings)
-	}
-}
-
-// TestDiscover_MalformedSkipped verifies that a skill with a missing
-// description is skipped with a warning rather than aborting discovery.
-func TestDiscover_MalformedSkipped(t *testing.T) {
-	dir := t.TempDir()
-	userDir := filepath.Join(dir, "user")
-
-	writeSkill(t, filepath.Join(userDir, ".agents", "skills", "bad", "SKILL.md"),
-		"---\nname: bad\n---\nno description")
-	writeSkill(t, filepath.Join(userDir, ".agents", "skills", "good", "SKILL.md"),
-		"---\nname: good\ndescription: ok\n---\nbody")
-
-	catalog, warnings := Discover(DiscoverOptions{HomeDir: userDir, Trusted: true})
-	if !catalog.Has("good") {
-		t.Error("good skill should load")
-	}
-	if catalog.Has("bad") {
-		t.Error("bad skill should be skipped")
-	}
-	foundWarning := false
-	for _, w := range warnings {
-		if strings.Contains(w, "bad") {
-			foundWarning = true
-		}
-	}
-	if !foundWarning {
-		t.Errorf("expected warning for malformed skill, got %v", warnings)
-	}
-}
-
-func TestDiscover_Resources(t *testing.T) {
-	dir := t.TempDir()
-	userDir := filepath.Join(dir, "user")
-	skillDir := filepath.Join(userDir, ".agents", "skills", "res", "SKILL.md")
-	writeSkill(t, skillDir, "---\nname: res\ndescription: resources\n---\nbody")
-
-	// Create a resource file.
-	if err := os.MkdirAll(filepath.Join(userDir, ".agents", "skills", "res", "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(userDir, ".agents", "skills", "res", "scripts", "run.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	catalog, _ := Discover(DiscoverOptions{HomeDir: userDir, Trusted: true})
-	skill := catalog.Get("res")
-	if skill == nil {
-		t.Fatal("res skill not found")
-	}
-	if len(skill.Resources) != 1 || skill.Resources[0] != filepath.Join("scripts", "run.sh") {
-		t.Errorf("Resources = %v", skill.Resources)
-	}
-}
-
-func writeSkill(t *testing.T, path, content string) {
+// isolateHome points HOME at a temp dir so user-scope scanning and the trust
+// file do not leak between tests or touch the real home directory.
+func isolateHome(t *testing.T) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	t.Setenv("HOME", t.TempDir())
+}
+
+func writeSkill(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func testCfg(trust ...string) *config.Config {
+	c := config.NewDefault()
+	c.SkillsEnabled = true
+	c.TrustDirs = trust
+	return c
+}
+
+func TestDiscoverTrustedProject(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "hello"),
+		"---\nname: hello\ndescription: Says hello to the user\nlicense: MIT\n---\n\nDo the hello thing.\nStep two.\n")
+
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 1 {
+		t.Fatalf("count: %d (%v)", m.Count(), m.Diagnostics())
+	}
+	s := m.List()[0]
+	if s.Name != "hello" || s.Scope != "project" || s.License != "MIT" {
+		t.Fatalf("skill: %+v", s)
+	}
+	if !strings.Contains(s.Description, "Says hello") {
+		t.Fatalf("description: %q", s.Description)
+	}
+
+	cat := m.Catalog()
+	if !strings.Contains(cat, "hello") || !strings.Contains(cat, "Says hello") {
+		t.Fatalf("catalog: %q", cat)
+	}
+
+	out, err := m.Activate("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Do the hello thing.") || !strings.Contains(out, "BEGIN SKILL INSTRUCTIONS") {
+		t.Fatalf("activate: %q", out)
+	}
+	// Second activation notes repetition.
+	out2, _ := m.Activate("hello")
+	if !strings.Contains(out2, "already loaded") {
+		t.Fatalf("repeat activate: %q", out2)
+	}
+	if _, err := m.Activate("missing"); err == nil {
+		t.Fatal("expected error for unknown skill")
+	}
+}
+
+func TestProjectSkillsSkippedWhenUntrusted(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "hello"),
+		"---\nname: hello\ndescription: d\n---\nbody\n")
+
+	m := Discover(testCfg(), cwd) // no trust
+	if m.Count() != 0 {
+		t.Fatalf("untrusted project skills must be skipped, got %d", m.Count())
+	}
+	var warned bool
+	for _, d := range m.Diagnostics() {
+		if strings.Contains(d.Message, "not trusted") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatal("expected a trust diagnostic")
+	}
+}
+
+func TestTrustPersistence(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, "skills", "t"), "---\nname: t\ndescription: d\n---\nx\n")
+
+	if Discover(testCfg(), cwd).Count() != 0 {
+		t.Fatal("should be untrusted initially")
+	}
+	if err := Trust(cwd); err != nil {
+		t.Fatal(err)
+	}
+	if Discover(testCfg(), cwd).Count() != 1 {
+		t.Fatal("persisted trust should enable project skills")
+	}
+}
+
+func TestMissingDescriptionSkipped(t *testing.T) {
+	// Spec 4.3 / requirement 047: a missing or empty description skips the
+	// skill with a diagnostic; the body is NOT used as a fallback.
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "nodesc"), "---\nname: nodesc\n---\nExplains things.\n\nDetails.\n")
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "emptydesc"), "---\nname: emptydesc\ndescription:\n---\nbody\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 0 {
+		t.Fatalf("skills without description must be skipped: %d", m.Count())
+	}
+	var found int
+	for _, d := range m.Diagnostics() {
+		if strings.Contains(d.Message, "description") {
+			found++
+		}
+	}
+	if found < 2 {
+		t.Fatalf("expected description diagnostics for both skills: %v", m.Diagnostics())
+	}
+}
+
+func TestEmptySkillSkipped(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "empty"), "---\nname: empty\n---\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 0 {
+		t.Fatalf("skill with no description anywhere must be skipped: %d", m.Count())
+	}
+	var found bool
+	for _, d := range m.Diagnostics() {
+		if strings.Contains(d.Message, "description") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected description diagnostic")
+	}
+}
+
+func TestNoFrontmatterSkipped(t *testing.T) {
+	// A SKILL.md without frontmatter has no description: skip with a
+	// diagnostic (spec 4.3: unparseable/missing frontmatter -> skip).
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "plain"), "Just a heading paragraph.\n\nMore text.\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 0 {
+		t.Fatalf("skill without frontmatter must be skipped: %d", m.Count())
+	}
+	var found bool
+	for _, d := range m.Diagnostics() {
+		if strings.Contains(d.Message, "description") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected description diagnostic")
+	}
+}
+
+func TestSkipDirsNotScanned(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "node_modules", "evil"),
+		"---\nname: evil\ndescription: d\n---\nx\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 0 {
+		t.Fatalf("node_modules must be skipped: %d", m.Count())
+	}
+}
+
+func TestProjectScopeWinsShadowing(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "dup"),
+		"---\nname: dup\ndescription: project copy\n---\np\n")
+	custom := filepath.Join(cwd, "..", "customskills")
+	writeSkill(t, filepath.Join(custom, "dup"),
+		"---\nname: dup\ndescription: custom copy\n---\nc\n")
+
+	cfg := testCfg(cwd)
+	cfg.SkillsDirs = []string{custom}
+	m := Discover(cfg, cwd)
+	if m.Count() != 1 {
+		t.Fatalf("count: %d", m.Count())
+	}
+	if m.List()[0].Description != "project copy" {
+		t.Fatalf("project scope should win: %q", m.List()[0].Description)
+	}
+}
+
+func TestQuotedAndMultilineFrontmatter(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "q"),
+		"---\nname: q\ndescription: \"A quoted: description that continues\n  on another line\"\nallowed-tools: read_file, grep\n---\nbody\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 1 {
+		t.Fatalf("count: %d (%v)", m.Count(), m.Diagnostics())
+	}
+	s := m.List()[0]
+	if !strings.Contains(s.Description, "A quoted: description") || !strings.Contains(s.Description, "another line") {
+		t.Fatalf("multiline description: %q", s.Description)
+	}
+	if s.AllowedTools == "" {
+		t.Fatal("allowed-tools not captured")
+	}
+}
+
+func TestIsSkillContent(t *testing.T) {
+	if !IsSkillContent("Skill 'x' activated.\n--- BEGIN SKILL INSTRUCTIONS ---\nbody\n--- END SKILL INSTRUCTIONS ---") {
+		t.Fatal("activated skill output should be detected")
+	}
+	if IsSkillContent("just some text") {
+		t.Fatal("plain text is not skill content")
+	}
+}
+
+func TestBundledResourcesListed(t *testing.T) {
+	isolateHome(t)
+	cwd := t.TempDir()
+	dir := filepath.Join(cwd, ".agents", "skills", "withres")
+	writeSkill(t, dir, "---\nname: withres\ndescription: d\n---\nbody\n")
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scripts", "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Discover(testCfg(cwd), cwd).Activate("withres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "scripts/run.sh") || !strings.Contains(out, "Bundled resources") {
+		t.Fatalf("resources: %q", out)
+	}
+}
+
+func TestLenientUnquotedColon(t *testing.T) {
+	// Spec 4.2: unquoted values containing a colon are technically invalid
+	// YAML but must be recovered by the lenient repair pass.
+	isolateHome(t)
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "pdf"),
+		"---\nname: pdf\ndescription: Use this skill when: the user asks about PDFs\n---\nbody\n")
+	m := Discover(testCfg(cwd), cwd)
+	if m.Count() != 1 {
+		t.Fatalf("lenient parse should recover the skill: %d (%v)", m.Count(), m.Diagnostics())
+	}
+	if !strings.Contains(m.List()[0].Description, "the user asks about PDFs") {
+		t.Fatalf("recovered description: %q", m.List()[0].Description)
 	}
 }

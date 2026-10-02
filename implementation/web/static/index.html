@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding Agent</title>
+<link rel="stylesheet" href="/assets/app.css">
+<style>
+:root {
+/*__THEME__*/
+}
+</style>
+</head>
+<body data-theme="__THEME_NAME__">
+<header>
+  <div class="brand">Coding Agent <span class="ver">__VERSION__</span></div>
+  <div class="header-right">
+    <span id="model" class="model">__MODEL__</span>
+    <span id="ctx" class="ctx ok">Tokens: 0 / 0 (0.0%)</span>
+    <span id="goal" class="goal hidden"></span>
+    <select id="theme" title="Theme">
+      <option value="dark">dark</option>
+      <option value="light">light</option>
+      <option value="solarized">solarized</option>
+      <option value="gruvbox">gruvbox</option>
+      <option value="darkula">darkula</option>
+    </select>
+    <button id="cancel" class="hidden">Cancel</button>
+  </div>
+</header>
+<main>
+  <section id="log" aria-live="polite"></section>
+  <aside id="stats" class="stats">
+    <h3>Statistics</h3>
+    <dl id="stats-body"></dl>
+  </aside>
+</main>
+<footer>
+  <input id="input" type="text" autocomplete="off" spellcheck="false"
+         placeholder="Ask the agent… (/stats, /goal …)">
+  <button id="send">Send</button>
+</footer>
+<script src="/assets/app.js"></script>
+</body>
+</html>

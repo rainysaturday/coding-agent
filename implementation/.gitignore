@@ -1,6 +1,5 @@
-coding-agent*
-coding-agent-test
-harness
-coding-agent-*
-debug.log
-coverage.*
+**/debug.log
+**/coding-agent*
+**/coding-agent.exe
+**/*.out
+dist/

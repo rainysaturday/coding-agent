@@ -1,568 +1,608 @@
-// Package tui implements the terminal user interface.
+// Package tui implements the minimal terminal user interface: a raw-mode
+// line editor with history, streaming output rendering with tool feedback,
+// context size display and slash commands.
 package tui
 
 import (
-	"bufio"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
-	"golang.org/x/term"
-
-	"github.com/coding-agent/harness/agent"
-	"github.com/coding-agent/harness/colors"
-	"github.com/coding-agent/harness/config"
-	"github.com/coding-agent/harness/inference"
+	"github.com/coding-agent/coding-agent/agent"
+	"github.com/coding-agent/coding-agent/colors"
+	"github.com/coding-agent/coding-agent/config"
+	"github.com/coding-agent/coding-agent/inference"
+	"github.com/coding-agent/coding-agent/version"
 )
 
-// TUI represents the terminal user interface.
+// evtTurnComplete is a sentinel pushed after an agent turn finishes.
+const evtTurnComplete agent.EventType = "turn_complete"
+
+// TUI is the terminal user interface.
 type TUI struct {
-	config                    *config.Config
-	output                    []string
-	history                   []string
-	historyIndex              int
-	maxHistory                int
-	cancelled                 bool
-	mu                        sync.Mutex
-	streaming                 bool
-	streamBuffer              strings.Builder // Normal (non-reasoning) content
-	reasoningBuffer           strings.Builder // Reasoning/thinking content
-	contextSize               int
-	lastContentWasToolCall    bool
-	maxContextSize            int
-	inputLine                 string // Current input line buffer (shared with history navigation)
-	currentInput              string // Stores typed input when navigating to history
-	transitionedFromReasoning bool   // Whether we've transitioned from reasoning to normal content
+	a   *agent.Agent
+	cfg *config.Config
+
+	out    *os.File
+	events chan agent.Event
+	keys   chan Key
+	kerr   chan error
+	raw    *rawMode
+
+	history   []string
+	histIdx   int
+	draft     []rune
+	cursor    int
+	promptOn  bool
+	streaming bool
+	toolLine  bool
+	running   bool
+	quit      bool
 }
 
-// NewTUI creates a new TUI instance.
-func NewTUI(cfg *config.Config) *TUI {
-	maxHistory := 100
-	if val := os.Getenv("CODING_AGENT_MAX_HISTORY"); val != "" {
-		if n, err := fmt.Sscanf(val, "%d", &maxHistory); err != nil || n == 0 {
-			maxHistory = 100
-		}
-	}
-
+// New creates a TUI for the given agent.
+func New(a *agent.Agent, cfg *config.Config) *TUI {
 	return &TUI{
-		config:         cfg,
-		output:         make([]string, 0),
-		history:        make([]string, 0),
-		historyIndex:   -1,
-		maxHistory:     maxHistory,
-		inputLine:      "",
-		currentInput:   "",
-		contextSize:    0,
-		maxContextSize: cfg.ContextSize,
+		a:       a,
+		cfg:     cfg,
+		out:     os.Stdout,
+		events:  make(chan agent.Event, 256),
+		keys:    make(chan Key, 64),
+		kerr:    make(chan error, 1),
+		histIdx: -1,
 	}
 }
 
-// Prompt displays the prompt and reads user input with history navigation.
-// Ctrl+C can be pressed during agent operation to cancel.
-func (t *TUI) Prompt() (string, error) {
-	t.mu.Lock()
-	t.cancelled = false
-	t.mu.Unlock()
-
-	// Display context size
-	t.printContextSize()
-
-	// Display prompt
-	fmt.Printf("> ")
-
-	// Reset input buffer for new input
-	t.mu.Lock()
-	t.inputLine = ""
-	t.mu.Unlock()
-
-	// Read input with history navigation support
-	input, err := t.readLineWithHistory()
-	if err != nil {
-		if t.cancelled {
-			return "", fmt.Errorf("cancelled")
+// Run starts the interactive loop. It returns the process exit code.
+func (t *TUI) Run(ctx context.Context) int {
+	if t.cfg.Goal != "" {
+		t.a.SetGoal(t.cfg.Goal)
+	}
+	t.a.SetEventCallback(func(e agent.Event) {
+		select {
+		case t.events <- e:
+		case <-ctx.Done():
 		}
-		return "", err
-	}
+	})
 
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return "", nil
-	}
-
-	// Add to history
-	t.addToHistory(input)
-
-	return input, nil
-}
-
-// readLineWithHistory reads a line with arrow key and Ctrl+P/N history navigation.
-// Uses raw mode to capture individual characters and escape sequences.
-func (t *TUI) readLineWithHistory() (string, error) {
-	fd := int(os.Stdin.Fd())
-
-	// Save current terminal state
-	oldState, err := term.GetState(fd)
-	if err != nil {
-		// Fallback to buffered reading if raw mode is not available
-		reader := bufio.NewReader(os.Stdin)
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
+	isTTY := isTerminal(os.Stdin)
+	if isTTY {
+		t.raw = &rawMode{fd: int(os.Stdin.Fd())}
+		if err := t.raw.Enter(); err != nil {
+			t.raw = nil
+			isTTY = false
 		}
-		return strings.TrimRight(input, "\r\n"), nil
 	}
-	defer term.Restore(fd, oldState)
-
-	// Enter raw mode
-	newState, err := term.MakeRaw(fd)
-	if err != nil {
-		return "", err
-	}
-	defer term.Restore(fd, newState)
-
-	for {
-		// Read a single byte
-		var buf [1]byte
-		_, err := os.Stdin.Read(buf[:])
-		if err != nil {
-			return t.inputLine, err
+	defer func() {
+		if t.raw != nil {
+			t.raw.Restore()
 		}
-		b := buf[0]
+	}()
 
-		// Handle escape sequences (arrow keys start with ESC = 0x1b)
-		if b == 0x1b {
-			// Read next two bytes for escape sequence
-			var seq [2]byte
-			_, err1 := os.Stdin.Read(seq[0:1])
-			if err1 == nil {
-				_, err2 := os.Stdin.Read(seq[1:2])
-				_ = err2
-				if seq[0] == '[' {
-					switch seq[1] {
-					case 'A': // Up arrow
-						t.handleHistoryUp()
-						continue
-					case 'B': // Down arrow
-						t.handleHistoryDown()
-						continue
-					}
+	t.banner()
+	if t.cfg.Goal != "" {
+		t.line(colors.GetColor("magenta"), "Goal mode active: "+t.cfg.Goal)
+	}
+
+	if isTTY {
+		go func() {
+			kr := newKeyReader(os.Stdin)
+			for {
+				k, err := kr.Read()
+				if err != nil {
+					t.kerr <- err
+					return
 				}
+				t.keys <- k
 			}
-			// Not a recognized escape sequence, treat as regular characters
-			t.inputLine += string(b)
-			t.inputLine += string(seq[0])
-			t.inputLine += string(seq[1])
-			os.Stdout.Write([]byte{b, seq[0], seq[1]})
-			continue
-		}
-
-		// Handle control characters
-		switch b {
-		case 3: // Ctrl+C
-			t.mu.Lock()
-			t.cancelled = true
-			t.mu.Unlock()
-			fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-			return "", fmt.Errorf("cancelled")
-		case 16: // Ctrl+P - Previous history
-			t.handleHistoryUp()
-			continue
-		case 14: // Ctrl+N - Next history
-			t.handleHistoryDown()
-			continue
-		case 13: // Enter/Carriage Return
-			fmt.Println()
-			return t.inputLine, nil
-		case 127, 8: // Backspace/Delete
-			if len(t.inputLine) > 0 {
-				t.inputLine = t.inputLine[:len(t.inputLine)-1]
-				fmt.Print("\b \b")
-			}
-			continue
-		case 4: // Ctrl+D - End of input
-			if len(t.inputLine) == 0 {
-				fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-				return "", fmt.Errorf("EOF")
-			}
-			// If there's text, treat as Enter
-			fmt.Println()
-			return t.inputLine, nil
-		default:
-			// Regular printable character
-			if b >= 32 && b < 127 || b >= 0x80 {
-				t.inputLine += string(b)
-				os.Stdout.Write([]byte{b})
-			}
-		}
-	}
-}
-
-// handleHistoryUp navigates to the previous history entry.
-func (t *TUI) handleHistoryUp() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if len(t.history) == 0 {
-		return
-	}
-
-	// Save current typed input when first entering history mode
-	if t.historyIndex == -1 {
-		t.currentInput = t.inputLine
-	}
-
-	if t.historyIndex == -1 {
-		t.historyIndex = 0
-	} else if t.historyIndex < len(t.history)-1 {
-		t.historyIndex++
-	}
-
-	// Clear entire line and set input to history entry
-	t.inputLine = ""
-	fmt.Print("\033[2K\r")
-	t.printContextSizeInternal()
-	fmt.Printf("> ")
-	if t.historyIndex < len(t.history) {
-		t.inputLine = t.history[t.historyIndex]
-		fmt.Print(t.history[t.historyIndex])
-	}
-}
-
-// handleHistoryDown navigates to the next history entry.
-func (t *TUI) handleHistoryDown() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if len(t.history) == 0 {
-		return
-	}
-
-	if t.historyIndex > 0 {
-		t.historyIndex--
-		fmt.Print("\033[2K\r")
-		t.printContextSizeInternal()
-		fmt.Printf("> ")
-		t.inputLine = t.history[t.historyIndex]
-		fmt.Print(t.history[t.historyIndex])
+		}()
 	} else {
-		// Exiting history mode - restore the current typed input
-		fmt.Print("\033[2K\r")
-		t.printContextSizeInternal()
-		fmt.Printf("> ")
-		t.inputLine = t.currentInput
-		if t.currentInput != "" {
-			fmt.Print(t.currentInput)
-		}
-		t.historyIndex = -1
+		// Non-TTY stdin: read prompts line by line until EOF.
+		go func() {
+			kr := newKeyReader(os.Stdin)
+			for {
+				k, err := kr.Read()
+				if err != nil {
+					t.kerr <- err
+					return
+				}
+				t.keys <- k
+			}
+		}()
 	}
-}
 
-// AddOutput adds output to be displayed.
-func (t *TUI) AddOutput(message string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.drawStatus()
+	t.drawPrompt()
 
-	t.output = append(t.output, message)
-	fmt.Println(message)
-}
-
-// AddOutputf formats and adds output.
-func (t *TUI) AddOutputf(format string, args ...interface{}) {
-	t.AddOutput(fmt.Sprintf(format, args...))
-}
-
-// StreamChunk outputs a chunk of streaming text immediately.
-// This is the legacy method that defaults to normal content type.
-func (t *TUI) StreamChunk(text string) {
-	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
-}
-
-// StreamChunkWithType outputs a chunk of streaming text with a specific content type.
-// For tool call parameter updates (indicated by "[Tool Call] " prefix), it uses
-// ANSI cursor positioning to update the line in place instead of appending.
-func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingContentType) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Apply appropriate color and buffer based on content type
-	switch contentType {
-	case inference.StreamingContentTypeReasoning:
-		t.reasoningBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("dim"), text, colors.GetColor("reset"))
-	case inference.StreamingContentTypeGoal:
-		// Goal messages are displayed in magenta to stand out
-		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
-	case inference.StreamingContentTypeCompression:
-		// Context compression messages are displayed in magenta to stand out
-		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
-	default:
-		// Transitioning from reasoning to normal content - add separator
-		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
-			fmt.Println()
-			fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
-			t.transitionedFromReasoning = true
+	for !t.quit {
+		select {
+		case <-ctx.Done():
+			t.quit = true
+		case err := <-t.kerr:
+			if err != nil && err != io.EOF {
+				t.line(colors.GetColor("red"), "Input error: "+err.Error())
+			}
+			t.quit = true
+		case k := <-t.keys:
+			t.handleKey(ctx, k)
+		case e := <-t.events:
+			t.handleEvent(e)
 		}
-		t.streamBuffer.WriteString(text)
+	}
 
-		// Check if this is a tool call parameter update
-		// Tool call updates start with "[Tool Call] " prefix (e.g., "[Tool Call] bash (command: "value")")
-		// We want to update the previous [Tool Call] line in place using ANSI cursor positioning
-		if strings.HasPrefix(text, "[Tool Call] ") {
-			// Use ANSI cursor positioning to update the line in place:
-			// \033[2K - Clear entire current line
-			// \r - Return cursor to start of line
-			// Then print the new full tool call with parameters
-			fmt.Print("\033[2K\r" + text)
-			t.lastContentWasToolCall = true
+	return t.shutdown()
+}
+
+// shutdown performs the exit flow including the automatic dump.
+func (t *TUI) shutdown() int {
+	if t.raw != nil {
+		t.raw.Restore()
+	}
+	if !t.cfg.NoDumpOnExit {
+		if path, err := t.a.DumpContext(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to dump context: %v\n", err)
 		} else {
-			// For non-tool-call content: ensure we start on a new line if previous content was a tool call
-			if t.lastContentWasToolCall {
-				fmt.Print("\n")
-			}
-			// Regular content - just print it
-			fmt.Print(text)
-			t.lastContentWasToolCall = false
+			fmt.Printf("Context dumped to: %s\n", path)
 		}
 	}
+	fmt.Println("Goodbye.")
+	return 0
 }
 
-// StreamReasoningChunk streams reasoning/thinking content with dim color.
-func (t *TUI) StreamReasoningChunk(text string) {
-	t.StreamChunkWithType(text, inference.StreamingContentTypeReasoning)
-}
+// ---------------------------------------------------------------------------
+// banner and status
+// ---------------------------------------------------------------------------
 
-// StreamNormalChunk streams regular content with normal color.
-func (t *TUI) StreamNormalChunk(text string) {
-	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
-}
-
-// StreamGoalChunk streams goal-related content with magenta color.
-func (t *TUI) StreamGoalChunk(text string) {
-	t.StreamChunkWithType(text, inference.StreamingContentTypeGoal)
-}
-
-// StreamEnd finalizes a streaming session.
-func (t *TUI) StreamEnd() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Ensure we're on a new line
-	fmt.Println()
-
-	// Store reasoning content if present
-	reasoning := t.reasoningBuffer.String()
-	if reasoning != "" {
-		t.output = append(t.output, "[Reasoning] "+reasoning)
+func (t *TUI) banner() {
+	fmt.Println(colors.Paint("cyan", "Coding Agent "+version.String()))
+	mode := "interactive"
+	if t.cfg.ReadOnly {
+		mode += " (read-only)"
 	}
+	fmt.Printf("Model: %s | Endpoint: %s | Context: %s | Theme: %s | Mode: %s\n",
+		t.cfg.Model, t.cfg.APIEndpoint, comma(t.a.ContextLimit()), t.cfg.Theme, mode)
+	fmt.Println("Type /help for commands. Ctrl+C cancels a running operation; Ctrl+C at the prompt exits.")
+}
 
-	// Store the normal (non-reasoning) content
-	content := t.streamBuffer.String()
-	if content != "" {
-		t.output = append(t.output, content)
+// contextLine renders the context size indicator with warning colors
+// (requirement 021).
+func (t *TUI) contextLine() string {
+	tok := t.a.ContextTokens()
+	limit := t.a.ContextLimit()
+	pct := 100 * float64(tok) / float64(limit)
+	slot := "green"
+	warn := ""
+	switch {
+	case pct > 90:
+		slot = "red"
+		warn = " ⚠⚠"
+	case pct > 75:
+		slot = "yellow"
+		warn = " ⚠"
+	case pct >= 50:
+		slot = "yellow"
 	}
-
-	t.streamBuffer.Reset()
-	t.reasoningBuffer.Reset()
-	t.transitionedFromReasoning = false
-	t.streaming = false
+	txt := fmt.Sprintf("[Tokens: %s / %s (%.1f%%)%s]", comma(tok), comma(limit), pct, warn)
+	return colors.Paint(slot, txt)
 }
 
-// StartStream begins a new streaming session.
-func (t *TUI) StartStream() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.streaming = true
-	t.streamBuffer.Reset()
-	t.reasoningBuffer.Reset()
-	t.transitionedFromReasoning = false
+func (t *TUI) drawStatus() {
+	fmt.Fprint(t.out, "\r\033[K"+t.contextLine()+"\n")
 }
 
-// IsStreaming returns whether we're currently streaming.
-func (t *TUI) IsStreaming() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.streaming
-}
+// ---------------------------------------------------------------------------
+// prompt / line editor
+// ---------------------------------------------------------------------------
 
-// ClearOutput clears the output display.
-func (t *TUI) ClearOutput() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.output = make([]string, 0)
-	clearScreen()
-}
-
-// DisplayStats displays the runtime statistics.
-func (t *TUI) DisplayStats(stats *agent.Stats) {
-	t.mu.Lock()
-	size := t.contextSize
-	max := t.maxContextSize
-	t.mu.Unlock()
-
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%sRuntime Statistics%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("  %sInput Tokens:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.InputTokens)
-	fmt.Printf("  %sOutput Tokens:%s     %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.OutputTokens)
-	fmt.Printf("  %sTokens/Second:%s     %.1f\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.TokensPerSecond)
-	fmt.Printf("  %sContext Size:%s      %d / %d", colors.GetColor("cyan"), colors.GetColor("reset"), size, max)
-	if max > 0 {
-		fmt.Printf(" (%.1f%%)", float64(size)/float64(max)*100)
+func (t *TUI) drawPrompt() {
+	t.promptOn = true
+	fmt.Fprint(t.out, "\r\033[K> "+string(t.draft))
+	if back := len(t.draft) - t.cursor; back > 0 {
+		fmt.Fprintf(t.out, "\033[%dD", back)
 	}
-	fmt.Println()
-	fmt.Printf("  %sTool Calls:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.ToolCalls)
-	fmt.Printf("  %sFailed Calls:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.FailedToolCalls)
-	fmt.Printf("  %sIterations:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Iterations)
-	if stats.CompressionCount > 0 {
-		fmt.Printf("  %sCompressions:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.CompressionCount)
+}
+
+func (t *TUI) clearPrompt() {
+	if t.promptOn {
+		fmt.Fprint(t.out, "\r\033[K")
+		t.promptOn = false
 	}
-	if !stats.StartTime.IsZero() {
-		fmt.Printf("  %sUptime:%s            %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), time.Since(stats.StartTime).Round(time.Second))
-	}
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
 }
 
-// AddToHistory adds a prompt to the history.
-func (t *TUI) addToHistory(prompt string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Add to beginning of history (newest first)
-	t.history = append([]string{prompt}, t.history...)
-
-	// Trim if exceeds max
-	if t.maxHistory > 0 && len(t.history) > t.maxHistory {
-		t.history = t.history[:t.maxHistory]
-	}
-
-	t.historyIndex = -1
-}
-
-// NavigateHistory navigates through history.
-func (t *TUI) NavigateHistory(direction int) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if len(t.history) == 0 {
-		return ""
-	}
-
-	t.historyIndex += direction
-
-	// Clamp index
-	if t.historyIndex < 0 {
-		t.historyIndex = 0
-	}
-	if t.historyIndex >= len(t.history) {
-		t.historyIndex = len(t.history)
-		return "" // Empty for "new" input
-	}
-
-	return t.history[t.historyIndex]
-}
-
-// ClearHistory clears the input history.
-func (t *TUI) ClearHistory() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.history = make([]string, 0)
-	t.historyIndex = -1
-	fmt.Println("History cleared.")
-}
-
-// CancelOperation cancels the current operation.
-func (t *TUI) CancelOperation() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	t.cancelled = true
-}
-
-// SetContextSize updates the current context size.
-func (t *TUI) SetContextSize(size, max int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.contextSize = size
-	t.maxContextSize = max
-}
-
-// ShowContextSize displays the current context size to the user.
-func (t *TUI) ShowContextSize() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.printContextSizeInternal()
-	fmt.Println()
-}
-
-// printContextSize prints the current context size indicator.
-func (t *TUI) printContextSize() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.printContextSizeInternal()
-}
-
-// printContextSizeInternal prints the current context size indicator.
-// Caller must hold t.mu.
-func (t *TUI) printContextSizeInternal() {
-	size := t.contextSize
-	max := t.maxContextSize
-
-	if max > 0 {
-		percentage := float64(size) / float64(max) * 100
-		var indicator string
-		var color string
-
-		switch {
-		case percentage < 50:
-			indicator = "✓"
-			color = colors.GetColor("green")
-		case percentage < 75:
-			indicator = "⚠"
-			color = colors.GetColor("yellow")
-		case percentage < 90:
-			indicator = "⚠⚠"
-			color = colors.GetColor("yellow")
-		default:
-			indicator = "⚠⚠⚠"
-			color = colors.GetColor("red")
-		}
-
-		fmt.Printf("%s[Context: %d / %d (%.1f%%) %s]%s ", color, size, max, percentage, indicator, colors.GetColor("reset"))
+// line prints a complete styled line, preserving an in-progress prompt.
+func (t *TUI) line(color, text string) {
+	t.endStream()
+	t.clearToolLine()
+	t.clearPrompt()
+	if color != "" {
+		fmt.Fprintln(t.out, color+text+colors.GetColor("reset"))
 	} else {
-		fmt.Printf("[Context: %d tokens] ", size)
+		fmt.Fprintln(t.out, text)
+	}
+	if !t.running {
+		t.drawPrompt()
 	}
 }
 
-// printColored prints text with ANSI color.
-func printColored(color, text string) {
-	fmt.Printf("%s%s%s", color, text, colors.GetColor("reset"))
+// lineBlock prints multi-line text with an optional color prefix per line.
+func (t *TUI) lineBlock(color, text string) {
+	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		t.line(color, l)
+	}
 }
 
-// ANSI color codes (aliases to the colors package for backwards compatibility)
-const (
-	ColorReset   = colors.ColorReset
-	ColorRed     = colors.ColorRed
-	ColorGreen   = colors.ColorGreen
-	ColorYellow  = colors.ColorYellow
-	ColorBlue    = colors.ColorBlue
-	ColorMagenta = colors.ColorMagenta
-	ColorCyan    = colors.ColorCyan
-	ColorDim     = colors.ColorDim
-)
+// endStream terminates an open streaming output run with a newline.
+func (t *TUI) endStream() {
+	if t.streaming {
+		fmt.Fprintln(t.out)
+		t.streaming = false
+	}
+}
 
-// Clear screen ANSI code
-const (
-	ClearScreen = "\033[2J\033[H"
-)
+// ---------------------------------------------------------------------------
+// key handling
+// ---------------------------------------------------------------------------
 
-// clearScreen clears the terminal screen.
-func clearScreen() {
-	fmt.Print(ClearScreen)
+func (t *TUI) handleKey(ctx context.Context, k Key) {
+	switch k.Kind {
+	case KeyCtrlC:
+		if t.running {
+			t.a.Cancel()
+			t.line(colors.GetColor("yellow"), "Cancelling...")
+			return
+		}
+		t.quit = true
+	case KeyCtrlD:
+		if len(t.draft) == 0 && !t.running {
+			t.quit = true
+		}
+	case KeyCtrlU:
+		if !t.running {
+			t.draft = nil
+			t.cursor = 0
+			t.drawPrompt()
+		}
+	case KeyEnter:
+		if t.running {
+			return
+		}
+		line := strings.TrimSpace(string(t.draft))
+		t.draft = nil
+		t.cursor = 0
+		t.histIdx = -1
+		t.clearPrompt()
+		if line == "" {
+			t.drawPrompt()
+			return
+		}
+		t.pushHistory(line)
+		if strings.HasPrefix(line, "/") {
+			t.handleCommand(ctx, line)
+			t.drawStatus()
+			t.drawPrompt()
+			return
+		}
+		t.startRun(ctx, line)
+	case KeyBackspace:
+		if !t.running && t.cursor > 0 {
+			t.draft = append(t.draft[:t.cursor-1], t.draft[t.cursor:]...)
+			t.cursor--
+			t.drawPrompt()
+		}
+	case KeyDelete:
+		if !t.running && t.cursor < len(t.draft) {
+			t.draft = append(t.draft[:t.cursor], t.draft[t.cursor+1:]...)
+			t.drawPrompt()
+		}
+	case KeyLeft:
+		if !t.running && t.cursor > 0 {
+			t.cursor--
+			t.drawPrompt()
+		}
+	case KeyRight:
+		if !t.running && t.cursor < len(t.draft) {
+			t.cursor++
+			t.drawPrompt()
+		}
+	case KeyHome:
+		if !t.running {
+			t.cursor = 0
+			t.drawPrompt()
+		}
+	case KeyEnd:
+		if !t.running {
+			t.cursor = len(t.draft)
+			t.drawPrompt()
+		}
+	case KeyUp, KeyDown:
+		if t.running {
+			return
+		}
+		t.navigateHistory(k.Kind == KeyUp)
+	case KeyRune:
+		if !t.running {
+			t.draft = append(t.draft, k.Rune)
+			t.cursor = len(t.draft)
+			t.drawPrompt()
+		}
+	default:
+		// ignore
+	}
+}
+
+// navigateHistory walks the input history with the arrow keys (requirement 019).
+func (t *TUI) navigateHistory(up bool) {
+	if len(t.history) == 0 {
+		return
+	}
+	if up {
+		if t.histIdx < len(t.history)-1 {
+			t.histIdx++
+		}
+	} else {
+		if t.histIdx > 0 {
+			t.histIdx--
+		} else {
+			t.histIdx = -1
+		}
+	}
+	if t.histIdx >= 0 {
+		t.draft = []rune(t.history[len(t.history)-1-t.histIdx])
+	} else {
+		t.draft = nil
+	}
+	t.cursor = len(t.draft)
+	t.drawPrompt()
+}
+
+func (t *TUI) pushHistory(line string) {
+	t.history = append(t.history, line)
+	if max := t.cfg.MaxHistory; max > 0 && len(t.history) > max {
+		t.history = t.history[len(t.history)-max:]
+	}
+}
+
+// startRun launches the agent in the background.
+func (t *TUI) startRun(ctx context.Context, prompt string) {
+	t.running = true
+	go func() {
+		_, err := t.a.Submit(ctx, prompt)
+		_ = err // errors are surfaced through events
+		t.events <- agent.Event{Type: evtTurnComplete}
+	}()
+}
+
+// ---------------------------------------------------------------------------
+// event rendering
+// ---------------------------------------------------------------------------
+
+func (t *TUI) handleEvent(e agent.Event) {
+	switch e.Type {
+	case agent.EventContent:
+		t.clearToolLine()
+		fmt.Fprint(t.out, e.Text)
+		t.streaming = true
+	case agent.EventReasoning:
+		t.clearToolLine()
+		fmt.Fprint(t.out, colors.GetColor("dim")+e.Text+colors.GetColor("reset"))
+		t.streaming = true
+	case agent.EventToolArgs:
+		t.endStream()
+		t.drawToolLine(e.Tool, e.Args)
+	case agent.EventToolStart:
+		t.endStream()
+		if !t.toolLine {
+			t.drawToolLine(e.Tool, e.Args)
+		}
+		t.closeToolLine()
+	case agent.EventToolResult:
+		t.closeToolLine()
+		if e.Failed {
+			t.line(colors.GetColor("red"), "Tool '"+e.Tool+"' failed:")
+		} else {
+			t.line(colors.GetColor("green"), "Tool '"+e.Tool+"' executed successfully:")
+		}
+		for _, l := range truncateLines(e.Result, 20, 2000) {
+			t.line(colors.GetColor("dim"), "  "+l)
+		}
+	case agent.EventError:
+		t.endStream()
+		t.closeToolLine()
+		t.lineBlock(colors.GetColor("red"), e.Text)
+	case agent.EventGoal:
+		t.endStream()
+		t.line(colors.GetColor("magenta"), e.Text)
+	case agent.EventCompressed:
+		t.endStream()
+		t.line(colors.GetColor("magenta"), e.Text)
+	case agent.EventSubagent:
+		t.endStream()
+		t.line(colors.GetColor("dim"), "[Subagent] "+e.Text)
+	case agent.EventIteration:
+		// silent
+	case agent.EventDone:
+		// content already streamed
+	case evtTurnComplete:
+		t.endStream()
+		t.closeToolLine()
+		fmt.Fprintln(t.out)
+		t.running = false
+		t.drawStatus()
+		t.drawPrompt()
+	}
+}
+
+// drawToolLine renders the in-place tool call line (requirement 017).
+func (t *TUI) drawToolLine(name, args string) {
+	cols, _ := terminalSize()
+	txt := "[Tool Call] " + name
+	if args != "" {
+		txt += " (" + args + ")"
+	}
+	if len(txt) > cols-1 {
+		txt = txt[:cols-1]
+	}
+	fmt.Fprint(t.out, "\r\033[K"+colors.GetColor("blue")+txt+colors.GetColor("reset"))
+	t.toolLine = true
+}
+
+func (t *TUI) closeToolLine() {
+	if t.toolLine {
+		fmt.Fprintln(t.out)
+		t.toolLine = false
+	}
+}
+
+func (t *TUI) clearToolLine() {
+	if t.toolLine {
+		fmt.Fprint(t.out, "\r\033[K")
+		t.toolLine = false
+	}
+}
+
+// truncateLines trims a tool result for display.
+func truncateLines(s string, maxLines, maxChars int) []string {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return nil
+	}
+	if len(s) > maxChars {
+		s = s[:maxChars] + " ... [truncated]"
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > maxLines {
+		omitted := len(lines) - maxLines
+		lines = append(lines[:maxLines], fmt.Sprintf("... [%d more lines]", omitted))
+	}
+	return lines
+}
+
+// ---------------------------------------------------------------------------
+// commands
+// ---------------------------------------------------------------------------
+
+func (t *TUI) handleCommand(ctx context.Context, line string) {
+	cmd, rest, _ := strings.Cut(line, " ")
+	rest = strings.TrimSpace(rest)
+	switch cmd {
+	case "/help":
+		t.lineBlock("", helpText)
+	case "/stats":
+		t.statsBlock()
+	case "/clear":
+		fmt.Fprint(t.out, "\033[2J\033[H")
+	case "/clear-history":
+		t.history = nil
+		t.histIdx = -1
+		t.line("", "Input history cleared.")
+	case "/compress":
+		t.line(colors.GetColor("magenta"), "Compressing context...")
+		t.running = true
+		go func() {
+			err := t.a.Compress(ctx)
+			if err != nil {
+				t.events <- agent.Event{Type: agent.EventError, Text: "Compression failed: " + err.Error(), Failed: true}
+			}
+			t.events <- agent.Event{Type: evtTurnComplete}
+		}()
+	case "/goal":
+		if rest == "" {
+			t.line(colors.GetColor("magenta"), "Goal mode: "+goalStatus(t.a))
+			break
+		}
+		t.a.SetGoal(rest)
+		t.line(colors.GetColor("magenta"), "Goal set: "+rest)
+		t.startRun(ctx, rest)
+	case "/goal-off":
+		t.a.ClearGoal()
+		t.line(colors.GetColor("magenta"), "Goal mode deactivated.")
+	case "/dump":
+		path, err := t.a.DumpContext()
+		if err != nil {
+			t.line(colors.GetColor("red"), "Dump failed: "+err.Error())
+		} else {
+			t.line(colors.GetColor("green"), "Context dumped to: "+path)
+		}
+	case "/read-only":
+		newVal := !t.a.ReadOnly()
+		t.a.SetReadOnly(newVal)
+		if newVal {
+			t.line(colors.GetColor("yellow"), "Read-only mode enabled.")
+		} else {
+			t.line(colors.GetColor("yellow"), "Read-only mode disabled.")
+		}
+	case "/skills":
+		t.skillsList()
+	case "/skill":
+		if rest == "" {
+			t.line("", "Usage: /skill <name>")
+			break
+		}
+		t.activateSkill(rest)
+	case "/version":
+		t.line("", version.Full())
+	case "/exit", "/quit":
+		t.quit = true
+	default:
+		t.line(colors.GetColor("red"), "Unknown command: "+cmd+" (try /help)")
+	}
+}
+
+func goalStatus(a *agent.Agent) string {
+	goal, start := a.Goal()
+	if goal == "" {
+		return "inactive"
+	}
+	return fmt.Sprintf("active: %q (elapsed %s)", goal, agent.FormatDuration(since(start)))
+}
+
+func statsBlockFor(a *agent.Agent) string {
+	var b strings.Builder
+	b.WriteString(strings.Repeat("=", 50) + "\n")
+	b.WriteString("Runtime Statistics\n")
+	b.WriteString(strings.Repeat("=", 50) + "\n")
+	b.WriteString(fmtStats(a))
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat("=", 50))
+	return b.String()
+}
+
+func (t *TUI) statsBlock() {
+	t.lineBlock("", statsBlockFor(t.a))
+}
+
+func (t *TUI) skillsList() {
+	s := t.a.Skills()
+	if s == nil {
+		t.line("", "Skills are disabled.")
+		return
+	}
+	list := s.List()
+	if len(list) == 0 {
+		t.line("", "No skills discovered.")
+		for _, d := range s.Diagnostics() {
+			t.line(colors.GetColor("dim"), "  ["+d.Level+"] "+d.Path+": "+d.Message)
+		}
+		return
+	}
+	for _, sk := range list {
+		t.line("", fmt.Sprintf("  %-24s %s", sk.Name, sk.Description))
+	}
+}
+
+func (t *TUI) activateSkill(name string) {
+	s := t.a.Skills()
+	if s == nil {
+		t.line("", "Skills are disabled.")
+		return
+	}
+	content, err := s.Activate(name)
+	if err != nil {
+		t.line(colors.GetColor("red"), err.Error())
+		return
+	}
+	t.a.AddMessage(inference.NewTextMessage("user", "Skill '"+name+"' manually activated by the user:\n\n"+content))
+	t.line(colors.GetColor("green"), "Skill '"+name+"' activated and added to the context.")
 }

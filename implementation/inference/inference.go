@@ -1,880 +1,608 @@
-// Package inference handles communication with the LLM backend.
+// Package inference implements an OpenAI compatible chat completion client
+// with streaming, tool calls, reasoning field detection and backend specific
+// quirks (llama.cpp timings, GitHub Copilot, GitHub Models).
 package inference
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
-	"unicode/utf8"
 
-	"github.com/coding-agent/harness/config"
-	"github.com/coding-agent/harness/tools"
+	"github.com/coding-agent/coding-agent/config"
+	"github.com/coding-agent/coding-agent/debug"
+	"github.com/coding-agent/coding-agent/version"
 )
 
-// StreamingContentType represents the type of content being streamed.
-type StreamingContentType int
-
-const (
-	StreamingContentTypeNormal StreamingContentType = iota
-	StreamingContentTypeReasoning
-	StreamingContentTypeGoal
-	StreamingContentTypeCompression
-)
-
-// StreamingChunk represents a streaming chunk with content type.
-type StreamingChunk struct {
-	Text        string
-	ContentType StreamingContentType
-	// IsToolCall marks chunks that describe a tool call (name or argument
-	// update). This is a typed signal so consumers do not have to sniff the
-	// "[Tool Call] " text prefix (I-13).
-	IsToolCall bool
+// Client talks to an OpenAI compatible inference backend.
+type Client struct {
+	cfg    *config.Config
+	http   *http.Client
+	mu     sync.Mutex
+	reason string // detected reasoning field name
 }
 
-// StreamingCallbackWithType is a function type for handling streaming chunks with content type.
-type StreamingCallbackWithType func(chunk StreamingChunk)
-
-// InferenceClient handles communication with the LLM backend.
-type InferenceClient struct {
-	endpoint            string
-	apiKey              string
-	model               string
-	temperature         *float64
-	maxTokens           int
-	contextSize         int
-	streaming           bool
-	timeout             time.Duration
-	client              *http.Client
-	maxRetries          int
-	retryDelay          time.Duration
-	tools               []ToolDefinition
-	debugVerbose        bool
-	debugVerboseVerbose bool
-	maxDisplayWidth     int // Maximum display width for tool call arguments (0 = no limit)
-}
-
-// Message represents a chat message.
-type Message struct {
-	Role             string         `json:"role"`
-	Content          string         `json:"content"`                     // Plain text content
-	ContentParts     []ContentPart  `json:"-"`                           // Multi-modal content parts (images + text)
-	Reasoning        string         `json:"reasoning,omitempty"`         // OpenAI standard field for reasoning models (o1, o3-mini, etc.)
-	ReasoningContent string         `json:"reasoning_content,omitempty"` // llama.cpp
-	ToolCallId       string         `json:"tool_call_id,omitempty"`      // For tool call output messages
-	ToolCalls        []*APIToolCall `json:"tool_calls,omitempty"`        // For assistant messages with tool calls
-	Refusal          string         `json:"refusal,omitempty"`           // Content-policy or other refusal from the model
-}
-
-// ContentPart represents a single part of multi-modal message content.
-type ContentPart struct {
-	Type     string        `json:"type"`      // "text" or "image_url"
-	Text     string        `json:"text"`      // Text content (when type is "text")
-	ImageURL *ImageURLPart `json:"image_url"` // Image content (when type is "image_url")
-}
-
-// ImageURLPart represents an image in a multi-modal message.
-type ImageURLPart struct {
-	URL    string `json:"url"`    // Public URL or base64 data URI (data:[mime_type];base64,[base64_string])
-	Detail string `json:"detail"` // "auto", "low", or "high" (default: "auto")
-}
-
-// HasContentParts returns true if the message has multi-modal content parts.
-func (m *Message) HasContentParts() bool {
-	return len(m.ContentParts) > 0
-}
-
-// SetImageContent creates a message with image content.
-func (m *Message) SetImageContent(text string, imageDataURI string, detail string) {
-	m.ContentParts = []ContentPart{
-		{Type: "text", Text: text},
-		{Type: "image_url", ImageURL: &ImageURLPart{URL: imageDataURI, Detail: detail}},
+// New creates a client for the given configuration.
+func New(cfg *config.Config) *Client {
+	// Connection and read timeouts are configured separately (requirement
+	// 010). ConnectTimeout bounds dialing and the TLS handshake; ReadTimeout
+	// bounds the wait for response headers. A zero ReadTimeout falls back to
+	// the initial token timeout so a server that accepts the connection but
+	// never responds is still caught.
+	connect := time.Duration(cfg.ConnectTimeout) * time.Second
+	if connect <= 0 {
+		connect = time.Duration(config.DefaultConnectTimeout) * time.Second
+	}
+	tr := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: connect, KeepAlive: 30 * time.Second}).DialContext,
+		MaxIdleConns:        8,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: connect,
+	}
+	read := time.Duration(cfg.ReadTimeout) * time.Second
+	if read <= 0 && cfg.InitialTokenTimeout > 0 {
+		read = time.Duration(cfg.InitialTokenTimeout) * time.Second
+	}
+	if read > 0 {
+		tr.ResponseHeaderTimeout = read
+	}
+	return &Client{
+		cfg:  cfg,
+		http: &http.Client{Transport: tr},
+		// No overall timeout: streaming may legitimately run for hours.
 	}
 }
 
-// MarshalJSON implements custom JSON marshaling for Message to support multi-modal content.
-// When ContentParts is set, content is serialized as an array; otherwise as a plain string.
-func (m *Message) MarshalJSON() ([]byte, error) {
-	// Build the JSON manually to handle the conditional content field
-	type Alias Message // Avoid infinite recursion
-	aux := &struct {
-		Content interface{} `json:"content,omitempty"`
-		*Alias
-	}{
-		Alias: (*Alias)(m),
+// Config returns the configuration in use.
+func (c *Client) Config() *config.Config { return c.cfg }
+
+// ReasoningField returns the detected reasoning field name.
+func (c *Client) ReasoningField() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reason == "" {
+		return ReasoningFieldLlamaCPP
 	}
+	return c.reason
+}
 
-	// Set content based on whether we have multi-modal parts
-	if len(m.ContentParts) > 0 {
-		aux.Content = m.ContentParts
-	} else if m.Content == "" {
-		// Emit null (omitted via omitempty) rather than an empty string. Several
-		// OpenAI-compatible servers expect content:null for assistant messages
-		// that only carry tool_calls, and reject content:"".
-		aux.Content = nil
-	} else {
-		aux.Content = m.Content
+func (c *Client) setReasoningField(field string) {
+	if field == "" {
+		return
 	}
-
-	return json.Marshal(aux)
-}
-
-// ToolDefinition represents a tool definition for the LLM (OpenAI format).
-type ToolDefinition struct {
-	Type     string             `json:"type"`
-	Function FunctionDefinition `json:"function"`
-}
-
-// FunctionDefinition defines a function tool (OpenAI format).
-type FunctionDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  ParameterSchema `json:"parameters"`
-}
-
-// ParameterSchema defines the schema for tool parameters (OpenAI format).
-type ParameterSchema struct {
-	Type       string              `json:"type"`
-	Required   []string            `json:"required,omitempty"`
-	Properties map[string]Property `json:"properties"`
-}
-
-// Property defines a single property in the schema.
-type Property struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	Items       *Property `json:"items,omitempty"`
-}
-
-// ToolCall represents a tool call from the OpenAI API response.
-type APIToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
-	Index    *int         `json:"index,omitempty"` // Index in streaming deltas
-}
-
-// FunctionCall represents the function part of a tool call.
-type FunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-// Response represents an inference response.
-type Response struct {
-	Content              string            // The actual response text (does NOT include reasoning)
-	Reasoning            string            // Reasoning content from the model (from whichever field the server used)
-	ReasoningContentType string            // Which reasoning field the server used: "reasoning" or "reasoning_content"
-	Refusal              string            // Content-policy or other refusal from the model (if any)
-	ToolCalls            []*tools.ToolCall // Parsed tool calls compatible with tool executor
-	APIToolCalls         []*APIToolCall    // Raw tool calls from API for reference
-	TokenUsage           int
-	StreamUsage          int
-	InputTokens          int // Prompt tokens from API (actual input to LLM)
-	OutputTokens         int // Completion tokens from API (actual output from LLM)
-}
-
-// NewInferenceClient creates a new inference client.
-func NewInferenceClient(cfg *config.Config) *InferenceClient {
-	totalTimeout := time.Duration(cfg.InitialTokenTimeout) * time.Second
-	if cfg.ReadTimeout > 0 {
-		totalTimeout = time.Duration(cfg.ReadTimeout) * time.Second
-	}
-
-	return &InferenceClient{
-		endpoint:    cfg.APIEndpoint,
-		apiKey:      cfg.APIKey,
-		model:       cfg.Model,
-		temperature: cfg.Temperature,
-		maxTokens:   cfg.MaxTokens,
-		contextSize: cfg.ContextSize,
-		streaming:   cfg.Streaming,
-		timeout:     totalTimeout,
-		client: &http.Client{
-			Timeout: totalTimeout,
-		},
-		maxRetries:          3,
-		retryDelay:          1 * time.Second,
-		debugVerbose:        cfg.DebugVerbose,
-		debugVerboseVerbose: cfg.DebugVerboseVerbose,
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reason == "" {
+		c.reason = field
 	}
 }
 
-// SetEndpoint sets the API endpoint.
-func (ic *InferenceClient) SetEndpoint(endpoint string) {
-	ic.endpoint = endpoint
-}
-
-// SetAPIKey sets the API key.
-func (ic *InferenceClient) SetAPIKey(key string) {
-	ic.apiKey = key
-}
-
-// SetTools sets the available tools for tool calling.
-func (ic *InferenceClient) SetTools(tools []ToolDefinition) {
-	ic.tools = tools
-}
-
-// SetMaxDisplayWidth sets the maximum display width for tool call arguments.
-// This is used to truncate long parameter values to prevent terminal line wrapping.
-func (ic *InferenceClient) SetMaxDisplayWidth(width int) {
-	ic.maxDisplayWidth = width
-}
-
-// GetTools returns the registered tools.
-func (ic *InferenceClient) GetTools() []ToolDefinition {
-	return ic.tools
-}
-
-// isCopilotEndpoint checks if the endpoint is a GitHub Copilot URL.
-func (ic *InferenceClient) isCopilotEndpoint() bool {
-	return config.IsGitHubCopilotEndpoint(ic.endpoint)
-}
-
-// isGitHubModelsEndpoint checks if the endpoint is a GitHub Models URL.
-func (ic *InferenceClient) isGitHubModelsEndpoint() bool {
-	return config.IsGitHubModelsEndpoint(ic.endpoint)
-}
-
-// buildURL constructs the full API URL based on the endpoint type.
-// Copilot uses /chat/completions, GitHub Models uses /inference/chat/completions,
-// and all other endpoints use the default /v1/chat/completions.
-// A trailing slash (and, for the default path, a trailing /v1) is stripped from
-// the configured endpoint first so callers may provide either
-// "https://api.openai.com" or "https://api.openai.com/v1" without producing a
-// doubled "/v1/v1" path segment.
-func (ic *InferenceClient) buildURL() string {
-	base := strings.TrimRight(ic.endpoint, "/")
-	if ic.isCopilotEndpoint() {
-		return base + "/chat/completions"
-	}
-	if ic.isGitHubModelsEndpoint() {
+// ChatURL returns the endpoint used for chat completions.
+//
+// llama.cpp and most servers expose /v1/chat/completions; GitHub Copilot uses
+// /chat/completions; GitHub Models uses /inference/chat/completions.
+func (c *Client) ChatURL() string {
+	base := strings.TrimRight(c.cfg.APIEndpoint, "/")
+	switch {
+	case config.IsGitHubModelsEndpoint(base):
+		if strings.HasSuffix(base, "/inference") {
+			return base + "/chat/completions"
+		}
 		return base + "/inference/chat/completions"
+	case config.IsCopilotEndpoint(base):
+		if strings.HasSuffix(base, "/chat/completions") {
+			return base
+		}
+		return base + "/chat/completions"
+	default:
+		if strings.HasSuffix(base, "/v1") || strings.HasSuffix(base, "/v1/chat/completions") {
+			if strings.HasSuffix(base, "/chat/completions") {
+				return base
+			}
+			return base + "/chat/completions"
+		}
+		return base + "/v1/chat/completions"
 	}
-	base = strings.TrimSuffix(base, "/v1")
-	return base + "/v1/chat/completions"
 }
 
-// InferenceRequest sends a request to the inference backend (non-streaming).
-func (ic *InferenceClient) InferenceRequest(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
-	return ic.request(ctx, messages, systemPrompt, nil, true)
-}
-
-// InferenceRequestNoTools is like InferenceRequest but omits the registered tool
-// definitions and tool_choice from the request body. It is used for vision/image
-// analysis calls that should not advertise function calling (some endpoints/models
-// reject requests with a tools array when they do not support tools).
-func (ic *InferenceClient) InferenceRequestNoTools(ctx context.Context, messages []*Message, systemPrompt string) (*Response, error) {
-	return ic.request(ctx, messages, systemPrompt, nil, false)
-}
-
-// InferenceRequestStream sends a request with a streaming callback.
-func (ic *InferenceClient) InferenceRequestStream(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
-	return ic.request(ctx, messages, systemPrompt, callback, true)
-}
-
-// InferenceRequestStreamNoTools is like InferenceRequestStream but omits the
-// registered tool definitions and tool_choice from the request body.
-func (ic *InferenceClient) InferenceRequestStreamNoTools(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
-	return ic.request(ctx, messages, systemPrompt, callback, false)
-}
-
-// InferenceRequestWithCallbackTyped sends a request with a typed streaming callback that supports reasoning content.
-func (ic *InferenceClient) InferenceRequestWithCallbackTyped(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType) (*Response, error) {
-	return ic.request(ctx, messages, systemPrompt, callback, true)
-}
-
-// request is the shared implementation for all inference requests. When
-// includeTools is false, the registered tool definitions and tool_choice are
-// omitted from the request body.
-func (ic *InferenceClient) request(ctx context.Context, messages []*Message, systemPrompt string, callback StreamingCallbackWithType, includeTools bool) (*Response, error) {
-	// Build the request
-	reqBody := &RequestBody{
-		Model:       ic.model,
-		Messages:    ic.buildMessages(messages, systemPrompt),
-		Stream:      ic.streaming,
-		Temperature: ic.temperature,
-		MaxTokens:   ic.maxTokens,
+// ModelsURL returns the model listing endpoint for the backend.
+func (c *Client) ModelsURL() string {
+	base := strings.TrimRight(c.cfg.APIEndpoint, "/")
+	switch {
+	case config.IsGitHubModelsEndpoint(base):
+		if strings.HasSuffix(base, "/inference") {
+			return strings.TrimSuffix(base, "/inference") + "/models"
+		}
+		return base + "/models"
+	case config.IsCopilotEndpoint(base):
+		return base + "/models"
+	default:
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/models"
+		}
+		return base + "/v1/models"
 	}
+}
 
-	// Add tools if registered
-	if includeTools && len(ic.tools) > 0 {
-		reqBody.Tools = ic.tools
-		reqBody.ToolChoice = "auto"
+// AuthHeaders returns the authentication headers for the backend.
+func (c *Client) AuthHeaders(req *http.Request) {
+	key := c.cfg.APIKey
+	switch {
+	case config.IsCopilotEndpoint(c.cfg.APIEndpoint):
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Copilot-Integration-Id", "vscode-chat")
+		req.Header.Set("Editor-Version", "coding-agent/"+version.String())
+	case config.IsGitHubModelsEndpoint(c.cfg.APIEndpoint):
+		req.Header.Set("Authorization", "Bearer "+key)
+	default:
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
 	}
+	req.Header.Set("Content-Type", "application/json")
+}
 
-	// Serialize request
-	jsonData, err := json.Marshal(reqBody)
+// AvailableModels lists models advertised by the backend (best effort).
+func (c *Client) AvailableModels(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ModelsURL(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, err
+	}
+	c.AuthHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, m := range out.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
+// retryable reports whether an HTTP status should be retried.
+func retryable(status int) bool {
+	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+// ChatCompletion performs a chat completion, streaming when enabled.
+func (c *Client) ChatCompletion(ctx context.Context, req *Request, cb *StreamCallbacks) (*Response, error) {
+	if c.cfg.Stream {
+		req.Stream = true
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
+	}
+	if dbg := debug.Default(); dbg != nil {
+		dbg.Logf("request payload (%d bytes): %s", len(payload), debug.Redact(string(payload)))
 	}
 
-	// Retry logic
 	var lastErr error
-	for attempt := 0; attempt <= ic.maxRetries; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
 		if attempt > 0 {
-			// Wait before retry
+			delay := time.Duration(1<<uint(attempt-1)) * time.Second
+			if delay > 15*time.Second {
+				delay = 15 * time.Second
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(ic.retryDelay):
+			case <-time.After(delay):
 			}
 		}
-
-		// Create HTTP request using buildURL() for endpoint-aware path construction
-		req, err := http.NewRequestWithContext(ctx, "POST", ic.buildURL(), bytes.NewReader(jsonData))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
+		resp, err := c.doOnce(ctx, payload, cb)
+		if err == nil {
+			return resp, nil
 		}
-
-		req.Header.Set("Content-Type", "application/json")
-		if ic.apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+ic.apiKey)
-		}
-
-		// Add Copilot-specific headers when needed
-		if ic.isCopilotEndpoint() {
-			req.Header.Set("Copilot-Integration-Id", "coding-agent")
-			req.Header.Set("Editor-Version", "coding-agent/1.0")
-		}
-
-		// Debug verbose: log the request
-		if ic.debugVerbose {
-			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Request: POST %s\n", ic.buildURL())
-			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Headers: ")
-			first := true
-			for k, v := range req.Header {
-				if !first {
-					fmt.Fprintf(os.Stderr, ", ")
-				}
-				fmt.Fprintf(os.Stderr, "%s=%s", k, strings.Join(v, ";"))
-				first = false
-			}
-			fmt.Fprintln(os.Stderr)
-			// Log body (redact authorization)
-			bodyStr := string(jsonData)
-			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Body (%d bytes): %s\n", len(jsonData), truncateJSON(bodyStr, 1000))
-		}
-
-		// Make request
-		resp, err := ic.client.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to make request (attempt %d): %w", attempt+1, err)
-			if ic.debugVerbose {
-				fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] <<< Request failed: %v\n", err)
+		lastErr = err
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && retryable(apiErr.StatusCode) {
+			if dbg := debug.Default(); dbg != nil {
+				dbg.Logf("retryable status %d, attempt %d", apiErr.StatusCode, attempt+1)
 			}
 			continue
 		}
-
-		// Debug verbose: log response status
-		if ic.debugVerbose {
-			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] <<< Response: %d %s\n", resp.StatusCode, resp.Status)
-		}
-
-		// Handle 429 rate limiting - retry with backoff
-		if resp.StatusCode == http.StatusTooManyRequests {
-			retryAfter := resp.Header.Get("Retry-After")
-			var retryDelay time.Duration
-			if retryAfter != "" {
-				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
-					retryDelay = time.Duration(seconds) * time.Second
-				} else {
-					retryDelay = ic.retryDelay
-				}
-			} else {
-				retryDelay = ic.retryDelay
-			}
-
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if attempt < ic.maxRetries {
-				// Log retry attempt for debugging
-				if len(body) > 0 {
-					lastErr = fmt.Errorf("API rate limited (429, attempt %d): %s - retrying in %v", attempt+1, string(body), retryDelay)
-				} else {
-					lastErr = fmt.Errorf("API rate limited (429, attempt %d) - retrying in %v", attempt+1, retryDelay)
-				}
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(retryDelay):
-				}
-				continue
-			}
-			return nil, fmt.Errorf("API rate limited (429) after %d retries", ic.maxRetries)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-
-			// Handle authentication errors with specific guidance
-			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-				errorMsg := fmt.Sprintf("API authentication failed (HTTP %d)", resp.StatusCode)
-				if ic.isCopilotEndpoint() {
-					errorMsg += "\nEnsure your GITHUB_TOKEN or --api-key is a valid GitHub Copilot token.\nGenerate one at: https://github.com/settings/tokens"
-				}
-				return nil, fmt.Errorf("%s", errorMsg)
-			}
-
-			// Handle bad request errors with Copilot-specific guidance
-			if resp.StatusCode == http.StatusBadRequest {
-				errorMsg := fmt.Sprintf("API error (HTTP %d) - %s", resp.StatusCode, string(body))
-				if ic.isCopilotEndpoint() {
-					if strings.Contains(string(body), "third-party user token") || strings.Contains(string(body), "Personal Access Token") {
-						errorMsg += "\nhint: api.githubcopilot.com does not accept Personal Access Tokens (github_pat). Use a Copilot user token (ghu_) for this endpoint.\nAlternatively switch to CODING_AGENT_API_ENDPOINT=https://models.github.ai when using PAT/OAuth tokens"
-					}
-				}
-				return nil, fmt.Errorf("%s", errorMsg)
-			}
-
-			// Retry on server errors (5xx), not client errors (4xx)
-			if resp.StatusCode >= 500 {
-				lastErr = fmt.Errorf("API error (attempt %d): %d - %s", attempt+1, resp.StatusCode, string(body))
-				continue
-			}
-
-			// For other non-OK status codes, return error without retry
-			return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(body))
-		}
-
-		// Success - handle response. Close the body explicitly on every return
-		// path rather than deferring inside the loop (a function-scoped defer
-		// inside a retry loop is fragile and easy to leak).
-		var respOut *Response
-		var respErr error
-		if ic.streaming {
-			// Set read deadline to prevent hanging on slow/stalled streams.
-			// http.Response.Body implements SetReadDeadline for network connections,
-			// so this always succeeds in normal operation.
-			if rc, ok := resp.Body.(interface{ SetReadDeadline(time.Time) error }); ok {
-				_ = rc.SetReadDeadline(time.Now().Add(ic.timeout))
-			}
-			respOut, respErr = ic.handleStreamResponse(resp.Body, callback)
-		} else {
-			respOut, respErr = ic.handleResponse(resp.Body)
-		}
-		resp.Body.Close()
-		return respOut, respErr
+		return nil, err
 	}
-
-	return nil, lastErr
+	return nil, fmt.Errorf("request failed after retries: %w", lastErr)
 }
 
-// buildMessages builds the message list with system prompt.
-func (ic *InferenceClient) buildMessages(messages []*Message, systemPrompt string) []*Message {
-	result := make([]*Message, 0, len(messages)+1)
+func (c *Client) doOnce(ctx context.Context, payload []byte, cb *StreamCallbacks) (*Response, error) {
+	url := c.ChatURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	c.AuthHeaders(req)
 
-	// Add system prompt first
-	if systemPrompt != "" {
-		result = append(result, &Message{
-			Role:    "system",
-			Content: systemPrompt,
+	start := time.Now()
+	httpResp, err := c.http.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if c.cfg.InitialTokenTimeout > 0 && strings.Contains(err.Error(), "timeout awaiting response headers") {
+			return nil, fmt.Errorf("timed out after %s waiting for the first response token (raise --initial-token-timeout or CODING_AGENT_INITIAL_TOKEN_TIMEOUT; long prompts may need a slow prompt cache warm-up)", formatDuration(time.Duration(c.cfg.InitialTokenTimeout)*time.Second))
+		}
+		return nil, &APIError{
+			Message: fmt.Sprintf("failed to connect to %s: %v", url, err),
+			Hint:    "check that the inference server is running and that --api-endpoint is correct",
+		}
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
+		return nil, c.httpError(httpResp, body)
+	}
+
+	if !c.cfg.Stream {
+		body, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+		if dbg := debug.Default(); dbg != nil {
+			dbg.Logf("response (%d bytes, %s): %s", len(body), time.Since(start), debug.Redact(string(body)))
+		}
+		return c.parseNonStream(body)
+	}
+	return c.parseStream(ctx, httpResp, cb, start)
+}
+
+func (c *Client) httpError(resp *http.Response, body []byte) error {
+	msg := strings.TrimSpace(string(body))
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Error.Message != "" {
+		msg = parsed.Error.Message
+	}
+	if msg == "" {
+		msg = resp.Status
+	}
+	err := &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("inference API error (HTTP %d): %s", resp.StatusCode, msg)}
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		err.Hint = authHint(c.cfg)
+	case resp.StatusCode == http.StatusNotFound:
+		err.Hint = fmt.Sprintf("endpoint not found at %s; llama.cpp uses /v1/chat/completions, GitHub Copilot uses /chat/completions, GitHub Models uses /inference/chat/completions", c.ChatURL())
+	case resp.StatusCode == http.StatusTooManyRequests:
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			err.Hint = "rate limited, Retry-After: " + ra
+		} else {
+			err.Hint = "rate limited by the server; retrying with backoff"
+		}
+	}
+	return err
+}
+
+func authHint(cfg *config.Config) string {
+	if config.IsCopilotEndpoint(cfg.APIEndpoint) {
+		return "GitHub Copilot requires a GitHub App user token (ghu_/gho_). A personal access token (github_pat_/ghp_) is rejected. Run 'gh auth token' or 'gh auth login' and export GITHUB_TOKEN, or pass --api-key."
+	}
+	if config.IsGitHubModelsEndpoint(cfg.APIEndpoint) {
+		return "GitHub Models requires a GitHub token with model inference access; export GITHUB_TOKEN or pass --api-key."
+	}
+	return "set CODING_AGENT_API_KEY or pass --api-key (llama.cpp servers usually need no key)"
+}
+
+func (c *Client) parseNonStream(body []byte) (*Response, error) {
+	var cr struct {
+		ID      string    `json:"id"`
+		Model   string    `json:"model"`
+		Choices []Choice  `json:"choices"`
+		Usage   *Usage    `json:"usage"`
+		Timings *Timings  `json:"timings"`
+		Error   *APIError `json:"error"`
+	}
+	if err := json.Unmarshal(body, &cr); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	if cr.Error != nil {
+		return nil, cr.Error
+	}
+	resp := &Response{ID: cr.ID, Model: cr.Model}
+	for _, ch := range cr.Choices {
+		if ch.Message == nil {
+			continue
+		}
+		resp.Content = ch.Message.Text()
+		resp.Reasoning = ch.Message.Reasoning
+		resp.ToolCalls = ch.Message.ToolCalls
+		resp.FinishReason = ch.FinishReason
+		if ch.Message.ReasoningField != "" {
+			c.setReasoningField(ch.Message.ReasoningField)
+		}
+		break
+	}
+	resp.Usage = usageFrom(cr.Usage, cr.Timings)
+	return resp, nil
+}
+
+// usageFrom combines OpenAI usage with llama.cpp timings. llama.cpp reports
+// cache_n (tokens served from the prompt cache) and prompt_n (tokens actually
+// processed); the total prompt tokens is the sum of both.
+func usageFrom(u *Usage, t *Timings) Usage {
+	if u != nil && (u.PromptTokens > 0 || u.CompletionTokens > 0) {
+		out := *u
+		if out.TotalTokens == 0 {
+			out.TotalTokens = out.PromptTokens + out.CompletionTokens
+		}
+		return out
+	}
+	if t != nil {
+		prompt := t.CacheN + t.PromptN
+		return Usage{
+			PromptTokens:     prompt,
+			CompletionTokens: t.PredictedN,
+			TotalTokens:      prompt + t.PredictedN,
+			CachedTokens:     t.CacheN,
+		}
+	}
+	if u != nil {
+		return *u
+	}
+	return Usage{}
+}
+
+// parseStream consumes an SSE stream and assembles the completion.
+func (c *Client) parseStream(ctx context.Context, resp *http.Response, cb *StreamCallbacks, start time.Time) (*Response, error) {
+	out := &Response{}
+	toolCalls := map[int]*ToolCall{}
+	toolCallOrder := []int{}
+
+	var usage *Usage
+	var timings *Timings
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	var firstToken, timedOut bool
+	var timeoutErr error
+	var mu sync.Mutex
+	var watchdog *time.Timer
+
+	timeout := time.Duration(c.cfg.InitialTokenTimeout) * time.Second
+	stopWatchdog := func() {
+		mu.Lock()
+		firstToken = true
+		if watchdog != nil {
+			watchdog.Stop()
+		}
+		mu.Unlock()
+	}
+	if timeout > 0 {
+		watchdog = time.AfterFunc(timeout, func() {
+			mu.Lock()
+			if !firstToken {
+				timedOut = true
+				timeoutErr = fmt.Errorf("timed out after %s waiting for the first response token (raise --initial-token-timeout or CODING_AGENT_INITIAL_TOKEN_TIMEOUT; long prompts may need a slow prompt cache warm-up)", formatDuration(timeout))
+			}
+			mu.Unlock()
+			_ = resp.Body.Close()
 		})
 	}
 
-	// Add conversation messages with normalized tool call types
-	for _, msg := range messages {
-		normalized := *msg
-		// Deep-copy ToolCalls so we can normalize types without mutating the original.
-		// IMPORTANT: if new pointer/slice fields are added to Message in the future,
-		// they must also be deep-copied here to maintain the no-mutation guarantee.
-		if len(msg.ToolCalls) > 0 {
-			normalized.ToolCalls = make([]*APIToolCall, len(msg.ToolCalls))
-			for i, tc := range msg.ToolCalls {
-				cpy := *tc
-				normalized.ToolCalls[i] = &cpy
+	// Unblock the blocking scanner read when the context is cancelled.
+	go func() {
+		<-ctx.Done()
+		_ = resp.Body.Close()
+	}()
+
+	type scanResult struct {
+		done bool
+		err  error
+	}
+	done := make(chan scanResult, 1)
+
+	go func() {
+		for scanner.Scan() {
+			stopWatchdog()
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, ":") {
+				continue
 			}
-		}
-		for _, tc := range normalized.ToolCalls {
-			if tc.Type == "" {
-				tc.Type = "function"
+			if !strings.HasPrefix(line, "data:") {
+				continue
 			}
-		}
-		// Deep-copy ContentParts (multi-modal images/text) so the no-mutation
-		// guarantee extends to this slice as well.
-		if len(msg.ContentParts) > 0 {
-			normalized.ContentParts = make([]ContentPart, len(msg.ContentParts))
-			for i, part := range msg.ContentParts {
-				cpy := part
-				if part.ImageURL != nil {
-					imgCpy := *part.ImageURL
-					cpy.ImageURL = &imgCpy
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if data == "[DONE]" {
+				done <- scanResult{done: true}
+				return
+			}
+			var chunk Chunk
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				if dbg := debug.Default(); dbg != nil {
+					dbg.Logf("failed to decode SSE chunk: %v (%s)", err, debug.Redact(data))
 				}
-				normalized.ContentParts[i] = cpy
+				continue
 			}
-		}
-		result = append(result, &normalized)
-	}
-
-	return result
-}
-
-// handleResponse handles a non-streaming response.
-func (ic *InferenceClient) handleResponse(body io.Reader) (*Response, error) {
-	var respBody struct {
-		Choices []struct {
-			Message      Message `json:"message"`
-			FinishReason string  `json:"finish_reason"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
-		Timings struct {
-			CacheN     int `json:"cache_n"`
-			PromptN    int `json:"prompt_n"`
-			PredictedN int `json:"predicted_n"`
-		} `json:"timings"`
-	}
-
-	if err := json.NewDecoder(body).Decode(&respBody); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if len(respBody.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
-	}
-
-	message := respBody.Choices[0].Message
-	content := message.Content
-	refusal := message.Refusal
-
-	// Determine which reasoning field the server used and set ReasoningContentType accordingly
-	var reasoning string
-	var reasoningContentType string
-	if message.Reasoning != "" {
-		reasoning = message.Reasoning
-		reasoningContentType = "reasoning"
-	} else if message.ReasoningContent != "" {
-		reasoning = message.ReasoningContent
-		reasoningContentType = "reasoning_content"
-	}
-
-	// Parse OpenAI tool calls
-	var toolCalls []*tools.ToolCall
-	var apiToolCalls []*APIToolCall
-
-	if len(message.ToolCalls) > 0 {
-		// Convert API tool calls to internal tool calls
-		for _, apiTC := range message.ToolCalls {
-			apiToolCalls = append(apiToolCalls, apiTC)
-
-			// Parse the arguments JSON string
-			var params map[string]interface{}
-			if apiTC.Function.Arguments != "" {
-				if err := json.Unmarshal([]byte(apiTC.Function.Arguments), &params); err != nil {
-					// If parsing fails, store as raw string in parameters
-					params = map[string]interface{}{
-						"_raw_arguments": apiTC.Function.Arguments,
-						"_parse_error":   err.Error(),
+			if chunk.Error != nil {
+				done <- scanResult{err: chunk.Error}
+				return
+			}
+			if chunk.Model != "" {
+				out.Model = chunk.Model
+			}
+			if chunk.ID != "" {
+				out.ID = chunk.ID
+			}
+			if chunk.Usage != nil {
+				usage = chunk.Usage
+			}
+			if chunk.Timings != nil {
+				timings = chunk.Timings
+			}
+			for _, ch := range chunk.Choices {
+				if ch.FinishReason != "" {
+					out.FinishReason = ch.FinishReason
+				}
+				d := ch.Delta
+				if d == nil {
+					if ch.Message == nil {
+						continue
+					}
+					d = &Delta{Content: strPtr(ch.Message.Text())}
+					if ch.Message.Reasoning != "" {
+						if ch.Message.ReasoningField == ReasoningFieldOpenAI {
+							d.Reasoning = strPtr(ch.Message.Reasoning)
+						} else {
+							d.ReasoningContent = strPtr(ch.Message.Reasoning)
+						}
+					}
+					for i, tc := range ch.Message.ToolCalls {
+						fc := tc.Function
+						d.ToolCalls = append(d.ToolCalls, ToolCallDelta{Index: i, ID: tc.ID, Type: tc.Type, Function: &fc})
+					}
+				}
+				if d.Content != nil && *d.Content != "" {
+					out.Content += *d.Content
+					if cb != nil && cb.Content != nil {
+						cb.Content(*d.Content)
+					}
+				}
+				field, reasoning := pickReasoning(d)
+				if reasoning != "" {
+					out.Reasoning += reasoning
+					c.setReasoningField(field)
+					if cb != nil && cb.Reasoning != nil {
+						cb.Reasoning(reasoning)
+					}
+				}
+				for _, tcd := range d.ToolCalls {
+					if tcd.Type != "" && tcd.Type != "function" {
+						tcd.Type = "function"
+					}
+					tc, ok := toolCalls[tcd.Index]
+					if !ok {
+						tc = &ToolCall{Type: "function"}
+						toolCalls[tcd.Index] = tc
+						toolCallOrder = append(toolCallOrder, tcd.Index)
+					}
+					if tcd.ID != "" {
+						tc.ID = tcd.ID
+					}
+					if tcd.Type != "" {
+						tc.Type = tcd.Type
+					}
+					if tcd.Function != nil {
+						tc.Function.Name += tcd.Function.Name
+						tc.Function.Arguments += tcd.Function.Arguments
+					}
+					if cb != nil && cb.ToolCallDelta != nil {
+						cb.ToolCallDelta(tcd.Index, tcd)
 					}
 				}
 			}
-
-			toolCall := &tools.ToolCall{
-				ID:         apiTC.ID,
-				Name:       apiTC.Function.Name,
-				Parameters: params,
-				Raw:        apiTC.Function.Arguments,
-			}
-			toolCalls = append(toolCalls, toolCall)
 		}
+		done <- scanResult{err: scanner.Err()}
+	}()
+
+	res := <-done
+	if watchdog != nil {
+		watchdog.Stop()
+	}
+	mu.Lock()
+	tErr := timeoutErr
+	timed := timedOut
+	mu.Unlock()
+	if timed {
+		return nil, tErr
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if res.err != nil {
+		return nil, fmt.Errorf("failed reading stream: %w", res.err)
 	}
 
-	// Get token usage from API - prefer OpenAI-style fields, fall back to timings
-	inputTokens := respBody.Usage.PromptTokens
-	outputTokens := respBody.Usage.CompletionTokens
-	tokenUsage := respBody.Usage.TotalTokens
-
-	if inputTokens == 0 && outputTokens == 0 && tokenUsage == 0 {
-		// Fall back to llama.cpp timings format - cache_n is NOT included in prompt_n
-		inputTokens = respBody.Timings.CacheN + respBody.Timings.PromptN
-		outputTokens = respBody.Timings.PredictedN
-		if outputTokens > 0 {
-			tokenUsage = inputTokens + outputTokens
+	for _, idx := range toolCallOrder {
+		tc := toolCalls[idx]
+		if tc.ID == "" {
+			tc.ID = fmt.Sprintf("call_%d", idx)
 		}
+		if tc.Type == "" {
+			tc.Type = "function"
+		}
+		out.ToolCalls = append(out.ToolCalls, *tc)
 	}
-
-	return &Response{
-		Content:              content,
-		Reasoning:            reasoning,
-		ReasoningContentType: reasoningContentType,
-		Refusal:              refusal,
-		ToolCalls:            toolCalls,
-		APIToolCalls:         apiToolCalls,
-		TokenUsage:           tokenUsage,
-		InputTokens:          inputTokens,
-		OutputTokens:         outputTokens,
-	}, nil
+	out.Usage = usageFrom(usage, timings)
+	if dbg := debug.Default(); dbg != nil {
+		dbg.Logf("stream finished in %s: content=%d chars reasoning=%d chars tool_calls=%d usage=%d/%d tokens",
+			time.Since(start), len(out.Content), len(out.Reasoning), len(out.ToolCalls), out.Usage.PromptTokens, out.Usage.CompletionTokens)
+	}
+	return out, nil
+}
+func pickReasoning(d *Delta) (field, text string) {
+	if d.ReasoningContent != nil && *d.ReasoningContent != "" {
+		return ReasoningFieldLlamaCPP, *d.ReasoningContent
+	}
+	if d.Reasoning != nil && *d.Reasoning != "" {
+		return ReasoningFieldOpenAI, *d.Reasoning
+	}
+	return "", ""
 }
 
-// RequestBody represents the request body for the inference API.
-type RequestBody struct {
-	Model       string           `json:"model"`
-	Messages    []*Message       `json:"messages"`
-	Stream      bool             `json:"stream"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	MaxTokens   int              `json:"max_tokens"`
-	Tools       []ToolDefinition `json:"tools,omitempty"`
-	ToolChoice  string           `json:"tool_choice,omitempty"`
+func strPtr(s string) *string { return &s }
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return d.String()
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if m == 0 && s == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	if s == 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dh%dm%ds", h, m, s)
 }
 
-// EstimateTokens estimates the number of tokens in text.
-// Uses a more sophisticated heuristic based on content type.
-func EstimateTokens(text string) int {
-	if text == "" {
-		return 0
+// ParseRetryAfterSeconds returns the Retry-After value in seconds, if present.
+func ParseRetryAfterSeconds(resp *http.Response) (int, bool) {
+	v := resp.Header.Get("Retry-After")
+	if v == "" {
+		return 0, false
 	}
-
-	// Count words as a better proxy for tokens
-	words := strings.Fields(text)
-	wordCount := len(words)
-
-	// Rough estimate: 1 word ≈ 1.3 tokens (common heuristic)
-	// Add extra for special characters and formatting
-	estimatedTokens := int(float64(wordCount) * 1.3)
-
-	// Adjust for code-like content (more tokens per word due to special chars)
-	if strings.Contains(text, "{") || strings.Contains(text, "}") ||
-		strings.Contains(text, "func") || strings.Contains(text, "import") {
-		estimatedTokens = int(float64(estimatedTokens) * 1.2)
+	if n, err := strconv.Atoi(v); err == nil {
+		return n, true
 	}
-
-	// Ensure minimum of 1 token for non-empty text
-	if estimatedTokens < 1 && len(text) > 0 {
-		estimatedTokens = 1
-	}
-
-	return estimatedTokens
-}
-
-// EstimateContextSize estimates the total context size including messages and tool definitions.
-func EstimateContextSize(messages []*Message, toolDefinitions []ToolDefinition, systemPrompt string) int {
-	total := 0
-
-	// Add system prompt tokens
-	if systemPrompt != "" {
-		total += EstimateTokens(systemPrompt)
-	}
-
-	// Add message tokens
-	for _, msg := range messages {
-		// Add role prefix tokens (system: ~2, user: ~2, assistant: ~3)
-		switch msg.Role {
-		case "system":
-			total += 2
-		case "user":
-			total += 2
-		case "assistant":
-			total += 3
+	if t, err := http.ParseTime(v); err == nil {
+		d := time.Until(t)
+		if d < 0 {
+			d = 0
 		}
-		total += EstimateTokens(msg.Content)
-		// Also estimate tokens for reasoning content if present
-		if msg.Reasoning != "" {
-			total += EstimateTokens(msg.Reasoning)
-		}
-		if msg.ReasoningContent != "" {
-			total += EstimateTokens(msg.ReasoningContent)
-		}
+		return int(d.Seconds()), true
 	}
-
-	// Add tool definition tokens (rough estimate)
-	for _, tool := range toolDefinitions {
-		total += EstimateTokens(tool.Function.Name)
-		total += EstimateTokens(tool.Function.Description)
-		// Estimate parameter tokens
-		for _, prop := range tool.Function.Parameters.Properties {
-			total += EstimateTokens(prop.Type)
-			total += EstimateTokens(prop.Description)
-		}
-	}
-
-	return total
-}
-
-// formatToolCallArgs formats tool call arguments as a flat single-line string
-// for display in the TUI during streaming.
-// The maxArgWidth parameter limits the total width of the argument display.
-// This produces output like: key1: "value1", key2: "value2"
-// Instead of pretty-printed multi-line JSON which causes visual noise.
-func formatToolCallArgs(params map[string]interface{}, maxArgWidth int) string {
-	if len(params) == 0 {
-		return "{}"
-	}
-
-	numParams := len(params)
-
-	// Reserve space for separators (", " between params = 2 chars each)
-	separatorWidth := (numParams - 1) * 2
-	availableWidth := maxArgWidth - separatorWidth
-	if availableWidth < 20 {
-		availableWidth = 20
-	}
-
-	// Calculate per-parameter budget
-	// Reserve ~6 chars for "key: " prefix (key name + ": ")
-	perParamWidth := availableWidth / numParams
-	valueWidth := perParamWidth - 6
-	if valueWidth < 8 {
-		valueWidth = 8
-	}
-
-	// Build flat single-line output for streaming
-	var parts []string
-	for key, value := range params {
-		formattedValue := formatJSONValueWithMaxWidth(value, valueWidth)
-		parts = append(parts, fmt.Sprintf("%s: %s", key, formattedValue))
-	}
-
-	result := strings.Join(parts, ", ")
-
-	// Safety: if result still exceeds max width (can happen with many params),
-	// truncate and indicate truncation
-	if maxArgWidth > 0 && len(result) > maxArgWidth {
-		// Truncate to max width minus space for "..." suffix
-		// Use rune-aware slicing to avoid splitting multi-byte characters
-		truncLimit := maxArgWidth - 4
-		if truncLimit < 10 {
-			truncLimit = 10
-		}
-		runes := []rune(result)
-		if truncLimit > len(runes) {
-			truncLimit = len(runes)
-		}
-		return string(runes[:truncLimit]) + "..."
-	}
-
-	return result
-}
-
-// formatJSONValue formats a single JSON value for display with a default max width.
-func formatJSONValue(value interface{}) string {
-	return formatJSONValueWithMaxWidth(value, 100)
-}
-
-// formatJSONValueWithMaxWidth formats a single JSON value for display with a maximum width limit.
-func formatJSONValueWithMaxWidth(value interface{}, maxWidth int) string {
-	switch v := value.(type) {
-	case string:
-		// Truncate long strings for display
-		// Leave room for quotes and potential " (N chars)" suffix
-		quoteWidth := 2   // opening and closing quotes
-		suffixWidth := 10 // " (...) " minimum for suffix
-		availableWidth := maxWidth - quoteWidth - suffixWidth
-		if availableWidth < 10 {
-			availableWidth = 10
-		}
-		if len(v) > availableWidth {
-			return fmt.Sprintf("%q (%d chars)", v[:availableWidth], len(v))
-		}
-		return fmt.Sprintf("%q", v)
-	case float64:
-		// JSON numbers are unmarshaled as float64
-		if v == float64(int64(v)) {
-			return fmt.Sprintf("%d", int64(v))
-		}
-		return fmt.Sprintf("%.1f", v)
-	case bool:
-		return fmt.Sprintf("%t", v)
-	case nil:
-		return "null"
-	case map[string]interface{}:
-		return formatJSONMapWithMaxWidth(v, maxWidth)
-	case []interface{}:
-		return formatJSONArrayWithMaxWidth(v, maxWidth)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
-
-// formatJSONMap formats a nested map for display as a flat single-line string.
-// This keeps the streaming display clean by avoiding newlines.
-func formatJSONMap(m map[string]interface{}) string {
-	return formatJSONMapWithMaxWidth(m, 100)
-}
-
-// formatJSONMapWithMaxWidth formats a nested map for display with a maximum width limit.
-func formatJSONMapWithMaxWidth(m map[string]interface{}, maxWidth int) string {
-	if len(m) == 0 {
-		return "{}"
-	}
-
-	// Reserve space for braces and separators
-	bracesWidth := 2 // { }
-	numEntries := len(m)
-	separatorWidth := (numEntries - 1) * 2 // ", "
-	availableWidth := maxWidth - bracesWidth - separatorWidth
-	if availableWidth < 10 {
-		return "{...}"
-	}
-
-	perEntryWidth := availableWidth / numEntries
-
-	var parts []string
-	for key, value := range m {
-		// Reserve space for "key: "
-		valueWidth := perEntryWidth - 5
-		if valueWidth < 5 {
-			valueWidth = 5
-		}
-		formattedValue := formatJSONValueWithMaxWidth(value, valueWidth)
-		parts = append(parts, fmt.Sprintf("%s: %s", key, formattedValue))
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
-// formatJSONArray formats a nested array for display.
-func formatJSONArray(arr []interface{}) string {
-	return formatJSONArrayWithMaxWidth(arr, 100)
-}
-
-// formatJSONArrayWithMaxWidth formats a nested array for display with a maximum width limit.
-func formatJSONArrayWithMaxWidth(arr []interface{}, maxWidth int) string {
-	if len(arr) == 0 {
-		return "[]"
-	}
-	// For arrays, just show the length if it's long
-	if len(arr) > 10 {
-		return fmt.Sprintf("[%d items]", len(arr))
-	}
-
-	// Reserve space for brackets and separators
-	bracketsWidth := 2 // [ ]
-	numItems := len(arr)
-	separatorWidth := (numItems - 1) * 2 // ", "
-	availableWidth := maxWidth - bracketsWidth - separatorWidth
-	if availableWidth < 10 {
-		return fmt.Sprintf("[%d items]", len(arr))
-	}
-
-	perItemWidth := availableWidth / numItems
-
-	var parts []string
-	for _, item := range arr {
-		formattedItem := formatJSONValueWithMaxWidth(item, perItemWidth)
-		parts = append(parts, formattedItem)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-// truncateJSON truncates a JSON string to a maximum length, appending "..." if
-// truncated. The cut is aligned to a UTF-8 rune boundary so multi-byte
-// characters are never split into invalid bytes (I-11).
-func truncateJSON(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	end := maxLen
-	for end > 0 && end < len(s) && !utf8.RuneStart(s[end]) {
-		end--
-	}
-	return s[:end] + "..."
+	return 0, false
 }

@@ -1,285 +1,168 @@
-// Package tools implements the tool execution system for the coding agent.
-// This file contains the todo store and todo tool executor.
 package tools
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
-// TodoItem represents a single todo item in the task list.
+// TodoItem is a single tracked task.
 type TodoItem struct {
-	ID          int
-	Description string
-	Completed   bool
+	ID          int    `json:"id"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Created     string `json:"created"`
+	Completed   string `json:"completed,omitempty"`
 }
 
-// TodoStore manages a collection of todo items.
+// TodoStore keeps the agent task list.
 type TodoStore struct {
+	mu     sync.Mutex
 	items  []*TodoItem
 	nextID int
-	mu     sync.Mutex
 }
 
-// NewTodoStore creates a new empty todo store.
-func NewTodoStore() *TodoStore {
-	return &TodoStore{
-		items:  make([]*TodoItem, 0),
-		nextID: 1,
-	}
+// NewTodoStore creates an empty store.
+func NewTodoStore() *TodoStore { return &TodoStore{nextID: 1} }
+
+// Add appends a new pending item.
+func (s *TodoStore) Add(description string) *TodoItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item := &TodoItem{ID: s.nextID, Description: description, Status: "pending", Created: time.Now().Format(time.RFC3339)}
+	s.items = append(s.items, item)
+	s.nextID++
+	return item
 }
 
-// Add creates a new todo item with the given description.
-// Returns the ID of the newly created item.
-func (ts *TodoStore) Add(description string) int {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	item := &TodoItem{
-		ID:          ts.nextID,
-		Description: description,
-		Completed:   false,
-	}
-	ts.items = append(ts.items, item)
-	id := ts.nextID
-	ts.nextID++
-	return id
-}
-
-// Complete marks a todo item as done by ID.
-// Returns the completed item, or nil if not found.
-func (ts *TodoStore) Complete(id int) *TodoItem {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	for _, item := range ts.items {
-		if item.ID == id {
-			item.Completed = true
-			return item
+// Complete marks an item as completed.
+func (s *TodoStore) Complete(id int) (*TodoItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, it := range s.items {
+		if it.ID == id {
+			it.Status = "completed"
+			it.Completed = time.Now().Format(time.RFC3339)
+			return it, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("todo item %d not found", id)
 }
 
-// Remove deletes a todo item by ID.
-// Returns the removed item, or nil if not found.
-func (ts *TodoStore) Remove(id int) *TodoItem {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	for i, item := range ts.items {
-		if item.ID == id {
-			ts.items = append(ts.items[:i], ts.items[i+1:]...)
-			return item
+// Remove deletes an item.
+func (s *TodoStore) Remove(id int) (*TodoItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, it := range s.items {
+		if it.ID == id {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			return it, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("todo item %d not found", id)
 }
 
-// List returns a copy of all todo items. A copy is returned so callers cannot
-// append to or mutate the store's internal slice (or its items) without holding
-// the lock, which would race subsequent store operations.
-func (ts *TodoStore) List() []*TodoItem {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	items := make([]*TodoItem, len(ts.items))
-	for i, item := range ts.items {
-		cp := *item
-		items[i] = &cp
-	}
-	return items
+// List returns a copy of the items sorted by ID.
+func (s *TodoStore) List() []*TodoItem {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*TodoItem, len(s.items))
+	copy(out, s.items)
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
-// CountPending returns the number of non-completed items.
-func (ts *TodoStore) CountPending() int {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	count := 0
-	for _, item := range ts.items {
-		if !item.Completed {
-			count++
-		}
-	}
-	return count
-}
-
-// CountCompleted returns the number of completed items.
-func (ts *TodoStore) CountCompleted() int {
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	count := 0
-	for _, item := range ts.items {
-		if item.Completed {
-			count++
-		}
-	}
-	return count
-}
-
-// FormatList formats all todo items as a readable string.
-func FormatList(items []*TodoItem) string {
+// Render returns a human readable listing.
+func (s *TodoStore) Render() string {
+	items := s.List()
 	if len(items) == 0 {
 		return "(no todo items)"
 	}
-
-	var lines []string
-	for _, item := range items {
-		status := "[ ]"
-		if item.Completed {
-			status = "[x]"
+	var b strings.Builder
+	for _, it := range items {
+		box := "[ ]"
+		if it.Status == "completed" {
+			box = "[x]"
 		}
-		lines = append(lines, fmt.Sprintf("#%d %s %s", item.ID, status, item.Description))
+		b.WriteString(fmt.Sprintf("%d. %s %s\n", it.ID, box, it.Description))
 	}
-
-	return strings.Join(lines, "\n")
+	return strings.TrimRight(b.String(), "\n")
 }
 
-// executeTodo manages a personal task list for tracking work-in-progress.
-func (te *ToolExecutor) executeTodo(params map[string]interface{}) *ToolResult {
-	action, ok := params["action"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: action",
-		}
+// TodoTool manages the task list.
+type TodoTool struct {
+	store *TodoStore
+	run   *RunContext
+}
+
+// NewTodoTool creates the todo tool backed by store.
+func NewTodoTool(store *TodoStore, run *RunContext) *TodoTool {
+	return &TodoTool{store: store, run: run}
+}
+
+func (t *TodoTool) Name() string { return "todo" }
+
+func (t *TodoTool) Description() string {
+	return "Manage a personal task list for tracking work-in-progress during development"
+}
+
+func (t *TodoTool) Schema() map[string]interface{} {
+	return objectSchema(map[string]interface{}{
+		"action": map[string]interface{}{
+			"type":        "string",
+			"description": "The action to perform (add, complete, remove, or list)",
+			"enum":        []string{"add", "complete", "remove", "list"},
+		},
+		"id":          prop("integer", "Item ID (required for complete/remove)"),
+		"description": prop("string", "Task description (required for add)"),
+	}, []string{"action"})
+}
+
+// ReadOnly reports the todo tool as read-only: in read-only mode only the
+// list and remove actions are permitted (see Execute).
+func (t *TodoTool) ReadOnly() bool { return true }
+
+func (t *TodoTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
+	action := strings.ToLower(strings.TrimSpace(getString(args, "action")))
+	if action == "" {
+		return "", errors.New("missing required parameter: action (add, complete, remove or list)")
 	}
-
-	action = strings.ToLower(strings.TrimSpace(action))
-
+	if t.run != nil && t.run.ReadOnly && action != "list" && action != "remove" {
+		return "", fmt.Errorf("read-only mode only allows the list and remove todo actions")
+	}
 	switch action {
-	case "add":
-		return te.executeTodoAdd(params)
-	case "complete":
-		return te.executeTodoComplete(params)
-	case "remove":
-		return te.executeTodoRemove(params)
 	case "list":
-		return te.executeTodoList()
+		return t.store.Render(), nil
+	case "add":
+		desc := strings.TrimSpace(getString(args, "description"))
+		if desc == "" {
+			return "", errors.New("missing required parameter: description (required for add)")
+		}
+		item := t.store.Add(desc)
+		return fmt.Sprintf("Added todo item %d: %s", item.ID, item.Description), nil
+	case "complete":
+		if _, ok := args["id"]; !ok {
+			return "", errors.New("missing required parameter: id (required for complete)")
+		}
+		item, err := t.store.Complete(getInt(args, "id", 0))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Completed todo item %d: %s", item.ID, item.Description), nil
+	case "remove":
+		if _, ok := args["id"]; !ok {
+			return "", errors.New("missing required parameter: id (required for remove)")
+		}
+		item, err := t.store.Remove(getInt(args, "id", 0))
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Removed todo item %d: %s", item.ID, item.Description), nil
 	default:
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("invalid action: %s (must be one of: add, complete, remove, list)", action),
-		}
-	}
-}
-
-// executeTodoAdd creates a new todo item.
-func (te *ToolExecutor) executeTodoAdd(params map[string]interface{}) *ToolResult {
-	description, ok := params["description"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: description",
-		}
-	}
-
-	description = strings.TrimSpace(description)
-	if description == "" {
-		return &ToolResult{
-			Success: false,
-			Error:   "description cannot be empty",
-		}
-	}
-
-	id := te.todoStore.Add(description)
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Added todo item #%d: %s", id, description),
-		Extra: map[string]interface{}{
-			"id": id,
-		},
-	}
-}
-
-// executeTodoComplete marks a todo item as done.
-func (te *ToolExecutor) executeTodoComplete(params map[string]interface{}) *ToolResult {
-	idVal, ok := params["id"]
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: id",
-		}
-	}
-
-	var id int
-	switch v := idVal.(type) {
-	case float64:
-		id = int(v)
-	case int:
-		id = v
-	default:
-		return &ToolResult{
-			Success: false,
-			Error:   "id must be an integer",
-		}
-	}
-
-	item := te.todoStore.Complete(id)
-	if item == nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("todo item #%d not found", id),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Completed todo item #%d: %s", item.ID, item.Description),
-	}
-}
-
-// executeTodoRemove deletes a todo item.
-func (te *ToolExecutor) executeTodoRemove(params map[string]interface{}) *ToolResult {
-	idVal, ok := params["id"]
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: id",
-		}
-	}
-
-	var id int
-	switch v := idVal.(type) {
-	case float64:
-		id = int(v)
-	case int:
-		id = v
-	default:
-		return &ToolResult{
-			Success: false,
-			Error:   "id must be an integer",
-		}
-	}
-
-	item := te.todoStore.Remove(id)
-	if item == nil {
-		return &ToolResult{
-			Success: false,
-			Error:   fmt.Sprintf("todo item #%d not found", id),
-		}
-	}
-
-	return &ToolResult{
-		Success: true,
-		Output:  fmt.Sprintf("Removed todo item #%d: %s", item.ID, item.Description),
-	}
-}
-
-// executeTodoList returns all todo items.
-func (te *ToolExecutor) executeTodoList() *ToolResult {
-	items := te.todoStore.List()
-	output := FormatList(items)
-
-	total := len(items)
-	completed := te.todoStore.CountCompleted()
-	pending := te.todoStore.CountPending()
-
-	return &ToolResult{
-		Success: true,
-		Output:  output,
-		Extra: map[string]interface{}{
-			"totalItems":     total,
-			"completedItems": completed,
-			"pendingItems":   pending,
-		},
+		return "", fmt.Errorf("unknown todo action %q (expected add, complete, remove or list)", action)
 	}
 }

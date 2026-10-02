@@ -1,7 +1,3 @@
-module github.com/coding-agent/harness
+module github.com/coding-agent/coding-agent
 
-go 1.25.0
-
-require golang.org/x/term v0.42.0
-
-require golang.org/x/sys v0.43.0 // indirect
+go 1.22

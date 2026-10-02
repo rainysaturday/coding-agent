@@ -1,951 +1,582 @@
-// Package agent implements the main agent logic.
 package agent
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
-	"encoding/json"
-	"github.com/coding-agent/harness/colors"
-	"github.com/coding-agent/harness/config"
-	"github.com/coding-agent/harness/debug"
-	"github.com/coding-agent/harness/inference"
-	"github.com/coding-agent/harness/skills"
-	"github.com/coding-agent/harness/tools"
-	"path/filepath"
+	"github.com/coding-agent/coding-agent/config"
+	"github.com/coding-agent/coding-agent/debug"
+	"github.com/coding-agent/coding-agent/inference"
+	"github.com/coding-agent/coding-agent/mcp"
+	"github.com/coding-agent/coding-agent/skills"
+	"github.com/coding-agent/coding-agent/tools"
 )
 
-// File permission constants (using exported constants from tools package).
+// EventType classifies output produced by the agent.
+type EventType string
 
-// StreamCallback is a function type for handling streaming chunks.
-// Using inference.StreamingCallbackWithType for typed streaming support.
-type StreamCallback = inference.StreamingCallbackWithType
+// Event types emitted during a run.
+const (
+	EventContent    EventType = "content"
+	EventReasoning  EventType = "reasoning"
+	EventToolStart  EventType = "tool_start"
+	EventToolResult EventType = "tool_result"
+	EventError      EventType = "error"
+	EventInfo       EventType = "info"
+	EventGoal       EventType = "goal"
+	EventCompressed EventType = "compressed"
+	EventSubagent   EventType = "subagent"
+	EventIteration  EventType = "iteration"
+	EventToolArgs   EventType = "tool_args"
+	EventDone       EventType = "done"
+)
 
-// ContextSizeCallback is a function called when context size changes.
-type ContextSizeCallback func(size, max int)
+// Event is a single unit of agent output for the UI layer.
+type Event struct {
+	Type      EventType `json:"type"`
+	Text      string    `json:"text,omitempty"`
+	Tool      string    `json:"tool,omitempty"`
+	Args      string    `json:"args,omitempty"`
+	Result    string    `json:"result,omitempty"`
+	Failed    bool      `json:"failed,omitempty"`
+	Iteration int       `json:"iteration,omitempty"`
+}
 
-// Agent represents the coding agent.
+// Agent runs the agentic loop against an inference backend.
 type Agent struct {
-	config           *config.Config
-	inference        *inference.InferenceClient
-	toolExecutor     *tools.ToolExecutor
+	cfg      *config.Config
+	client   *inference.Client
+	vision   *inference.Client
+	registry *tools.Registry
+	skills   *skills.Manager
+	mcp      *mcp.Manager
+	todo     *tools.TodoStore
+	stats    *Stats
+	run      *tools.RunContext
+
+	mu               sync.Mutex
 	context          []*inference.Message
-	iterationHistory []Iteration // History of full contexts and stats after each turn
-	systemPrompt     string
-	stats            *Stats
-	maxIterations    int
-	streamCallback   StreamCallback
-	// streamInference controls whether the inference API is called in streaming
-	// mode. It is separate from streamCallback so a web session can forward
-	// tool notifications via the callback while keeping inference non-streaming
-	// (--no-stream), avoiding the stdout fallback (I-10).
-	streamInference     bool
-	contextSizeCallback ContextSizeCallback
-	maxContextSize      int
-	compressionCount    int
-	goal                string    // Current goal prompt (empty string means goal mode is off)
-	goalActive          bool      // Whether goal mode is currently active
-	goalStartTime       time.Time // When the current goal was started (for timing)
-	goalInputTokens     int       // Input tokens used during the current goal
-	goalOutputTokens    int       // Output tokens used during the current goal
-	debugLogger         *debug.DebugLogger
-	mu                  sync.Mutex
-	// lastTotalTokens is the exact total_tokens from the last API response.
-	// This is the authoritative count of everything the API processed:
-	// system prompt + messages + tools + completion.
-	// We use this as the baseline and only estimate deltas for messages
-	// added after the response (e.g., tool results).
-	lastTotalTokens int
-	// toolResultMsgsSinceLastAPI is the set of indices in context that
-	// are tool-result messages added AFTER the last API call.
-	// Messages before this index were already included in lastTotalTokens.
-	toolResultMsgsSinceLastAPI map[int]bool
-	// assistantMsgsSinceLastAPI is the set of indices in context that are
-	// assistant messages (carrying tool calls) added AFTER the last API call.
-	// They are tracked alongside tool results so the pending-token delta in
-	// getActualContextSizeUnlocked accounts for them too.
-	assistantMsgsSinceLastAPI map[int]bool
-	// skillCatalog is the in-memory catalog of discovered Agent Skills. It is
-	// nil when skill discovery is disabled or no skills were found.
-	skillCatalog *skills.Catalog
-	// activatedSkills tracks which skills have been loaded into context, so
-	// repeated activation of the same skill is deduplicated.
-	activatedSkills map[string]bool
-	// skillPrompt accumulates the instructions of activated skills. It is
-	// appended to the base system prompt on every inference call, so activated
-	// skill content is exempt from context compaction (the system prompt is
-	// never pruned).
-	skillPrompt string
+	snapshots        []Iteration
+	lastPromptTokens int
+	goal             string
+	goalStart        time.Time
+
+	cbMu     sync.RWMutex
+	callback func(Event)
+
+	cancelMu      sync.Mutex
+	currentCancel context.CancelFunc
 }
 
-// Stats represents agent statistics.
-type Stats struct {
-	InputTokens      int       `json:"input_tokens"`
-	OutputTokens     int       `json:"output_tokens"`
-	ToolCalls        int       `json:"tool_calls"`
-	FailedToolCalls  int       `json:"failed_tool_calls"`
-	Iterations       int       `json:"iterations"`
-	CompressionCount int       `json:"compression_count"`
-	StartTime        time.Time `json:"start_time"`
-	TokensPerSecond  float64   `json:"tokens_per_second"`
-}
+// New creates an agent with the default tool set wired up.
+func New(cfg *config.Config) *Agent {
+	run := &tools.RunContext{
+		CWD:               cfg.WorkingDir,
+		ReadOnly:          cfg.ReadOnly,
+		BashTimeoutMS:     config.DefaultBashTimeoutMs,
+		MaxOutputLines:    config.DefaultBashMaxOutputLines,
+		SubagentTimeoutMS: cfg.SubagentTimeout * 1000,
+		MaxReadBytes:      20 * 1024,
+		MaxImageBytes:     20 * 1024 * 1024,
+	}
+	reg := tools.NewRegistry(run)
+	todoStore := tools.NewTodoStore()
 
-// Step represents an execution step.
-type Step struct {
-	Action     string
-	ToolCall   *tools.ToolCall
-	ToolResult *tools.ToolResult
-	StreamMsg  string // Status message streamed to user
-}
+	visionCfg := *cfg
+	visionCfg.Stream = false
 
-// Result represents the final result of an agent run.
-type Result struct {
-	FinalOutput string
-	Reasoning   string
-	Steps       []Step
-	TokenUsage  int
-}
+	a := &Agent{
+		cfg:      cfg,
+		client:   inference.New(cfg),
+		vision:   inference.New(&visionCfg),
+		registry: reg,
+		todo:     todoStore,
+		stats:    NewStats(),
+		run:      run,
+	}
 
-// ConversationMessage is a single message from the agent's context, suitable for
-// rendering by a client (e.g. the web UI) when reconnecting to an in-progress
-// or completed conversation. It is a read-only snapshot; fields are copies so
-// callers cannot mutate the agent's live context.
-type ConversationMessage struct {
-	Role      string
-	Content   string
-	Reasoning string
-	ToolCalls []*inference.APIToolCall
-}
+	a.registerCoreTools(run, todoStore)
 
-// ContextDump represents a serializable conversation context.
-type ContextDump struct {
-	Version    int         `json:"version"`
-	CreatedAt  time.Time   `json:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at"`
-	Session    SessionInfo `json:"session"`
-	Iterations []Iteration `json:"iterations"`
-}
-
-// StatsInfo holds runtime statistics.
-type StatsInfo struct {
-	InputTokens     int `json:"input_tokens"`
-	OutputTokens    int `json:"output_tokens"`
-	ToolCalls       int `json:"tool_calls"`
-	FailedToolCalls int `json:"failed_tool_calls"`
-}
-
-// Iteration represents a full snapshot of the context at a point in time.
-type Iteration struct {
-	Index    int                  `json:"index"`
-	Messages []*inference.Message `json:"messages"` // System prompt + conversation
-	Stats    StatsInfo            `json:"stats"`
-}
-
-// SessionInfo holds session metadata.
-type SessionInfo struct {
-	StartTime        time.Time `json:"start_time"`
-	Iterations       int       `json:"iterations"`
-	CompressionCount int       `json:"compression_count"`
-	Stats            StatsInfo `json:"stats"`
-}
-
-// NewAgent creates a new agent.
-func NewAgent(cfg *config.Config) *Agent {
-	// Create debug logger if enabled
-	var debugLogger *debug.DebugLogger
-	if cfg.Debug {
-		var err error
-		debugLogger, err = debug.NewDebugLogger(cfg.DebugLog, getBuildVersion())
-		if err != nil {
-			// Log error but continue without debug logging
-			fmt.Fprintf(os.Stderr, "Warning: failed to initialize debug logger: %v\n", err)
-			debugLogger = nil
-		} else {
-			// Warn user about debug logging
-			fmt.Fprintf(os.Stderr, "[WARNING] Debug logging enabled. All conversation data will be saved to:\n")
-			fmt.Fprintf(os.Stderr, "  %s\n", cfg.DebugLog)
-			fmt.Fprintf(os.Stderr, "This may include sensitive information. Ensure the log file is protected.\n\n")
+	if cfg.SkillsEnabled {
+		a.skills = skills.Discover(cfg, cfg.WorkingDir)
+		if a.skills.Count() > 0 {
+			reg.SetSkillActivator(a.skills)
 		}
 	}
 
-	agent := &Agent{
-		config:                     cfg,
-		inference:                  inference.NewInferenceClient(cfg),
-		toolExecutor:               tools.NewToolExecutor(),
-		context:                    make([]*inference.Message, 0),
-		toolResultMsgsSinceLastAPI: make(map[int]bool),
-		assistantMsgsSinceLastAPI:  make(map[int]bool),
-		activatedSkills:            make(map[string]bool),
-		stats: &Stats{
-			StartTime: time.Now(),
-		},
-		maxIterations:  cfg.MaxIterations,
-		maxContextSize: cfg.ContextSize,
-		debugLogger:    debugLogger,
+	if len(cfg.EnabledMCPServers()) > 0 {
+		a.mcp = mcp.NewManager(cfg)
 	}
 
-	// Build system prompt, tools, and persona based on configuration
-	agent.systemPrompt = buildSystemPrompt(cfg.ReadOnly, cfg.Persona, cfg.SummaryOnly, cfg.Tools)
+	return a
+}
 
-	// Discover Agent Skills (Requirement 047). The AVAILABLE SKILLS catalog
-	// section is appended to the base system prompt when skills are found, and
-	// omitted entirely otherwise. Project-level skills are trust-gated.
-	agent.discoverSkills(cfg)
+// registerCoreTools wires the standard tool set into the registry.
+func (a *Agent) registerCoreTools(run *tools.RunContext, todoStore *tools.TodoStore) {
+	a.registry.Register(tools.NewBashTool(run))
+	a.registry.Register(tools.NewReadFileTool(run))
+	a.registry.Register(tools.NewReadLinesTool(run))
+	a.registry.Register(tools.NewListFilesTool(run))
+	a.registry.Register(tools.NewGrepTool(run))
+	a.registry.Register(tools.NewGitLogTool(run))
+	a.registry.Register(tools.NewGitShowTool(run))
+	a.registry.Register(tools.NewGitDiffTool(run))
+	a.registry.Register(tools.NewTodoTool(todoStore, run))
+	a.registry.Register(tools.NewWriteFileTool(run))
+	a.registry.Register(tools.NewInsertLinesTool(run))
+	a.registry.Register(tools.NewReplaceTextTool(run))
+	a.registry.Register(tools.NewMoveTextTool(run))
+	a.registry.Register(tools.NewViewImageTool(run, a))
+	a.registry.SetSubagentRunner(a)
+}
 
-	// Set read-only mode on tool executor
-	agent.toolExecutor.SetReadOnly(cfg.ReadOnly)
+// SetEventCallback installs the UI callback.
+func (a *Agent) SetEventCallback(cb func(Event)) {
+	a.cbMu.Lock()
+	defer a.cbMu.Unlock()
+	a.callback = cb
+}
 
-	// Wire the activate_skill tool to the agent's skill loader.
-	agent.toolExecutor.SetSkillActivator(agent.ActivateSkill)
-
-	// Log system prompt if debug is enabled
-	if agent.debugLogger != nil {
-		agent.debugLogger.LogSystemPrompt(agent.systemPrompt, inference.EstimateTokens(agent.systemPrompt))
+func (a *Agent) emit(e Event) {
+	a.cbMu.RLock()
+	cb := a.callback
+	a.cbMu.RUnlock()
+	if cb != nil {
+		cb(e)
 	}
+}
 
-	// Register tools with inference client
-	agent.inference.SetTools(buildTools(cfg.ReadOnly, cfg.Experimental, cfg.Tools))
+// Registry returns the tool registry.
+func (a *Agent) Registry() *tools.Registry { return a.registry }
 
-	// Display read-only mode warning
-	if cfg.ReadOnly {
-		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  READ-ONLY MODE ACTIVE")
-		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr, "  Only read_file, read_lines, list_files, grep, git_log, git_show, git_diff, and view_image tools are available.")
-		fmt.Fprintln(os.Stderr, "  All write operations are disabled.")
-		fmt.Fprintln(os.Stderr, "============================================================")
-		fmt.Fprintln(os.Stderr)
+// Skills returns the skill manager (nil when skills are disabled).
+func (a *Agent) Skills() *skills.Manager { return a.skills }
+
+// MCP returns the MCP manager (nil when no servers are configured).
+func (a *Agent) MCP() *mcp.Manager { return a.mcp }
+
+// Todo returns the todo store.
+func (a *Agent) Todo() *tools.TodoStore { return a.todo }
+
+// SetReadOnly toggles read-only mode at runtime.
+func (a *Agent) SetReadOnly(v bool) {
+	a.cfg.ReadOnly = v
+	a.registry.SetReadOnly(v)
+}
+
+// ReadOnly reports whether read-only mode is active.
+func (a *Agent) ReadOnly() bool { return a.registry.ReadOnly() }
+
+// Stats returns the session statistics.
+func (a *Agent) Stats() *Stats { return a.stats }
+
+// Client returns the inference client.
+func (a *Agent) Client() *inference.Client { return a.client }
+
+// ConnectMCP connects to the configured MCP servers and registers their tools.
+func (a *Agent) ConnectMCP(ctx context.Context) []error {
+	if a.mcp == nil {
+		return nil
 	}
-
-	return agent
+	errs := a.mcp.ConnectAll(ctx)
+	n := a.mcp.RegisterTools(a.registry)
+	if dbg := debug.Default(); dbg != nil {
+		dbg.Logf("registered %d MCP tools", n)
+	}
+	return errs
 }
 
-// SetStreamCallback sets the callback function for streaming chunks.
-func (a *Agent) SetStreamCallback(callback StreamCallback) {
-	a.mu.Lock()
-	a.streamCallback = callback
-	a.mu.Unlock()
-}
+// ---------------------------------------------------------------------------
+// goal mode
+// ---------------------------------------------------------------------------
 
-// SetContextSizeCallback sets the callback function for context size updates.
-func (a *Agent) SetContextSizeCallback(callback ContextSizeCallback) {
-	a.mu.Lock()
-	a.contextSizeCallback = callback
-	a.mu.Unlock()
-}
-
-// SetAPIEndpoint sets the API endpoint.
-func (a *Agent) SetAPIEndpoint(endpoint string) {
-	a.inference.SetEndpoint(endpoint)
-}
-
-// SetAPIKey sets the API key.
-func (a *Agent) SetAPIKey(key string) {
-	a.inference.SetAPIKey(key)
-}
-
-// SetMaxDisplayWidth sets the maximum display width for tool call arguments.
-// This is used to truncate long parameter values to prevent terminal line wrapping.
-func (a *Agent) SetMaxDisplayWidth(width int) {
-	a.inference.SetMaxDisplayWidth(width)
-}
-
-// GetSystemPrompt returns the current system prompt.
-func (a *Agent) GetSystemPrompt() string {
-	return a.systemPrompt
-}
-
-// GetTools returns the registered tools.
-func (a *Agent) GetTools() []inference.ToolDefinition {
-	return a.inference.GetTools()
-}
-
-// GetToolExecutor returns the tool executor.
-func (a *Agent) GetToolExecutor() *tools.ToolExecutor {
-	return a.toolExecutor
-}
-
-// SetGoal sets a goal for the agent. When goal mode is active, the agent will
-// check if the goal has been achieved after each inference response that has
-// no tool calls (a natural end).
-func (a *Agent) SetGoal(goal string) {
+// Goal returns the active goal and when it was set.
+func (a *Agent) Goal() (string, time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if goal == "" {
-		a.goalActive = false
-		a.goal = ""
-		a.goalStartTime = time.Time{}
-		return
-	}
+	return a.goal, a.goalStart
+}
+
+// SetGoal activates goal mode and resets the goal timer.
+func (a *Agent) SetGoal(goal string) {
+	a.mu.Lock()
 	a.goal = goal
-	a.goalActive = true
-	a.goalStartTime = time.Now()
-	a.goalInputTokens = 0
-	a.goalOutputTokens = 0
+	a.goalStart = time.Now()
+	a.mu.Unlock()
 }
 
 // ClearGoal deactivates goal mode.
 func (a *Agent) ClearGoal() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.goalActive = false
 	a.goal = ""
-	a.goalStartTime = time.Time{}
-	a.goalInputTokens = 0
-	a.goalOutputTokens = 0
-}
-
-// IsGoalActive returns whether goal mode is currently active.
-func (a *Agent) IsGoalActive() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.goalActive
-}
-
-// GetGoal returns the current goal prompt (empty string if goal mode is off).
-func (a *Agent) GetGoal() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.goal
-}
-
-// GetGoalStartTime returns when the current goal was started.
-func (a *Agent) GetGoalStartTime() time.Time {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.goalStartTime
-}
-
-// formatGoalDuration formats a duration for goal achievement reporting.
-// It shows the raw seconds as well as hours, minutes, and seconds.
-func formatGoalDuration(d time.Duration) string {
-	totalSeconds := int(d.Seconds())
-	hours := totalSeconds / 3600
-	minutes := (totalSeconds % 3600) / 60
-	seconds := totalSeconds % 60
-
-	if hours > 0 {
-		return fmt.Sprintf("%ds (%dh %dm %ds)", totalSeconds, hours, minutes, seconds)
-	}
-	if minutes > 0 {
-		return fmt.Sprintf("%ds (%dm %ds)", totalSeconds, minutes, seconds)
-	}
-	return fmt.Sprintf("%ds", totalSeconds)
-}
-
-// shouldCheckGoal returns true if goal mode is active and a goal is set.
-func (a *Agent) shouldCheckGoal() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.goalActive && a.goal != ""
-}
-
-// injectGoalCheck injects a goal check user message into the context.
-// This is treated as an automatically injected user prompt that will go through
-// the full agentic loop on the next iteration. The LLM can run tools to verify
-// its work before responding with "goal achieved" or continuing.
-// It also streams a goal check notification to the TUI.
-func (a *Agent) injectGoalCheck() {
-	goalCheckPrompt := fmt.Sprintf(`Please review the current state of your work. Have you achieved the following goal?
-
-Goal: %s
-
-If you have achieved the goal, respond with "goal achieved".
-If you have not achieved the goal, explain what remains to be done and continue working.`, a.goal)
-
-	// Create and add a user message for the goal check, capture goal and callback while holding lock
-	a.mu.Lock()
-	a.context = append(a.context, &inference.Message{
-		Role:    "user",
-		Content: goalCheckPrompt,
-	})
-	goal := a.goal
-	streamCallback := a.streamCallback
+	a.goalStart = time.Time{}
 	a.mu.Unlock()
+}
 
-	// Stream goal check notification to TUI with magenta color
-	goalCheckMsg := fmt.Sprintf("\n%s[Goal Check] Checking if goal is achieved: %q%s\n", colors.GetColor("magenta"), goal, colors.GetColor("reset"))
-	if streamCallback != nil {
-		streamCallback(inference.StreamingChunk{
-			Text:        goalCheckMsg,
-			ContentType: inference.StreamingContentTypeGoal,
-		})
-	} else {
-		fmt.Print(goalCheckMsg)
+// ---------------------------------------------------------------------------
+// cancellation
+// ---------------------------------------------------------------------------
+
+// Cancel aborts the in-flight inference and tool execution.
+func (a *Agent) Cancel() {
+	a.cancelMu.Lock()
+	cancel := a.currentCancel
+	a.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
-// Run runs the agent with the given prompt using non-streaming inference.
-func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
-	return a.run(ctx, prompt, false)
+func (a *Agent) setCancel(cancel context.CancelFunc) {
+	a.cancelMu.Lock()
+	a.currentCancel = cancel
+	a.cancelMu.Unlock()
 }
 
-// run is the shared agent loop. stream controls whether inference requests use
-// the streaming API; the stream callback (if any) is still used for tool
-// notifications in either case (I-10).
-func (a *Agent) run(ctx context.Context, prompt string, stream bool) (*Result, error) {
-	// Set the inference streaming flag for the duration of the run.
-	a.mu.Lock()
-	savedStream := a.streamInference
-	a.streamInference = stream
-	a.mu.Unlock()
+func (a *Agent) clearCancel() { a.setCancel(nil) }
+
+// ---------------------------------------------------------------------------
+// the agentic loop
+// ---------------------------------------------------------------------------
+
+// Submit adds a user message and runs the agentic loop until the model stops
+// calling tools (or the goal is achieved / the iteration limit is hit).
+func (a *Agent) Submit(ctx context.Context, prompt string) (string, error) {
+	if strings.TrimSpace(prompt) != "" {
+		a.AddMessage(inference.NewTextMessage("user", prompt))
+	}
+	return a.loop(ctx)
+}
+
+// Continue runs the loop without adding a user message (used after loading a
+// dumped context).
+func (a *Agent) Continue(ctx context.Context) (string, error) { return a.loop(ctx) }
+
+func (a *Agent) loop(ctx context.Context) (string, error) {
+	runCtx, cancel := context.WithCancel(ctx)
+	a.setCancel(cancel)
 	defer func() {
-		a.mu.Lock()
-		a.streamInference = savedStream
-		a.mu.Unlock()
+		cancel()
+		a.clearCancel()
 	}()
 
-	// Log user message if debug is enabled
-	if a.debugLogger != nil {
-		a.debugLogger.LogUserMessage(prompt, inference.EstimateTokens(prompt))
-	}
+	maxIterations := a.cfg.MaxIterations
+	iterations := 0
+	lastContent := ""
 
-	// Add user message to context
-	a.mu.Lock()
-	a.context = append(a.context, &inference.Message{
-		Role:    "user",
-		Content: prompt,
-	})
-	// Context size not available until first API response, TUI will show 0 until then
-	a.mu.Unlock()
-
-	// Track steps
-	var steps []Step
-
-	// Main execution loop
-	iteration := 0
 	for {
-		iteration++
-		if iteration > a.maxIterations {
-			return nil, fmt.Errorf("maximum iterations (%d) exceeded", a.maxIterations)
+		if runCtx.Err() != nil {
+			return lastContent, runCtx.Err()
 		}
-
-		a.mu.Lock()
-		a.stats.Iterations = iteration
-		a.mu.Unlock()
-
-		// Check if context compression is needed
-		if a.shouldCompress() {
-			if err := a.compressContext(ctx); err != nil {
-				// Failure is reported inside compressContext via streamCallback
+		if maxIterations > 0 && iterations >= maxIterations {
+			a.emit(Event{Type: EventError, Text: MaxIterationsMessage(maxIterations), Failed: true})
+			return lastContent, fmt.Errorf("%s", MaxIterationsMessage(maxIterations))
+		}
+		if a.ShouldCompress() {
+			if err := a.Compress(runCtx); err != nil {
+				if dbg := debug.Default(); dbg != nil {
+					dbg.Logf("automatic compression failed: %v", err)
+				}
 			}
 		}
 
-		// Get response from LLM (now supports streaming)
-		response, err := a.getInferenceResponse(ctx)
+		iterations++
+		a.stats.AddIteration()
+		a.emit(Event{Type: EventIteration, Iteration: iterations})
+
+		resp, err := a.complete(runCtx)
 		if err != nil {
-			return nil, err
+			a.emit(Event{Type: EventError, Text: formatInferenceError(err), Failed: true})
+			return lastContent, err
 		}
 
-		// Add assistant response to context for continuity
-		a.mu.Lock()
-		// If the model refused (content-policy or other), surface the refusal text
-		// rather than adding an empty assistant message.
-		assistantContent := response.Content
-		if assistantContent == "" && response.Refusal != "" {
-			assistantContent = "[Model refusal] " + response.Refusal
+		lastContent = strings.TrimSpace(resp.Content)
+		assistant := &inference.Message{
+			Role:           "assistant",
+			Reasoning:      resp.Reasoning,
+			ReasoningField: a.client.ReasoningField(),
+			ToolCalls:      resp.ToolCalls,
 		}
-		assistantMsg := &inference.Message{
-			Role:      "assistant",
-			Content:   assistantContent,
-			ToolCalls: response.APIToolCalls,
+		if resp.Content != "" {
+			assistant.Content = resp.Content
 		}
-		// Preserve reasoning content in the same property used by the inference server
-		// to maintain consistency in the conversation context
-		if response.Reasoning != "" {
-			if response.ReasoningContentType == "reasoning_content" {
-				assistantMsg.ReasoningContent = response.Reasoning
-			} else {
-				// Default to "reasoning" for "reasoning" or any other/empty type
-				assistantMsg.Reasoning = response.Reasoning
+		a.AddMessage(assistant)
+
+		if len(resp.ToolCalls) == 0 {
+			// Natural end of an inference turn.
+			goal, goalStart := a.Goal()
+			if goal != "" {
+				if strings.Contains(strings.ToLower(resp.Content), "goal achieved") {
+					a.ClearGoal()
+					elapsed := time.Since(goalStart)
+					a.emit(Event{Type: EventGoal, Text: fmt.Sprintf("Goal achieved in %s", FormatDuration(elapsed))})
+					return lastContent, nil
+				}
+				a.emit(Event{Type: EventGoal, Text: "Checking goal: " + goal})
+				a.AddMessage(inference.NewTextMessage("user", GoalCheckPrompt(goal)))
+				continue
 			}
+			a.emit(Event{Type: EventDone, Text: lastContent})
+			return lastContent, nil
 		}
-		a.context = append(a.context, assistantMsg)
-		// Track this assistant message (which may carry tool calls) so the
-		// context-size delta accounts for it until the next API response.
-		a.assistantMsgsSinceLastAPI[len(a.context)-1] = true
-		a.mu.Unlock()
 
-		// Update token stats with accurate values from API
-		a.mu.Lock()
-		a.recordTokenUsageUnlocked(response)
+		a.executeToolCalls(runCtx, resp.ToolCalls)
+	}
+}
 
-		// Store total_tokens as the authoritative baseline for context size.
-		// This is the exact count the API used: system prompt + messages + tools + completion.
-		// We only estimate deltas for new messages added after this response (e.g., tool results).
-		a.lastTotalTokens = response.TokenUsage
+// complete performs one chat completion with the current context.
+func (a *Agent) complete(ctx context.Context) (*inference.Response, error) {
+	req := &inference.Request{
+		Model:      a.cfg.Model,
+		Messages:   a.messagesForRequest(),
+		MaxTokens:  a.cfg.MaxTokens,
+		ToolChoice: "auto",
+	}
+	if a.cfg.Temperature != nil {
+		req.Temperature = a.cfg.Temperature
+	}
+	if a.cfg.TopP != nil {
+		req.TopP = a.cfg.TopP
+	}
+	if defs := a.registry.Definitions(); len(defs) > 0 {
+		req.Tools = defs
+	}
 
-		// Reset tool result and assistant tracking since the API response already
-		// accounts for all messages currently in context. Keeping stale indices
-		// would cause context size to be overestimated on subsequent calls.
-		a.toolResultMsgsSinceLastAPI = make(map[int]bool)
-		a.assistantMsgsSinceLastAPI = make(map[int]bool)
-
-		// Capture callback and values under the lock, then dispatch below it.
-		// Invoking user callbacks while holding a.mu risks re-entrancy deadlocks.
-		ctxSizeCallback := a.contextSizeCallback
-		actualSize := a.getActualContextSizeUnlocked()
-		maxContext := a.maxContextSize
-		a.mu.Unlock()
-
-		// Report context size to TUI with real token count
-		a.reportContextSize(ctxSizeCallback, actualSize, maxContext)
-
-		// Log assistant response if debug is enabled
-		if a.debugLogger != nil {
-			// Log the assistant's text response (if any)
-			if response.Content != "" {
-				a.debugLogger.LogAssistantMessage(response.Content, response.TokenUsage/2)
+	start := time.Now()
+	accum := map[int]*toolAccum{}
+	cb := &inference.StreamCallbacks{
+		Content:   func(s string) { a.emit(Event{Type: EventContent, Text: s}) },
+		Reasoning: func(s string) { a.emit(Event{Type: EventReasoning, Text: s}) },
+		ToolCallDelta: func(index int, d inference.ToolCallDelta) {
+			if dbg := debug.Default(); dbg != nil {
+				dbg.Logf("tool call delta #%d %s %s", index, d.Function.Name, d.Function.Arguments)
 			}
-
-			// Log tool calls
-			for _, tc := range response.ToolCalls {
-				a.debugLogger.LogToolCall(tc.ID, tc.Name, tc.Parameters)
+			// Accumulate so the UI can show parameters as they stream in
+			// (requirement 017).
+			acc := &toolAccum{}
+			if existing, ok := accum[index]; ok {
+				acc = existing
 			}
-		}
-
-		// Check if there are tool calls
-		if len(response.ToolCalls) > 0 {
-			// Execute tool calls
-			for i, tc := range response.ToolCalls {
-				// Check for cancellation before executing each tool
-				select {
-				case <-ctx.Done():
-					// Synthesize tool results for this and every remaining tool call
-					// so the assistant turn stays well-formed. OpenAI-compatible
-					// servers require an assistant message with tool_calls to be
-					// followed by one tool message per tool_call_id; returning here
-					// without doing so would leave an orphaned tool call and get the
-					// next request rejected with HTTP 400.
-					for _, pending := range response.ToolCalls[i:] {
-						msg := fmt.Sprintf("Tool '%s' was cancelled: %v", pending.Name, ctx.Err())
-						a.appendToolResult(pending.ID, msg)
-					}
-					return nil, ctx.Err()
-				default:
-				}
-
-				// Show full tool parameters to user before execution
-				// The streaming display showed truncated args, but we show the complete
-				// command/parameters when the tool is actually called
-				streamToolCallWithFullParams(tc, a.streamCallback)
-
-				step := Step{
-					Action:   fmt.Sprintf("Calling tool: %s", tc.Name),
-					ToolCall: tc,
-				}
-
-				// Execute the tool with context support for cancellation
-				result := a.toolExecutor.Execute(ctx, tc)
-				step.ToolResult = result
-
-				a.mu.Lock()
-				a.stats.ToolCalls++
-				if !result.Success {
-					a.stats.FailedToolCalls++
-				}
-				a.mu.Unlock()
-
-				// Log tool result if debug is enabled
-				if a.debugLogger != nil {
-					a.debugLogger.LogToolResult(tc.ID, tc.Name, result.Success, result.Output)
-				}
-
-				// Stream tool result status to user
-				streamResult(tc.Name, result, a.streamCallback)
-				step.StreamMsg = formatToolStatus(tc.Name, result)
-
-				// Add tool result to context with tool_call_id (OpenAI format)
-				var resultMessage string
-				if result.Success {
-					// Special handling for view_image: send image to LLM for vision analysis
-					if tc.Name == "view_image" {
-						visionResult := a.handleViewImage(ctx, result)
-						resultMessage = visionResult
-						// Update step output before appending to steps (avoid post-append mutation)
-						step.ToolResult.Output = visionResult
-					} else {
-						// Use full output for LLM context (not truncated)
-						resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, result.Output)
-					}
-				} else {
-					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, result.Error)
-				}
-
-				// Add step to the list (output is already finalized)
-				steps = append(steps, step)
-
-				// Add tool result to context with tool_call_id (OpenAI format)
-				a.appendToolResult(tc.ID, resultMessage)
+			if d.ID != "" {
+				acc.id = d.ID
 			}
-			continue // Loop for next iteration
-		}
-
-		// No tool calls - this is a natural end of the agentic loop
-		// First, save the assistant response
-		a.mu.Lock()
-		assistantResponse := response.Content
-		if assistantResponse == "" && response.Refusal != "" {
-			assistantResponse = "[Model refusal] " + response.Refusal
-		}
-		streamCallback := a.streamCallback
-		a.mu.Unlock()
-
-		// Check if goal mode is active
-		if a.shouldCheckGoal() {
-			// Check if goal was achieved (case-insensitive) in this natural end response
-			if strings.Contains(strings.ToLower(assistantResponse), "goal achieved") {
-				// Calculate elapsed time since goal was started
-				a.mu.Lock()
-				elapsed := time.Since(a.goalStartTime)
-				goalInputTokens := a.goalInputTokens
-				goalOutputTokens := a.goalOutputTokens
-				a.mu.Unlock()
-
-				// Stream goal achieved confirmation to TUI with magenta color
-				goalAchievedMsg := fmt.Sprintf("\n%s[Goal Achieved] ✓ Goal has been achieved! Time: %s%s\n", colors.GetColor("magenta"), formatGoalDuration(elapsed), colors.GetColor("reset"))
-				if streamCallback != nil {
-					streamCallback(inference.StreamingChunk{
-						Text:        goalAchievedMsg,
-						ContentType: inference.StreamingContentTypeGoal,
-					})
-				} else {
-					fmt.Print(goalAchievedMsg)
+			if d.Function != nil {
+				if d.Function.Name != "" {
+					acc.name += d.Function.Name
 				}
-
-				// Print goal token usage
-				goalTokenMsg := fmt.Sprintf("%s[Goal Tokens] Input: %d, Output: %d, Total: %d%s\n", colors.GetColor("magenta"), goalInputTokens, goalOutputTokens, goalInputTokens+goalOutputTokens, colors.GetColor("reset"))
-				if streamCallback != nil {
-					streamCallback(inference.StreamingChunk{
-						Text:        goalTokenMsg,
-						ContentType: inference.StreamingContentTypeGoal,
-					})
-				} else {
-					fmt.Print(goalTokenMsg)
-				}
-
-				// Goal achieved - automatically clear the goal and return the result
-				a.ClearGoal()
-				a.recordIteration()
-				return &Result{
-					FinalOutput: assistantResponse,
-					Reasoning:   response.Reasoning,
-					Steps:       steps,
-					TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,
-				}, nil
+				acc.args += d.Function.Arguments
 			}
-
-			// Goal not yet achieved - inject a goal check message as an automatically
-			// generated user prompt and continue the loop. The LLM will go through
-			// the full agentic loop: it can run tools to verify its work, continue
-			// working, or respond with "goal achieved".
-			a.injectGoalCheck()
-
-			continue // Continue the loop with the goal check message
-		}
-
-		// No tool calls and no goal active - this is the final response
-		a.recordIteration()
-		return &Result{
-			FinalOutput: assistantResponse,
-			Reasoning:   response.Reasoning,
-			Steps:       steps,
-			TokenUsage:  a.stats.InputTokens + a.stats.OutputTokens,
-		}, nil
-	}
-}
-
-// CloseDebugLogger closes the debug logger and writes the session summary.
-// This should be called when the session ends (in interactive mode, when exiting).
-func (a *Agent) CloseDebugLogger() error {
-	if a.debugLogger != nil {
-		return a.debugLogger.Close()
-	}
-	return nil
-}
-
-// RunStream runs the agent with streaming support.
-func (a *Agent) RunStream(ctx context.Context, prompt string, onChunk StreamCallback) (*Result, error) {
-	// Set the stream callback temporarily
-	a.mu.Lock()
-	savedCallback := a.streamCallback
-	a.streamCallback = onChunk
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		a.streamCallback = savedCallback
-		a.mu.Unlock()
-	}()
-
-	return a.run(ctx, prompt, true)
-}
-
-// getInferenceResponse gets a response from the inference backend.
-func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, error) {
-	a.mu.Lock()
-	messages := make([]*inference.Message, len(a.context))
-	copy(messages, a.context)
-	systemPrompt := a.currentSystemPromptUnlocked()
-	streamCallback := a.streamCallback
-	streamInference := a.streamInference
-	a.mu.Unlock()
-
-	// Use streaming version only when explicitly requested (I-10); the
-	// callback alone is used for tool notifications, not to force streaming.
-	if streamInference {
-		return a.inference.InferenceRequestStream(ctx, messages, systemPrompt, streamCallback)
-	}
-
-	return a.inference.InferenceRequest(ctx, messages, systemPrompt)
-}
-
-// appendToolResult appends a tool result message for the given tool call ID to
-// the conversation context. It tracks the message as one added since the last
-// API response so the context-size delta is accounted for correctly.
-func (a *Agent) appendToolResult(toolCallID, content string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	resultIdx := len(a.context)
-	a.context = append(a.context, &inference.Message{
-		Role:       "tool",
-		Content:    content,
-		ToolCallId: toolCallID, // Preserve the original tool call ID
-	})
-	// Track this tool result so getActualContextSizeUnlocked only
-	// counts tool messages added AFTER the last API call.
-	a.toolResultMsgsSinceLastAPI[resultIdx] = true
-}
-
-// handleViewImage processes the result of a view_image tool call by sending the image
-// to a vision-capable model for analysis. Returns the LLM's description of the image.
-func (a *Agent) handleViewImage(ctx context.Context, result *tools.ToolResult) string {
-	// Extract the data URI from the tool result
-	viewExtra := tools.GetViewImageExtra(result)
-	if viewExtra == nil || viewExtra.DataURI == "" {
-		return fmt.Sprintf("Tool 'view_image' executed but no image data returned:\n%s", result.Output)
-	}
-
-	// Stream status to user
-	if a.streamCallback != nil {
-		a.streamCallback(inference.StreamingChunk{
-			Text:        fmt.Sprintf("\n[Viewing image: %s]", result.Path),
-			ContentType: inference.StreamingContentTypeNormal,
-		})
-	} else {
-		fmt.Printf("\n%s[Viewing image: %s]%s", colors.GetColor("cyan"), result.Path, colors.GetColor("reset"))
-	}
-
-	// Use custom prompt if provided, otherwise use default description prompt
-	visionPrompt := "Describe this image in detail. Include any text visible in the image, objects, colors, layout, and any other relevant details."
-	if viewExtra.Prompt != "" {
-		visionPrompt = viewExtra.Prompt
-	}
-
-	// Create a vision message with the image
-	msg := &inference.Message{
-		Role:    "user",
-		Content: visionPrompt,
-	}
-	msg.SetImageContent(visionPrompt, viewExtra.DataURI, "auto")
-
-	// Send to inference for vision analysis. Use the no-tools request path and an
-	// empty system prompt so the vision model only receives the image plus the
-	// description prompt. Sending the full agent system prompt and tool
-	// definitions wastes tokens and can cause pure vision models to attempt tool
-	// calling instead of describing the image.
-	response, err := a.inference.InferenceRequestNoTools(ctx, []*inference.Message{msg}, "")
-	if err != nil {
-		return fmt.Sprintf("Tool 'view_image' loaded the image but vision analysis failed: %v", err)
-	}
-
-	// Account for the vision request's token usage so reported stats reflect the
-	// actual API usage (this request is separate from the main conversation).
-	a.mu.Lock()
-	a.recordTokenUsageUnlocked(response)
-	a.mu.Unlock()
-
-	description := response.Content
-	if description == "" {
-		description = "(The model did not provide a description of the image)"
-	}
-
-	// Stream the description to user
-	if a.streamCallback != nil {
-		a.streamCallback(inference.StreamingChunk{
-			Text:        fmt.Sprintf("\n\nImage description:\n%s", description),
-			ContentType: inference.StreamingContentTypeNormal,
-		})
-	} else {
-		fmt.Printf("\n\n%sImage description:\n%s%s", colors.GetColor("blue"), description, colors.GetColor("reset"))
-	}
-
-	return fmt.Sprintf("Tool 'view_image' executed successfully.\n\nImage description:\n%s", description)
-}
-
-// GetStats returns the current statistics.
-func (a *Agent) GetStats() *Stats {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// Calculate tokens per second
-	tokensPerSecond := 0.0
-	elapsed := time.Since(a.stats.StartTime).Seconds()
-	if elapsed > 0 {
-		totalTokens := a.stats.InputTokens + a.stats.OutputTokens
-		tokensPerSecond = float64(totalTokens) / elapsed
-	}
-
-	return &Stats{
-		InputTokens:      a.stats.InputTokens,
-		OutputTokens:     a.stats.OutputTokens,
-		ToolCalls:        a.stats.ToolCalls,
-		FailedToolCalls:  a.stats.FailedToolCalls,
-		Iterations:       a.stats.Iterations,
-		CompressionCount: a.compressionCount,
-		StartTime:        a.stats.StartTime,
-		TokensPerSecond:  tokensPerSecond,
-	}
-}
-
-// DumpContext dumps the current context to a JSON file.
-func (a *Agent) DumpContext() (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	// Create a dump object with current session state
-	dump := &ContextDump{
-		Version:   1,
-		CreatedAt: a.stats.StartTime,
-		UpdatedAt: time.Now(),
-		Session: SessionInfo{
-			StartTime:        a.stats.StartTime,
-			Iterations:       a.stats.Iterations,
-			CompressionCount: a.compressionCount,
-			Stats: StatsInfo{
-				InputTokens:     a.stats.InputTokens,
-				OutputTokens:    a.stats.OutputTokens,
-				ToolCalls:       a.stats.ToolCalls,
-				FailedToolCalls: a.stats.FailedToolCalls,
-			},
+			accum[index] = acc
+			a.emit(Event{Type: EventToolArgs, Tool: acc.name, Args: FlattenArgs(acc.args)})
 		},
-		Iterations: a.iterationHistory,
 	}
-	// Determine filename in temp directory using a consistent numbered pattern
-	// (coding-agent-context-1.json, -2.json, ...) and scan for the first
-	// available number so no stale/garbage files are created.
-	dir := os.TempDir()
-	base := "coding-agent-context"
-	counter := 1
-	filePath := filepath.Join(dir, fmt.Sprintf("%s-%d.json", base, counter))
-	for {
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			break
-		}
-		counter++
-		filePath = filepath.Join(dir, fmt.Sprintf("%s-%d.json", base, counter))
-	}
-
-	// Marshal to JSON with indentation for readability
-	data, err := json.MarshalIndent(dump, "", "  ")
+	resp, err := a.client.ChatCompletion(ctx, req, cb)
+	elapsed := time.Since(start)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal context: %w", err)
+		a.stats.AddInferenceTime(elapsed)
+		return nil, err
 	}
-
-	// Write to file with read/write permissions for the owner
-	if err := os.WriteFile(filePath, data, tools.FilePermWrite); err != nil {
-		return "", fmt.Errorf("failed to write context file: %w", err)
+	// In non-streaming mode no content deltas were emitted; surface the full
+	// answer as a single content event so consumers stay uniform.
+	if !a.cfg.Stream && resp.Content != "" {
+		a.emit(Event{Type: EventContent, Text: resp.Content})
 	}
-
-	return filePath, nil
-}
-
-// LoadContext loads a conversation context from the specified JSON file.
-// It restores the system prompt, messages, and session statistics.
-func (a *Agent) LoadContext(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read context file: %w", err)
-	}
-
-	var dump ContextDump
-	if err := json.Unmarshal(data, &dump); err != nil {
-		return fmt.Errorf("failed to parse context file: %w", err)
-	}
-
-	if dump.Version != 1 {
-		return fmt.Errorf("unsupported context version: %d", dump.Version)
-	}
-
+	a.stats.AddInferenceTime(elapsed)
+	a.stats.AddUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CachedTokens)
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	if resp.Usage.PromptTokens > 0 {
+		a.lastPromptTokens = resp.Usage.PromptTokens
+	}
+	a.mu.Unlock()
+	if dbg := debug.Default(); dbg != nil {
+		dbg.Logf("iteration finished in %s: finish=%q tool_calls=%d content=%d chars", elapsed, resp.FinishReason, len(resp.ToolCalls), len(resp.Content))
+	}
+	return resp, nil
+}
 
-	if len(dump.Iterations) == 0 {
-		return fmt.Errorf("context file contains no iterations")
+// executeToolCalls runs every requested tool call and appends the results.
+func (a *Agent) executeToolCalls(ctx context.Context, calls []inference.ToolCall) {
+	for _, call := range calls {
+		a.emit(Event{Type: EventToolStart, Tool: call.Function.Name, Args: call.Function.Arguments})
+		start := time.Now()
+		result, failed := a.registry.Execute(ctx, call)
+		elapsed := time.Since(start)
+		a.stats.AddToolCall(failed)
+		a.stats.AddToolTime(elapsed)
+		a.emit(Event{Type: EventToolResult, Tool: call.Function.Name, Result: result, Failed: failed})
+		if dbg := debug.Default(); dbg != nil {
+			dbg.Logf("tool %s (%s) -> %d bytes", call.Function.Name, elapsed, len(result))
+		}
+		// Requirement 016: tool messages carry a standard wrapper so the model
+		// can always tell success from failure.
+		content := result
+		if failed {
+			content = fmt.Sprintf("Tool '%s' failed: %s", call.Function.Name, result)
+		} else {
+			content = fmt.Sprintf("Tool '%s' executed successfully:\n%s", call.Function.Name, result)
+		}
+		a.AddMessage(&inference.Message{Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Function.Name})
+	}
+}
+
+// formatInferenceError turns an inference error into actionable output
+// (requirement 018).
+func formatInferenceError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "Inference cancelled."
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Inference timed out."
+	}
+	var apiErr *inference.APIError
+	if errors.As(err, &apiErr) {
+		msg := "Inference error: " + apiErr.Message
+		if apiErr.Hint != "" {
+			msg += "\n" + apiErr.Hint
+		}
+		return msg
+	}
+	return "Inference error: " + err.Error()
+}
+
+// ExitCodeFor maps an agent error onto the documented process exit code.
+func ExitCodeFor(err error) int {
+	if err == nil {
+		return 0
+	}
+	if errors.Is(err, context.Canceled) {
+		return 1
+	}
+	var apiErr *inference.APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == 401 || apiErr.StatusCode == 403 {
+			return 3
+		}
+		if apiErr.StatusCode == 400 || apiErr.StatusCode == 404 {
+			if strings.Contains(strings.ToLower(apiErr.Message), "context") || strings.Contains(strings.ToLower(apiErr.Message), "too long") {
+				return 4
+			}
+		}
+		return 1
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "maximum number of iterations") {
+		return 1
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "context") {
+		return 4
+	}
+	return 1
+}
+
+// ---------------------------------------------------------------------------
+// subagents (requirement 040)
+// ---------------------------------------------------------------------------
+
+// RunSubagent spawns a separate coding-agent process and returns only its
+// summary.
+func (a *Agent) RunSubagent(ctx context.Context, prompt, persona string) (string, error) {
+	exe := a.cfg.ExecutablePath
+	if exe == "" {
+		p, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("cannot locate the coding-agent executable: %w", err)
+		}
+		exe = p
+	}
+	args := []string{
+		"--prompt-file", "-",
+		"--summary-only",
+		"--no-stream",
+		"--quiet",
+		"--api-endpoint", a.cfg.APIEndpoint,
+		"--model", a.cfg.Model,
+		"--context-size", fmt.Sprintf("%d", a.cfg.ContextSize),
+		"--max-iterations", fmt.Sprintf("%d", a.cfg.MaxIterations),
+	}
+	if persona != "" {
+		args = append(args, "--persona", persona)
+	} else if a.cfg.Persona != "" {
+		args = append(args, "--persona", a.cfg.Persona)
+	}
+	if a.cfg.ReadOnly {
+		args = append(args, "--read-only")
+	}
+	if a.cfg.MaxTokens > 0 {
+		args = append(args, "--max-tokens", fmt.Sprintf("%d", a.cfg.MaxTokens))
+	}
+	if a.cfg.NoDumpOnExit {
+		args = append(args, "--no-dump-on-exit")
 	}
 
-	// Restore from the last iteration snapshot
-	lastSnapshot := dump.Iterations[len(dump.Iterations)-1]
-
-	// Restore system prompt from the first message of the last snapshot
-	if len(lastSnapshot.Messages) > 0 && lastSnapshot.Messages[0].Role == "system" {
-		a.systemPrompt = lastSnapshot.Messages[0].Content
-		// Restore messages excluding the system prompt
-		a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages)-1)
-		for _, msg := range lastSnapshot.Messages[1:] {
-			cpy := *msg
-			a.context = append(a.context, &cpy)
-		}
-	} else {
-		// Fallback: use messages as is and keep current system prompt
-		a.context = make([]*inference.Message, 0, len(lastSnapshot.Messages))
-		for _, msg := range lastSnapshot.Messages {
-			cpy := *msg
-			a.context = append(a.context, &cpy)
-		}
+	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.Dir = a.cfg.WorkingDir
+	cmd.Stdin = strings.NewReader(prompt)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	env := os.Environ()
+	if a.cfg.APIKey != "" {
+		env = append(env, "CODING_AGENT_API_KEY="+a.cfg.APIKey)
 	}
+	cmd.Env = env
 
-	// Restore session metadata
-	a.stats.StartTime = dump.Session.StartTime
-	a.stats.Iterations = dump.Session.Iterations
-	a.compressionCount = dump.Session.CompressionCount
-
-	// Restore token counts
-	a.stats.InputTokens = dump.Session.Stats.InputTokens
-	a.stats.OutputTokens = dump.Session.Stats.OutputTokens
-	a.stats.ToolCalls = dump.Session.Stats.ToolCalls
-	a.stats.FailedToolCalls = dump.Session.Stats.FailedToolCalls
-
-	// Reset token tracking baseline
-	a.lastTotalTokens = inference.EstimateContextSize(a.context, a.inference.GetTools(), a.currentSystemPromptUnlocked())
-	a.toolResultMsgsSinceLastAPI = make(map[int]bool)
-	a.assistantMsgsSinceLastAPI = make(map[int]bool)
-	// The loaded system prompt already includes any active skill instructions,
-	// so reset the accumulated skill prompt to avoid duplication.
-	a.skillPrompt = ""
-	a.activatedSkills = make(map[string]bool)
-
-	return nil
+	a.emit(Event{Type: EventSubagent, Text: "Starting subagent task..."})
+	err := cmd.Run()
+	out := stdout.String()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		a.emit(Event{Type: EventSubagent, Text: "Failed: " + msg, Failed: true})
+		return "", fmt.Errorf("subagent failed: %s", msg)
+	}
+	summary := extractSummary(out)
+	a.emit(Event{Type: EventSubagent, Text: "Task completed\nSummary:\n" + summary})
+	return "Subagent completed.\n\nSummary:\n" + summary, nil
 }
 
-// This is a public wrapper around the internal compressContext method,
-// allowing the TUI to trigger compression on demand via the /compress command.
-func (a *Agent) CompressContext(ctx context.Context) error {
-	return a.compressContext(ctx)
+// extractSummary pulls the conclusion out of a subagent's output.
+func extractSummary(output string) string {
+	if idx := strings.Index(output, "=== Final Output ==="); idx != -1 {
+		return strings.TrimSpace(output[idx+len("=== Final Output ==="):])
+	}
+	if len(output) > 5000 {
+		return output[:5000] + "\n... [output truncated]"
+	}
+	return strings.TrimSpace(output)
 }
 
-// getBuildVersion returns the build version string.
-// This is injected at build time via linker flags.
-var buildVersion = "unknown"
+// ---------------------------------------------------------------------------
+// image viewing (requirement 041)
+// ---------------------------------------------------------------------------
 
-func getBuildVersion() string {
-	return buildVersion
-}
-
-// SetBuildVersion sets the build version (called from main at startup).
-func SetBuildVersion(version string) {
-	buildVersion = version
+// DescribeImage sends an image to the configured model and returns the answer.
+func (a *Agent) DescribeImage(ctx context.Context, dataURI, prompt string) (string, error) {
+	req := &inference.Request{
+		Model: a.cfg.Model,
+		Messages: []*inference.Message{{
+			Role: "user",
+			Content: []inference.ContentPart{
+				{Type: "text", Text: prompt},
+				{Type: "image_url", ImageURL: &inference.ImageURL{URL: dataURI, Detail: "auto"}},
+			},
+		}},
+	}
+	resp, err := a.vision.ChatCompletion(ctx, req, nil)
+	if err != nil {
+		return "", fmt.Errorf("loaded the image but vision analysis failed: %v", err)
+	}
+	a.stats.AddUsage(resp.Usage.PromptTokens, resp.Usage.CompletionTokens, resp.Usage.CachedTokens)
+	return strings.TrimSpace(resp.Content), nil
 }
