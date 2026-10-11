@@ -228,8 +228,17 @@ func (s *Server) dispatchCommand(sess *Session, command string) commandResponse 
 		} else {
 			output = "[Context dumped to: " + path + "]"
 		}
+	case "schedule":
+		// Scheduled messages (requirement 048). Managing schedules does not
+		// touch the conversation, so it is allowed while a run is in progress.
+		out := sess.agent.ScheduleCommand(arg)
+		if strings.HasPrefix(out, "Error:") {
+			output = "[" + out + "]"
+		} else {
+			output = out
+		}
 	default:
-		output = "Unknown command: /" + cmd + "\nAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off"
+		output = "Unknown command: /" + cmd + "\nAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /schedule"
 	}
 
 	// Publish the updated state to subscribers.
@@ -252,6 +261,9 @@ func formatStats(stats *agent.Stats) string {
 	fmt.Fprintf(&sb, "  Iterations:        %d\n", stats.Iterations)
 	if stats.CompressionCount > 0 {
 		fmt.Fprintf(&sb, "  Compressions:      %d\n", stats.CompressionCount)
+	}
+	if stats.Schedules > 0 {
+		fmt.Fprintf(&sb, "  Schedules:         %d\n", stats.Schedules)
 	}
 	if !stats.StartTime.IsZero() {
 		fmt.Fprintf(&sb, "  Uptime:            %s\n", time.Since(stats.StartTime).Round(time.Second))

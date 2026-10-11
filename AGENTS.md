@@ -34,6 +34,7 @@ All requirements are in the `requirements/` folder, numbered sequentially:
 - **021-029**: Advanced features (versioning, one-shot mode, debug, environment info)
 - **030-040**: Additional tools (patch, GitHub Copilot, git tools, goal mode, subagent)
 - **041-044**: Vision, todo, theme, and context dump/load features
+- **045-048**: Web UI and scheduled message features
 
 To find requirements for a feature:
 1. List requirements: `ls requirements/`

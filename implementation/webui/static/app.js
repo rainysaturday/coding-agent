@@ -29,6 +29,7 @@
   var goalInput = document.getElementById("goal-input");
   var goalOffBtn = document.getElementById("goal-off-btn");
   var goalActive = document.getElementById("goal-active");
+  var scheduleCount = document.getElementById("schedule-count");
   var ringFg = document.getElementById("ring-fg");
   var ringText = document.getElementById("ring-text");
   var ring = document.getElementById("context-ring");
@@ -46,7 +47,7 @@
 
   var COMMANDS = [
     "/stats", "/clear", "/clear-history", "/read-only", "/compress",
-    "/goal ", "/goal-off", "/dump"
+    "/goal ", "/goal-off", "/dump", "/schedule "
   ];
 
   function $(id) { return document.getElementById(id); }
@@ -217,6 +218,12 @@
     readonlyToggle.checked = !!st.readOnly;
     if (st.goalActive) goalActive.textContent = st.goal;
     else goalActive.textContent = "";
+    // Scheduled-message counter on the prompt bar (requirement 048).
+    if (scheduleCount) {
+      var n = st.scheduleCount || 0;
+      scheduleCount.textContent = n > 0 ? ("Schedules: " + n) : "";
+      scheduleCount.title = n + " scheduled message(s) registered";
+    }
     sendBtn.disabled = st.running;
     cancelBtn.disabled = !st.running;
   }
@@ -376,6 +383,17 @@
       var rb = output.querySelector(".msg-reasoning[data-reasoning='1']");
       if (!rb) { var r = reasoningBlock(); rb = r.details; rb._body = r.body; }
       rb._body.textContent += stripAnsi(c.text);
+      scrollBottom();
+      return;
+    }
+    if (c.contentType === 4) { // scheduled message delivery
+      if (!streamBuf || !streamBuf.classList.contains("msg-schedule")) {
+        streamBuf = el("div", "msg msg-schedule");
+        streamBuf.appendChild(el("div", "msg-head", "Scheduled message"));
+        streamBuf.appendChild(el("div", "msg-body"));
+        output.appendChild(streamBuf);
+      }
+      streamBuf.lastElementChild.textContent += stripAnsi(c.text);
       scrollBottom();
       return;
     }

@@ -163,7 +163,7 @@ func commandSafeDuringRun(cmd string) bool {
 	full := strings.TrimPrefix(cmd, "/")
 	parts := strings.SplitN(full, " ", 2)
 	switch parts[0] {
-	case "stats", "dump":
+	case "stats", "dump", "schedule":
 		return true
 	}
 	return false

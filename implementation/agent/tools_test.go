@@ -59,6 +59,7 @@ func TestBuildTools_Parameters(t *testing.T) {
 		"view_image":     {"path"},
 		"todo":           {"action"},
 		"activate_skill": {"name"},
+		"schedule":       {"action"},
 	}
 
 	for _, tool := range toolDefs {
@@ -260,8 +261,8 @@ func TestHandleViewImage_DefaultPrompt(t *testing.T) {
 func TestBuildTools_ReadOnly(t *testing.T) {
 	tools := buildTools(true, false, nil)
 
-	// In read-only mode, should have: activate_skill, read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, and todo
-	expectedNames := []string{"activate_skill", "read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo"}
+	// In read-only mode, should have: activate_skill, read_file, read_lines, list_files, grep, git_log, git_show, git_diff, view_image, todo, and schedule (listing and removing schedules are read-only)
+	expectedNames := []string{"activate_skill", "read_file", "read_lines", "list_files", "grep", "git_log", "git_show", "git_diff", "view_image", "todo", "schedule"}
 
 	if len(tools) != len(expectedNames) {
 		t.Errorf("Expected %d tools in read-only mode, got %d", len(expectedNames), len(tools))

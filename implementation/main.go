@@ -303,6 +303,7 @@ func displayHelp() {
 	fmt.Println("  /skill <name>    - Load a skill's instructions into context")
 	fmt.Println("  /skills          - List available skills")
 	fmt.Println("  /create-skill <desc> - Create a new skill from a description")
+	fmt.Println("  /schedule <args>   - Manage scheduled messages: add|list|remove|pause|resume|clear")
 
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -676,6 +677,15 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 	case "skills":
 		fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), ag.ListSkills(), colors.GetColor("reset"))
 		return input, true
+	case "schedule":
+		out := ag.ScheduleCommand(arg)
+		if strings.HasPrefix(out, "Error:") {
+			fmt.Printf("%s%s%s\n", colors.GetColor("red"), out, colors.GetColor("reset"))
+		} else if out != "" {
+			fmt.Printf("%s%s%s\n", colors.GetColor("cyan"), out, colors.GetColor("reset"))
+		}
+		tuiInstance.SetScheduleCount(ag.ScheduleCount())
+		return input, true
 	case "create-skill":
 		if arg == "" {
 			fmt.Printf("%sUsage: /create-skill <description of the skill>%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
@@ -685,7 +695,7 @@ func handleInteractiveCommand(input string, ag *agent.Agent, tuiInstance *tui.TU
 		return buildCreateSkillPrompt(arg), false
 	default:
 		fmt.Printf("%sUnknown command: /%s%s\n", colors.GetColor("red"), command, colors.GetColor("reset"))
-		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		fmt.Printf("%sAvailable commands: /stats, /clear, /clear-history, /read-only, /compress, /dump, /goal, /goal-off, /skill, /skills, /create-skill, /schedule%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 		return input, true
 	}
 }
@@ -762,6 +772,8 @@ func runAgentWithStreaming(ctx context.Context, ag *agent.Agent, tuiInstance *tu
 				tuiInstance.StreamReasoningChunk(chunk.Text)
 			case inference.StreamingContentTypeGoal:
 				tuiInstance.StreamGoalChunk(chunk.Text)
+			case inference.StreamingContentTypeSchedule:
+				tuiInstance.StreamScheduleChunk(chunk.Text)
 			default:
 				tuiInstance.StreamNormalChunk(chunk.Text)
 			}
@@ -807,7 +819,7 @@ func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
 	fmt.Printf("%sType your request below. Use Ctrl+C to exit.%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
-	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off, /skill, /skills, /create-skill%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
+	fmt.Printf("%sCommands start with '/': /stats, /clear, /clear-history, /read-only, /compress, /goal, /goal-off, /skill, /skills, /create-skill, /schedule%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 	fmt.Println()
 
 	// Initialize TUI
@@ -854,6 +866,27 @@ func runInteractiveMode(cfg *config.Config) error {
 	ag.SetContextSizeCallback(func(size, max int) {
 		tuiInstance.SetContextSize(size, max)
 	})
+
+	// Scheduled messages (requirement 048). A persistent stream callback lets
+	// deliveries that fire while the agent is idle still render through the TUI
+	// (RunStream overrides it only for the duration of a run), and the change
+	// notifier keeps the prompt-bar counter up to date.
+	ag.SetStreamCallback(func(chunk inference.StreamingChunk) {
+		tuiInstance.StreamChunkWithType(chunk.Text, chunk.ContentType)
+	})
+	ag.SetScheduleHooks(agent.ScheduleHooks{
+		OnChange: func(count int) {
+			tuiInstance.SetScheduleCount(count)
+		},
+		OnRunEnd: func(error) {
+			// A scheduled run prints while the user is at the prompt, so put the
+			// prompt bar back when it finishes.
+			tuiInstance.EndScheduledOutput()
+		},
+	})
+	ag.StartScheduleScheduler()
+	defer ag.StopScheduleScheduler()
+	tuiInstance.SetScheduleCount(ag.ScheduleCount())
 
 	// signalState holds the current root context state, protected by a mutex.
 	// This prevents race conditions during context recreation. Signal delivery

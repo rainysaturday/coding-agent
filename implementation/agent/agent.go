@@ -80,6 +80,38 @@ type Agent struct {
 	// skill content is exempt from context compaction (the system prompt is
 	// never pruned).
 	skillPrompt string
+	// scheduleHooks carries optional front-end callbacks for schedule events
+	// (delivery notifications and schedule-set changes).
+	scheduleHooks ScheduleHooks
+	// scheduleStop is closed to stop the scheduler goroutine; nil when the
+	// scheduler is not running.
+	scheduleStop chan struct{}
+	// scheduleWake nudges the scheduler loop to re-evaluate due schedules.
+	scheduleWake chan struct{}
+	// scheduleCtx/scheduleCancel bound the runs the scheduler starts itself.
+	scheduleCtx    context.Context
+	scheduleCancel context.CancelFunc
+	// scheduledRunCancel cancels the run currently started by the scheduler.
+	scheduledRunCancel context.CancelFunc
+	// scheduleDone is closed when the scheduler loop goroutine exits;
+	// StopScheduleScheduler waits on it so no loop survives the stop.
+	scheduleDone chan struct{}
+	// scheduleAwaitingRun is set when scheduled messages were injected into the
+	// context but no run has answered them yet.
+	scheduleAwaitingRun bool
+	// apiSnapshotSeq counts the conversation snapshots taken for inference
+	// requests (getInferenceResponse). lastScheduledSeq records the counter
+	// value at the moment the most recent scheduled message was injected: the
+	// delivery has been seen by the model only if a snapshot was taken after
+	// it (apiSnapshotSeq advanced). Comparing counters is race-free and
+	// survives context compression, unlike message pointer identity.
+	apiSnapshotSeq   uint64
+	lastScheduledSeq uint64
+	// runSlot is a capacity-one semaphore serializing agent runs, so a
+	// scheduler-initiated run and a user-initiated run never share the context.
+	runSlot chan struct{}
+	// running reports whether a run currently holds runSlot.
+	running bool
 }
 
 // Stats represents agent statistics.
@@ -92,6 +124,9 @@ type Stats struct {
 	CompressionCount int       `json:"compression_count"`
 	StartTime        time.Time `json:"start_time"`
 	TokensPerSecond  float64   `json:"tokens_per_second"`
+	// Schedules is the number of scheduled messages that can still fire
+	// (requirement 048).
+	Schedules int `json:"schedules"`
 }
 
 // Step represents an execution step.
@@ -180,6 +215,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		toolResultMsgsSinceLastAPI: make(map[int]bool),
 		assistantMsgsSinceLastAPI:  make(map[int]bool),
 		activatedSkills:            make(map[string]bool),
+		runSlot:                    make(chan struct{}, 1),
 		stats: &Stats{
 			StartTime: time.Now(),
 		},
@@ -388,16 +424,12 @@ func (a *Agent) Run(ctx context.Context, prompt string) (*Result, error) {
 // the streaming API; the stream callback (if any) is still used for tool
 // notifications in either case (I-10).
 func (a *Agent) run(ctx context.Context, prompt string, stream bool) (*Result, error) {
-	// Set the inference streaming flag for the duration of the run.
-	a.mu.Lock()
-	savedStream := a.streamInference
-	a.streamInference = stream
-	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		a.streamInference = savedStream
-		a.mu.Unlock()
-	}()
+	// Serialize runs: a scheduled-message run and a user-initiated run must
+	// never mutate the conversation context at the same time (requirement 048).
+	if err := a.acquireRunSlot(ctx); err != nil {
+		return nil, err
+	}
+	defer a.releaseRunSlot()
 
 	// Log user message if debug is enabled
 	if a.debugLogger != nil {
@@ -412,6 +444,28 @@ func (a *Agent) run(ctx context.Context, prompt string, stream bool) (*Result, e
 	})
 	// Context size not available until first API response, TUI will show 0 until then
 	a.mu.Unlock()
+
+	return a.runLoop(ctx, stream)
+}
+
+// runLoop runs the agentic loop over the current conversation context without
+// appending a new user prompt. It is shared by user-initiated runs and runs
+// triggered by scheduled messages (requirement 048).
+func (a *Agent) runLoop(ctx context.Context, stream bool) (*Result, error) {
+	// Set the inference streaming flag for the duration of the run.
+	a.mu.Lock()
+	savedStream := a.streamInference
+	a.streamInference = stream
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.streamInference = savedStream
+		a.mu.Unlock()
+	}()
+
+	// A finished run may have consumed (or left behind) scheduled messages, so
+	// the scheduler is woken when the run ends (requirement 048).
+	defer a.noteRunEnd()
 
 	// Track steps
 	var steps []Step
@@ -689,6 +743,9 @@ func (a *Agent) getInferenceResponse(ctx context.Context) (*inference.Response, 
 	a.mu.Lock()
 	messages := make([]*inference.Message, len(a.context))
 	copy(messages, a.context)
+	// Every message currently in the context is now visible to the model.
+	// Scheduled deliveries injected before this point count as seen (req 048).
+	a.apiSnapshotSeq++
 	systemPrompt := a.currentSystemPromptUnlocked()
 	streamCallback := a.streamCallback
 	streamInference := a.streamInference
@@ -808,6 +865,7 @@ func (a *Agent) GetStats() *Stats {
 		CompressionCount: a.compressionCount,
 		StartTime:        a.stats.StartTime,
 		TokensPerSecond:  tokensPerSecond,
+		Schedules:        a.toolExecutor.GetScheduleStore().CountActive(),
 	}
 }
 

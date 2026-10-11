@@ -294,7 +294,6 @@ func TestCommand_ReadOnlyToggle(t *testing.T) {
 	}
 }
 
-
 // TestCommand_RejectedWhileRunning verifies that mutating slash commands and
 // reset are rejected with 409 while a run is in progress, while read-only
 // commands (stats, dump) are still allowed (I-12).
@@ -363,7 +362,6 @@ func TestCommand_ReadOnlyOff(t *testing.T) {
 	}
 }
 
-
 func TestCommand_UnknownCommand(t *testing.T) {
 	_, mux := newTestMux(t)
 	rec := doJSON(t, mux, http.MethodPost, "/api/command", commandRequest{Session: "s5", Command: "/nope"})
@@ -410,5 +408,87 @@ func TestCancel_ReturnsOK(t *testing.T) {
 	}
 	if !out["ok"] {
 		t.Error("expected ok true")
+	}
+}
+
+// Regression for the scheduled-run visibility fix: a scheduler-driven run
+// must mark the session busy (state endpoint + prompt guard) and be
+// cancellable through /api/cancel.
+func TestScheduledRunVisibleInWebUI(t *testing.T) {
+	// Slow model: the scheduled run stays in progress long enough to probe.
+	inflight := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case inflight <- struct{}{}:
+		default:
+		}
+		time.Sleep(1500 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"id": "sched-1",
+			"object": "chat.completion",
+			"created": 123,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"message": {"role": "assistant", "content": "pong"},
+				"finish_reason": "stop"
+			}],
+			"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+	cfg.Streaming = false
+	cfg.ContextSize = 32000
+	srv := NewServer(cfg)
+	mux := srv.buildMux()
+
+	sess := srv.sessions.Get("sched-test")
+
+	// Register a one-shot schedule through the same command path users use.
+	rec := doJSON(t, mux, http.MethodPost, "/api/chat", chatRequest{Session: "sched-test", Prompt: "/schedule add in 1s ping"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("schedule command: got %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	// Wait for the scheduler to fire and mark the session busy.
+	deadline := time.Now().Add(5 * time.Second)
+	for !sess.isRunning() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sess.isRunning() {
+		t.Fatal("scheduled run did not mark the session busy")
+	}
+
+	// The state endpoint must report it running.
+	rec = doJSON(t, mux, http.MethodGet, "/api/state?session=sched-test", nil)
+	var st stateEvent
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	if !st.Running {
+		t.Fatal("/api/state does not report the scheduled run as running")
+	}
+
+	// A prompt during the scheduled run must be rejected.
+	rec = doJSON(t, mux, http.MethodPost, "/api/chat", chatRequest{Session: "sched-test", Prompt: "hello"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("prompt during scheduled run: got %d, want 409", rec.Code)
+	}
+
+	// Cancel must reach the scheduled run and end it.
+	rec = doJSON(t, mux, http.MethodPost, "/api/cancel", cancelRequest{Session: "sched-test"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel: got %d, want 200", rec.Code)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for sess.isRunning() && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if sess.isRunning() {
+		t.Fatal("session still busy after cancelling the scheduled run")
 	}
 }

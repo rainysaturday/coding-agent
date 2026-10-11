@@ -183,3 +183,47 @@ func TestBuildSystemPrompt_ReadOnlyNotices(t *testing.T) {
 }
 
 // TestSetGoal_Activate tests that SetGoal correctly activates goal mode
+
+// Requirement 048: the system prompt must explain scheduled messages so the
+// model understands what a "[Scheduled message #N ...]" user message is.
+func TestBuildSystemPrompt_ScheduledMessagesGuidance(t *testing.T) {
+	normal := buildSystemPrompt(false, "", false, nil)
+
+	for _, want := range []string{
+		"SCHEDULED MESSAGES:",
+		"schedule",
+		"[Scheduled message #",
+		"NOT user input",
+		"returns immediately",
+	} {
+		if !strings.Contains(normal, want) {
+			t.Errorf("normal system prompt is missing %q", want)
+		}
+	}
+
+	readOnly := buildSystemPrompt(true, "", false, nil)
+	for _, want := range []string{
+		"SCHEDULED MESSAGES:",
+		"[Scheduled message #",
+		"not user input",
+	} {
+		if !strings.Contains(readOnly, want) {
+			t.Errorf("read-only system prompt is missing %q", want)
+		}
+	}
+}
+
+// The schedule tool must be described to the model like every other tool.
+func TestBuildSystemPrompt_ScheduleToolDescribed(t *testing.T) {
+	prompt := buildSystemPrompt(false, "", false, nil)
+
+	for _, want := range []string{
+		"schedule\n   Description:",
+		"cron",
+		"list/remove/pause/resume/clear",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("tool list section is missing %q", want)
+		}
+	}
+}

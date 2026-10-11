@@ -10,6 +10,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 - **Streaming Inference**: Real-time token streaming for better UX
 - **Context Management**: Automatic context compression when limits are approached
 - **Goal Mode**: Set a goal with `/goal` and the agent will automatically check if it's achieved
+- **Scheduled Messages**: Schedule a message to be delivered to the LLM once at a future time or repeatedly on a cron/interval schedule (`schedule` tool, `/schedule` command)
 - **One-Shot Mode**: Non-interactive mode for CI/CD integration
 - **Zero External Dependencies**: Built entirely with Go standard library
 
@@ -108,7 +109,7 @@ In read-only mode, the agent cannot modify, write, delete, or execute any files 
 - `insert_lines` - Insert lines in files
 - `replace_text` - Replace text in files
 
-Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, `view_image`, and `todo` (list/remove only) are available.
+Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, `view_image`, `todo` (list/remove only), and `schedule` (list/remove/clear only) are available.
 
 ### Available Commands (Interactive Mode)
 
@@ -119,6 +120,7 @@ Only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `gi
 - `/compress` - Manually trigger context compression
 - `/goal <prompt>` - Set a goal to guide the agent (e.g., `/goal Create a REST API`)
 - `/goal-off` - Deactivate goal mode
+- `/schedule <args>` - Manage scheduled messages: `add`, `list`, `remove`, `pause`, `resume`, `clear` (e.g. `/schedule add in 10m Check the build`, `/schedule add cron "*/5 * * * *" Poll the CI`)
 
 ## Usage Examples
 
@@ -314,6 +316,7 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **032-list-files-tool.md**: List files tool
 - **033-read-only-mode.md**: Read-only mode
 - **043-todo-tool.md**: Todo tool for task tracking
+- **048-schedule-ping-tool.md**: Schedule tool for delivering messages to the LLM later
 
 ## Development
 

@@ -35,6 +35,12 @@ type TUI struct {
 	inputLine                 string // Current input line buffer (shared with history navigation)
 	currentInput              string // Stores typed input when navigating to history
 	transitionedFromReasoning bool   // Whether we've transitioned from reasoning to normal content
+	scheduleCount             int    // Number of scheduled messages (prompt-bar counter, req 048)
+	promptActive              bool   // Whether the prompt input line is currently displayed
+	// lastOutputNewline records whether the most recent streamed output ended on
+	// a newline, so a repaint after an asynchronous run does not erase output
+	// that is still mid-line (requirement 048).
+	lastOutputNewline bool
 }
 
 // NewTUI creates a new TUI instance.
@@ -75,10 +81,16 @@ func (t *TUI) Prompt() (string, error) {
 	// Reset input buffer for new input
 	t.mu.Lock()
 	t.inputLine = ""
+	t.promptActive = true
 	t.mu.Unlock()
 
 	// Read input with history navigation support
 	input, err := t.readLineWithHistory()
+
+	t.mu.Lock()
+	t.promptActive = false
+	t.mu.Unlock()
+
 	if err != nil {
 		if t.cancelled {
 			return "", fmt.Errorf("cancelled")
@@ -127,7 +139,10 @@ func (t *TUI) readLineWithHistory() (string, error) {
 		var buf [1]byte
 		_, err := os.Stdin.Read(buf[:])
 		if err != nil {
-			return t.inputLine, err
+			t.mu.Lock()
+			current := t.inputLine
+			t.mu.Unlock()
+			return current, err
 		}
 		b := buf[0]
 
@@ -151,9 +166,9 @@ func (t *TUI) readLineWithHistory() (string, error) {
 				}
 			}
 			// Not a recognized escape sequence, treat as regular characters
-			t.inputLine += string(b)
-			t.inputLine += string(seq[0])
-			t.inputLine += string(seq[1])
+			t.mu.Lock()
+			t.inputLine += string(b) + string(seq[0]) + string(seq[1])
+			t.mu.Unlock()
 			os.Stdout.Write([]byte{b, seq[0], seq[1]})
 			continue
 		}
@@ -174,10 +189,18 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			continue
 		case 13: // Enter/Carriage Return
 			fmt.Println()
-			return t.inputLine, nil
+			t.mu.Lock()
+			current := t.inputLine
+			t.mu.Unlock()
+			return current, nil
 		case 127, 8: // Backspace/Delete
-			if len(t.inputLine) > 0 {
+			t.mu.Lock()
+			hasInput := len(t.inputLine) > 0
+			if hasInput {
 				t.inputLine = t.inputLine[:len(t.inputLine)-1]
+			}
+			t.mu.Unlock()
+			if hasInput {
 				fmt.Print("\b \b")
 			}
 			continue
@@ -188,11 +211,16 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			}
 			// If there's text, treat as Enter
 			fmt.Println()
-			return t.inputLine, nil
+			t.mu.Lock()
+			current := t.inputLine
+			t.mu.Unlock()
+			return current, nil
 		default:
 			// Regular printable character
 			if b >= 32 && b < 127 || b >= 0x80 {
+				t.mu.Lock()
 				t.inputLine += string(b)
+				t.mu.Unlock()
 				os.Stdout.Write([]byte{b})
 			}
 		}
@@ -299,6 +327,17 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 		// Context compression messages are displayed in magenta to stand out
 		t.streamBuffer.WriteString(text)
 		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
+	case inference.StreamingContentTypeSchedule:
+		// Scheduled message deliveries are shown in cyan so they are clearly
+		// distinguishable from model output (requirement 048).
+		t.streamBuffer.WriteString(text)
+		fmt.Printf("%s%s%s", colors.GetColor("cyan"), text, colors.GetColor("reset"))
+		t.lastOutputNewline = strings.HasSuffix(text, "\n")
+		// A delivery can arrive while the user is typing at the prompt; repaint
+		// the prompt bar and the typed text so the input line stays intact.
+		if t.promptActive {
+			t.redrawPromptLineInternal()
+		}
 	default:
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
@@ -326,6 +365,14 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 			// Regular content - just print it
 			fmt.Print(text)
 			t.lastContentWasToolCall = false
+			t.lastOutputNewline = strings.HasSuffix(text, "\n")
+			// A scheduled run can print model output while the user is sitting at
+			// the prompt, which would otherwise leave the input line garbled.
+			// Repaint at line boundaries only, to avoid flicker while streaming
+			// (requirement 048).
+			if t.promptActive && strings.HasSuffix(text, "\n") {
+				t.redrawPromptLineInternal()
+			}
 		}
 	}
 }
@@ -338,6 +385,28 @@ func (t *TUI) StreamReasoningChunk(text string) {
 // StreamNormalChunk streams regular content with normal color.
 func (t *TUI) StreamNormalChunk(text string) {
 	t.StreamChunkWithType(text, inference.StreamingContentTypeNormal)
+}
+
+// StreamScheduleChunk streams a scheduled-message delivery notice in cyan.
+func (t *TUI) StreamScheduleChunk(text string) {
+	t.StreamChunkWithType(text, inference.StreamingContentTypeSchedule)
+}
+
+// EndScheduledOutput finishes asynchronous output from a scheduled run: it
+// closes the output line and restores the prompt bar the user was typing into.
+// Model output can end without a trailing newline, which would otherwise leave
+// the prompt glued to the answer (requirement 048).
+func (t *TUI) EndScheduledOutput() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.promptActive {
+		return
+	}
+	if !t.lastOutputNewline {
+		fmt.Println()
+	}
+	t.lastOutputNewline = true
+	t.redrawPromptLineInternal()
 }
 
 // StreamGoalChunk streams goal-related content with magenta color.
@@ -421,6 +490,9 @@ func (t *TUI) DisplayStats(stats *agent.Stats) {
 	fmt.Printf("  %sIterations:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Iterations)
 	if stats.CompressionCount > 0 {
 		fmt.Printf("  %sCompressions:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.CompressionCount)
+	}
+	if stats.Schedules > 0 {
+		fmt.Printf("  %sSchedules:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Schedules)
 	}
 	if !stats.StartTime.IsZero() {
 		fmt.Printf("  %sUptime:%s            %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), time.Since(stats.StartTime).Round(time.Second))
@@ -538,6 +610,49 @@ func (t *TUI) printContextSizeInternal() {
 	} else {
 		fmt.Printf("[Context: %d tokens] ", size)
 	}
+
+	t.printScheduleCountInternal()
+}
+
+// printScheduleCountInternal prints the scheduled-message counter shown on the
+// prompt bar. Nothing is printed when no schedules are registered.
+// Caller must hold t.mu.
+func (t *TUI) printScheduleCountInternal() {
+	if t.scheduleCount <= 0 {
+		return
+	}
+	fmt.Printf("%s[Schedules: %d]%s ", colors.GetColor("cyan"), t.scheduleCount, colors.GetColor("reset"))
+}
+
+// redrawPromptLineInternal repaints the prompt bar and the text typed so far, so
+// asynchronous output (such as a scheduled message notice) does not leave the
+// input line garbled. Caller must hold t.mu.
+func (t *TUI) redrawPromptLineInternal() {
+	fmt.Print("\033[2K\r")
+	t.printContextSizeInternal()
+	fmt.Printf("> %s", t.inputLine)
+}
+
+// SetScheduleCount updates the scheduled-message counter shown on the prompt
+// bar. When the user is typing at the prompt the prompt line is redrawn so the
+// counter stays visible (requirement 048).
+func (t *TUI) SetScheduleCount(count int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.scheduleCount == count {
+		return
+	}
+	t.scheduleCount = count
+	if t.promptActive {
+		t.redrawPromptLineInternal()
+	}
+}
+
+// ScheduleCount returns the counter currently shown on the prompt bar.
+func (t *TUI) ScheduleCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.scheduleCount
 }
 
 // printColored prints text with ANSI color.

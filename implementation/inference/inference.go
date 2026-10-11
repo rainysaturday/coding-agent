@@ -26,6 +26,10 @@ const (
 	StreamingContentTypeReasoning
 	StreamingContentTypeGoal
 	StreamingContentTypeCompression
+	// StreamingContentTypeSchedule marks notifications about scheduled
+	// messages that were injected into the conversation by the schedule tool
+	// (requirement 048).
+	StreamingContentTypeSchedule
 )
 
 // StreamingChunk represents a streaming chunk with content type.

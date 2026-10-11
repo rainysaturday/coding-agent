@@ -29,17 +29,26 @@ type sseMessage struct {
 // Session represents one browser session: it owns an *agent.Agent and a hub of
 // SSE subscribers. Runs are serialized with a run mutex to preserve context.
 type Session struct {
-	ID        string
-	agent     *agent.Agent
-	cfg       *config.Config
-	mu        sync.Mutex // guards subscribers, history, running
-	subs      map[*subscriber]struct{}
-	history   []string
-	maxHist   int
-	running   bool
-	runCancel context.CancelFunc
-	theme     string
-	lastActive time.Time // last activity, used for idle reaping
+	ID    string
+	agent *agent.Agent
+	// broadcastChunk forwards chunks (including scheduled-message deliveries)
+	// to SSE subscribers.
+	broadcastChunk func(chunk inference.StreamingChunk)
+	cfg            *config.Config
+	mu             sync.Mutex // guards subscribers, history, running
+	subs           map[*subscriber]struct{}
+	history        []string
+	maxHist        int
+	running        bool
+	// scheduledRunning tracks runs started by the schedule scheduler (req 048).
+	// They do not go through run(), so the session must learn about them via
+	// the agent's schedule hooks; otherwise the UI shows an idle session while
+	// a scheduled run streams output, cancel cannot reach it, and idle reaping
+	// can kill it mid-run.
+	scheduledRunning bool
+	runCancel        context.CancelFunc
+	theme            string
+	lastActive       time.Time // last activity, used for idle reaping
 }
 
 // DefaultSessionID is the shared session used by every anonymous connection.
@@ -97,11 +106,13 @@ func (m *SessionManager) Reap(timeout time.Duration) {
 	defer m.mu.Unlock()
 	for id, s := range m.sessions {
 		s.mu.Lock()
-		busy := s.running
+		busy := s.running || s.scheduledRunning
 		lastActive := s.lastActive
 		s.mu.Unlock()
 		if !busy && lastActive.Before(cutoff) {
-			// Close subscribers so their SSE loops exit.
+			// Close subscribers so their SSE loops exit, and stop the
+			// session's scheduler so pending schedules stop firing.
+			s.stopScheduling()
 			s.removeAllSubscribers()
 			delete(m.sessions, id)
 		}
@@ -138,7 +149,45 @@ func newSession(cfg *config.Config, id, theme string) *Session {
 	if cfg.Goal != "" {
 		ag.SetGoal(cfg.Goal)
 	}
+
+	// Scheduled messages (requirement 048). A persistent stream callback lets
+	// deliveries that fire while the session is idle still reach SSE
+	// subscribers (RunStream installs its own callback for the duration of a
+	// run and restores this one afterwards), and the change notifier keeps the
+	// prompt-bar counter current.
+	s.broadcastChunk = func(chunk inference.StreamingChunk) {
+		s.broadcastEvent("chunk", chunkEvent{
+			Text:        chunk.Text,
+			ContentType: int(chunk.ContentType),
+			IsToolCall:  chunk.IsToolCall,
+		})
+	}
+	ag.SetStreamCallback(s.broadcastChunk)
+	ag.SetScheduleHooks(agent.ScheduleHooks{
+		OnChange: func(int) {
+			s.broadcastEvent("state", s.state())
+		},
+		OnRunStart: func() {
+			s.mu.Lock()
+			s.scheduledRunning = true
+			s.mu.Unlock()
+			s.broadcastEvent("state", s.state())
+		},
+		OnRunEnd: func(error) {
+			s.mu.Lock()
+			s.scheduledRunning = false
+			s.mu.Unlock()
+			s.broadcastEvent("state", s.state())
+		},
+	})
+	ag.StartScheduleScheduler()
 	return s
+}
+
+// stopScheduling stops the session's scheduler. It is called when a session is
+// reaped so pending schedules stop firing.
+func (s *Session) stopScheduling() {
+	s.agent.StopScheduleScheduler()
 }
 
 // touch records that the session was recently active, so idle reaping leaves
@@ -266,11 +315,14 @@ func (s *Session) conversation() historyResponse {
 	return historyResponse{Messages: out}
 }
 
-// isRunning reports whether a run is currently executing.
+// isRunning reports whether a run is currently executing, including runs
+// started by the schedule scheduler (req 048). Scheduled runs mutate the same
+// conversation, so prompts, unsafe commands, and resets must treat the session
+// as busy while one is in flight.
 func (s *Session) isRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.running
+	return s.running || s.scheduledRunning
 }
 
 // state builds a stateEvent for the session.
@@ -279,27 +331,28 @@ func (s *Session) state() stateEvent {
 	ag := s.agent
 	st := s.cfg
 	return stateEvent{
-		ContextSize:  ag.GetContextSize(),
-		MaxContext:   ag.GetMaxContextSize(),
-		ReadOnly:     ag.GetToolExecutor().IsReadOnly(),
-		Goal:         ag.GetGoal(),
-		GoalActive:   ag.IsGoalActive(),
-		Running:      s.isRunning(),
-		Theme:        s.theme,
-		WebAddr:      st.WebAddr,
-		WebPort:      st.WebPort,
-		Model:        st.Model,
-		APIEndpoint:  st.APIEndpoint,
-		Streaming:    st.Streaming,
-		HasContext:   ag.GetActualContextSize() > 0,
-		HistoryCount: len(s.historySnapshot()),
+		ContextSize:   ag.GetContextSize(),
+		MaxContext:    ag.GetMaxContextSize(),
+		ReadOnly:      ag.GetToolExecutor().IsReadOnly(),
+		Goal:          ag.GetGoal(),
+		GoalActive:    ag.IsGoalActive(),
+		Running:       s.isRunning(),
+		Theme:         s.theme,
+		WebAddr:       st.WebAddr,
+		WebPort:       st.WebPort,
+		Model:         st.Model,
+		APIEndpoint:   st.APIEndpoint,
+		Streaming:     st.Streaming,
+		HasContext:    ag.GetActualContextSize() > 0,
+		HistoryCount:  len(s.historySnapshot()),
+		ScheduleCount: ag.ScheduleCount(),
 	}
 }
 
 // run executes the agent with the given prompt and streams events to the hub.
 func (s *Session) run(ctx context.Context, prompt string) error {
 	s.mu.Lock()
-	if s.running {
+	if s.running || s.scheduledRunning {
 		s.mu.Unlock()
 		return fmt.Errorf("a run is already in progress for this session")
 	}
@@ -352,13 +405,17 @@ func (s *Session) run(ctx context.Context, prompt string) error {
 	return nil
 }
 
-// cancel cancels the current run, if any.
+// cancel cancels the current run, if any. A run started by the schedule
+// scheduler has no session-level cancel func, so fall through to the agent's
+// scheduled-run cancel (req 048).
 func (s *Session) cancel() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runCancel != nil {
 		s.runCancel()
+		return
 	}
+	s.agent.CancelScheduledRun()
 }
 
 // broadcastEvent marshals a payload and broadcasts it as an SSE event.

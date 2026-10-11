@@ -67,6 +67,10 @@ type stateEvent struct {
 	Streaming    bool   `json:"streaming"`
 	HasContext   bool   `json:"hasContext"`
 	HistoryCount int    `json:"historyCount"`
+	// ScheduleCount is the number of scheduled messages currently registered
+	// for this session; the frontend shows it on the prompt bar (requirement
+	// 048).
+	ScheduleCount int `json:"scheduleCount"`
 }
 
 // historyToolCall describes one tool call within a history message.

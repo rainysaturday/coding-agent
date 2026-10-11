@@ -17,6 +17,9 @@
 //	git_diff.go    - Git diff
 //	view_image.go  - Image loading
 //	todo.go        - Todo store and executor
+//	schedule.go    - Schedule store and schedule-ping executor
+//	cron.go        - Cron expression parsing and matching
+//	activate_skill.go - Skill activation
 //	subagent.go    - Subagent execution
 package tools
 
@@ -57,7 +60,11 @@ type Stats struct {
 type ToolExecutor struct {
 	readOnly  bool
 	todoStore *TodoStore
-	stats     *Stats
+	// scheduleStore holds the session's scheduled messages (requirement 048).
+	// It is shared with the agent's scheduler, which injects due messages into
+	// the conversation.
+	scheduleStore *ScheduleStore
+	stats         *Stats
 	// activateSkill, when set, is called by the activate_skill tool to load a
 	// skill's instructions into the agent's context. It is wired by the agent so
 	// the tools package does not depend on the agent package (no import cycle).
@@ -67,9 +74,16 @@ type ToolExecutor struct {
 // NewToolExecutor creates a new tool executor.
 func NewToolExecutor() *ToolExecutor {
 	return &ToolExecutor{
-		stats:     &Stats{},
-		todoStore: NewTodoStore(),
+		stats:         &Stats{},
+		todoStore:     NewTodoStore(),
+		scheduleStore: NewScheduleStore(),
 	}
+}
+
+// GetScheduleStore returns the executor's schedule store. The agent shares this
+// store with its scheduler so scheduled messages stay in sync (requirement 048).
+func (te *ToolExecutor) GetScheduleStore() *ScheduleStore {
+	return te.scheduleStore
 }
 
 // SetSkillActivator registers the callback used by the activate_skill tool.
@@ -156,6 +170,26 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 		}
 	}
 
+	// Special handling for the schedule tool in read-only mode: listing,
+	// removing and clearing scheduled messages only affect the agent's own
+	// state and stay available, while creating or resuming schedules is a
+	// mutating action that is blocked (requirement 048).
+	if te.readOnly && tc.Name == "schedule" {
+		if action, ok := tc.Parameters["action"].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(action)) {
+			case "add", "pause", "resume":
+				te.stats.FailedCalls++
+				return &ToolResult{
+					Success: false,
+					Error:   fmt.Sprintf("Tool 'schedule' action '%s' is not available in read-only mode", action),
+					Extra: map[string]interface{}{
+						"tool_name": tc.Name,
+					},
+				}
+			}
+		}
+	}
+
 	// Check if tool is allowed in read-only mode
 	if te.readOnly && !isReadOnlyTool(tc.Name) {
 		te.stats.FailedCalls++
@@ -203,6 +237,8 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 		result = te.executeTodo(tc.Parameters)
 	case "activate_skill":
 		result = te.executeActivateSkill(tc.Parameters)
+	case "schedule":
+		result = te.executeSchedule(tc.Parameters)
 	default:
 		result = &ToolResult{
 			Success: false,
@@ -221,6 +257,7 @@ func (te *ToolExecutor) Execute(ctx context.Context, tc *ToolCall) *ToolResult {
 // read_file, list_files, read_lines, grep, git_log, git_show, and view_image are safe read-only operations.
 // todo is also allowed since add/complete/remove are blocked by earlier per-action check.
 // activate_skill is read-only (it only loads instructions into context).
+// schedule is allowed since add/pause/resume are blocked by an earlier per-action check.
 var readOnlyTools = map[string]bool{
 	"read_file":      true,
 	"list_files":     true,
@@ -232,6 +269,7 @@ var readOnlyTools = map[string]bool{
 	"view_image":     true,
 	"todo":           true,
 	"activate_skill": true,
+	"schedule":       true,
 }
 
 // isReadOnlyTool checks if a tool is allowed in read-only mode.
@@ -254,6 +292,7 @@ func AllToolNames() []string {
 		"read_file",
 		"read_lines",
 		"replace_text",
+		"schedule",
 		"subagent",
 		"todo",
 		"view_image",
@@ -279,6 +318,7 @@ func DefaultNormalTools() []string {
 		"git_diff",
 		"view_image",
 		"todo",
+		"schedule",
 	}
 }
 
@@ -295,6 +335,7 @@ func DefaultReadOnlyTools() []string {
 		"git_diff",
 		"view_image",
 		"todo",
+		"schedule",
 	}
 }
 

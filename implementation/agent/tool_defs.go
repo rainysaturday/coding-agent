@@ -522,6 +522,71 @@ func AllToolDefinitions() map[string]ToolInfo {
    How to call: Use the todo tool to break down complex tasks into tracked sub-items. This helps you remember what to do between turns.
    Example use case: Creating a checklist for a multi-step refactoring task`,
 		},
+		"schedule": {
+			Definition: inference.ToolDefinition{
+				Type: "function",
+				Function: inference.FunctionDefinition{
+					Name:        "schedule",
+					Description: "Schedule a message to be delivered into this conversation later: once at a future time, or repeatedly on a cron/interval schedule. The call returns immediately; when the schedule fires the message arrives as a labelled user message. Use list/remove/pause/resume/clear to manage existing schedules.",
+					Parameters: inference.ParameterSchema{
+						Type: "object",
+						Properties: map[string]inference.Property{
+							"action": {
+								Type:        "string",
+								Description: "The action to perform: add, list, remove, pause, resume, or clear",
+							},
+							"message": {
+								Type:        "string",
+								Description: "The message to deliver to the model when the schedule fires (required for add)",
+							},
+							"in": {
+								Type:        "string",
+								Description: "One-shot delay from now, e.g. 10m, 90s, 2h30m, \"10 minutes\" (add only)",
+							},
+							"at": {
+								Type:        "string",
+								Description: "One-shot absolute local time, e.g. 2026-05-01T09:00:00, \"2026-05-01 09:00\", or 09:00 (add only)",
+							},
+							"cron": {
+								Type:        "string",
+								Description: "Recurring 5-field cron expression, e.g. \"*/5 * * * *\" or \"0 9 * * 1-5\" (add only)",
+							},
+							"every": {
+								Type:        "string",
+								Description: "Recurring fixed interval, e.g. 30m (add only)",
+							},
+							"id": {
+								Type:        "integer",
+								Description: "Schedule ID (required for remove, pause, resume)",
+							},
+							"name": {
+								Type:        "string",
+								Description: "Optional human-readable label shown in listings and delivery notices",
+							},
+							"limit": {
+								Type:        "integer",
+								Description: "Optional maximum number of deliveries for a recurring schedule (0 = unlimited)",
+							},
+						},
+						Required: []string{"action"},
+					},
+				},
+			},
+			Description: `schedule
+   Description: Schedule a message to be delivered into the conversation later (once at a future time, or repeatedly on a cron/interval schedule)
+   Parameters:
+      - action (string, required): The action to perform (add, list, remove, pause, resume, or clear)
+      - message (string, optional): Message to deliver to the model (required for add)
+      - in (string, optional): One-shot delay from now, e.g. 10m, 90s, 2h30m
+      - at (string, optional): One-shot absolute local time, e.g. 2026-05-01T09:00:00 or "2026-05-01 09:00"
+      - cron (string, optional): Recurring 5-field cron expression, e.g. "*/5 * * * *"
+      - every (string, optional): Recurring fixed interval, e.g. 30m
+      - id (integer, optional): Schedule ID (required for remove, pause, resume)
+      - name (string, optional): Optional label for the schedule
+      - limit (integer, optional): Maximum deliveries for a recurring schedule (0 = unlimited)
+   How to call: Use schedule to register a "ping" that is injected into the conversation as a labelled user message when it fires. The call returns immediately; exactly one of in, at, cron, or every is required for add. Scheduled messages are visible to the user and are managed with list/remove/pause/resume/clear.
+   Example use case: Scheduling "run the test suite" 10 minutes from now, or "check the build" every 5 minutes with cron "*/5 * * * *"`,
+		},
 		"subagent": {
 			Definition: inference.ToolDefinition{
 				Type: "function",
