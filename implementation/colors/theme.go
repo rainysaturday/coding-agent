@@ -12,6 +12,8 @@ type Theme struct {
 	Blue    string
 	Magenta string
 	Cyan    string
+	// Border is a muted tone for box-drawing characters and separators.
+	Border string
 }
 
 // BuiltInThemes is the registry of all built-in color themes.
@@ -25,6 +27,7 @@ var BuiltInThemes = map[string]Theme{
 		Yellow:  "\033[38;5;226m", // Bright yellow
 		Blue:    "\033[38;5;33m",  // Strong blue
 		Magenta: "\033[38;5;171m", // Purple-magenta
+		Border:  "\033[38;5;238m", // Dark border gray
 		Cyan:    "\033[38;5;51m",  // Bright cyan
 	},
 	"light": {
@@ -37,6 +40,7 @@ var BuiltInThemes = map[string]Theme{
 		Blue:    "\033[38;5;25m",  // Darker blue for light backgrounds
 		Magenta: "\033[38;5;125m", // Darker magenta for light backgrounds
 		Cyan:    "\033[38;5;30m",  // Darker cyan for light backgrounds
+		Border:  "\033[38;5;250m", // Light border gray
 	},
 	"solarized": {
 		Name:    "solarized",
@@ -48,6 +52,7 @@ var BuiltInThemes = map[string]Theme{
 		Blue:    "\033[38;5;33m",  // Solarized blue (#268bd2)
 		Magenta: "\033[38;5;162m", // Solarized magenta (#d33682)
 		Cyan:    "\033[38;5;37m",  // Solarized cyan (#2aa198)
+		Border:  "\033[38;5;240m", // Solarized border gray
 	},
 	"gruvbox": {
 		Name:    "gruvbox",
@@ -59,6 +64,7 @@ var BuiltInThemes = map[string]Theme{
 		Blue:    "\033[38;5;109m", // Gruvbox blue (#83a598)
 		Magenta: "\033[38;5;175m", // Gruvbox purple (#d3869b)
 		Cyan:    "\033[38;5;108m", // Gruvbox cyan (#8ec07c)
+		Border:  "\033[38;5;238m", // Gruvbox border gray
 	},
 	"darkula": {
 		Name:    "darkula",
@@ -70,6 +76,7 @@ var BuiltInThemes = map[string]Theme{
 		Blue:    "\033[38;5;81m",  // Darcula blue (#6272a4)
 		Magenta: "\033[38;5;212m", // Darcula purple (#bd93f9)
 		Cyan:    "\033[38;5;146m", // Darcula cyan (#8be9fd)
+		Border:  "\033[38;5;238m", // Darcula border gray
 	},
 }
 

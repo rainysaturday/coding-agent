@@ -225,18 +225,30 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 }
 
 func displayVersion() {
-	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s  Minimal Coding Agent Harness%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s============================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	if gitDirty == "clean" {
-		fmt.Printf("  %sVersion:%s %s [clean]\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
-	} else if gitDirty == "dirty" {
-		fmt.Printf("  %sVersion:%s %s [dirty]%s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash, colors.GetColor("reset"))
-	} else {
-		fmt.Printf("  %sVersion:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), gitHash)
+	border := colors.GetColor("border")
+	title := colors.GetColor("bold") + colors.GetColor("magenta")
+	label := colors.GetColor("cyan")
+	value := colors.GetColor("bold")
+	dim := colors.GetColor("dim")
+	reset := colors.GetColor("reset")
+
+	// Box-drawn header; the inner width fits the fixed title line exactly.
+	const inner = 38
+	fmt.Printf("%s╭%s%s╮%s\n", border, strings.Repeat("─", inner), border, reset)
+	fmt.Printf("%s│%s  %s◆ Minimal Coding Agent Harness%s%*s%s│%s\n",
+		border, reset, title, reset, inner-33, "", border, reset)
+	fmt.Printf("%s╰%s%s╯%s\n", border, strings.Repeat("─", inner), border, reset)
+
+	version := gitHash
+	switch gitDirty {
+	case "clean":
+		version += dim + " [clean]" + reset
+	case "dirty":
+		version += colors.GetColor("yellow") + " [dirty]" + reset
 	}
+	fmt.Printf("  %s%8s:%s %s%s%s\n", label, "Version", reset, value, version, reset)
 	if buildTime != "" {
-		fmt.Printf("  %sBuilt:%s %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), buildTime)
+		fmt.Printf("  %s%8s:%s %s%s%s\n", label, "Built", reset, value, buildTime, reset)
 	}
 	fmt.Println()
 }
@@ -413,7 +425,7 @@ func runOneShotMode(cfg *config.Config) error {
 			// Add separator when transitioning from reasoning to normal content
 			if !transitionedFromReasoning && chunk.Text != "" {
 				fmt.Println()
-				fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
+				fmt.Printf("%s ─── thinking complete ───%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				transitionedFromReasoning = true
 			}
 			// Handle tool call parameter updates in-place using ANSI cursor positioning,

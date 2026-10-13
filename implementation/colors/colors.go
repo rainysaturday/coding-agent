@@ -19,6 +19,7 @@ const (
 	ColorMagenta = "\033[35m"
 	ColorCyan    = "\033[36m"
 	ColorDim     = "\033[90m" // Dim/bright black for reasoning content
+	ColorBold    = "\033[1m"  // Bold attribute, theme-independent
 )
 
 // Semantic color aliases for specific use cases.
@@ -78,13 +79,20 @@ func GetCurrentTheme() *Theme {
 }
 
 // GetColor returns the ANSI code for the given semantic color slot under the active theme.
-// Supported slots: "reset", "dim", "red", "green", "yellow", "blue", "magenta", "cyan".
+// Supported slots: "reset", "dim", "red", "green", "yellow", "blue", "magenta", "cyan",
+// "border" (muted tone for box drawing), plus the theme-independent attribute
+// slot "bold".
 // If no theme is active or the slot is unknown, the built-in default is returned.
 func GetColor(slot string) string {
 	// When color output is disabled, return an empty string for every slot so
 	// callers emit plain text with no ANSI escape sequences.
 	if !enabled {
 		return ""
+	}
+	// "bold" is a text attribute rather than a palette color, so it is the
+	// same under every theme.
+	if slot == "bold" {
+		return ColorBold
 	}
 	if currentTheme != nil {
 		switch slot {
@@ -104,6 +112,8 @@ func GetColor(slot string) string {
 			return currentTheme.Magenta
 		case "cyan":
 			return currentTheme.Cyan
+		case "border":
+			return currentTheme.Border
 		}
 	}
 	// Fall back to built-in defaults
@@ -124,6 +134,8 @@ func GetColor(slot string) string {
 		return ColorMagenta
 	case "cyan":
 		return ColorCyan
+	case "border":
+		return ColorDim
 	}
 	return ColorReset
 }

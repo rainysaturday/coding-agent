@@ -130,7 +130,7 @@ func TestScheduleDeliveryRepaintsPromptLine(t *testing.T) {
 	if !strings.Contains(out, "\033[2K") {
 		t.Error("the prompt line should be cleared before repainting")
 	}
-	if !strings.Contains(out, "> fix the") {
+	if !strings.Contains(out, promptGlyph()+"fix the") {
 		t.Errorf("the typed input should be restored after the notice, got %q", out)
 	}
 	if !strings.Contains(out, "[Schedules: 1]") {
@@ -152,7 +152,7 @@ func TestSetScheduleCountRefreshesActivePrompt(t *testing.T) {
 	if !strings.Contains(out, "[Schedules: 2]") {
 		t.Errorf("the active prompt bar should be redrawn with the new counter, got %q", out)
 	}
-	if !strings.Contains(out, "> ping") {
+	if !strings.Contains(out, promptGlyph()+"ping") {
 		t.Errorf("the typed input should survive the redraw, got %q", out)
 	}
 
@@ -188,7 +188,7 @@ func TestScheduledRunOutputRepaintsPromptLine(t *testing.T) {
 	if !strings.Contains(out, "\033[2K") {
 		t.Error("the prompt line should be repainted after a line of scheduled output")
 	}
-	if !strings.Contains(out, "> fix the") {
+	if !strings.Contains(out, promptGlyph()+"fix the") {
 		t.Errorf("the typed input should be restored, got %q", out)
 	}
 }
@@ -239,7 +239,7 @@ func TestEndScheduledOutputRestoresPrompt(t *testing.T) {
 	if !strings.Contains(out, "\n") {
 		t.Error("the output line should be closed before the prompt is redrawn")
 	}
-	if !strings.Contains(out, "> next task") {
+	if !strings.Contains(out, promptGlyph()+"next task") {
 		t.Errorf("the prompt and typed input should be restored, got %q", out)
 	}
 	if !strings.Contains(out, "[Schedules: 2]") {

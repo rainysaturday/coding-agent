@@ -76,7 +76,7 @@ func (t *TUI) Prompt() (string, error) {
 	t.printContextSize()
 
 	// Display prompt
-	fmt.Printf("> ")
+	fmt.Print(promptGlyph())
 
 	// Reset input buffer for new input
 	t.mu.Lock()
@@ -251,7 +251,7 @@ func (t *TUI) handleHistoryUp() {
 	t.inputLine = ""
 	fmt.Print("\033[2K\r")
 	t.printContextSizeInternal()
-	fmt.Printf("> ")
+	fmt.Print(promptGlyph())
 	if t.historyIndex < len(t.history) {
 		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
@@ -271,14 +271,14 @@ func (t *TUI) handleHistoryDown() {
 		t.historyIndex--
 		fmt.Print("\033[2K\r")
 		t.printContextSizeInternal()
-		fmt.Printf("> ")
+		fmt.Print(promptGlyph())
 		t.inputLine = t.history[t.historyIndex]
 		fmt.Print(t.history[t.historyIndex])
 	} else {
 		// Exiting history mode - restore the current typed input
 		fmt.Print("\033[2K\r")
 		t.printContextSizeInternal()
-		fmt.Printf("> ")
+		fmt.Print(promptGlyph())
 		t.inputLine = t.currentInput
 		if t.currentInput != "" {
 			fmt.Print(t.currentInput)
@@ -342,7 +342,7 @@ func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingCo
 		// Transitioning from reasoning to normal content - add separator
 		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
 			fmt.Println()
-			fmt.Printf("%s--- Thinking Complete ---%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
+			fmt.Printf("%s ─── thinking complete ───%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
 			t.transitionedFromReasoning = true
 		}
 		t.streamBuffer.WriteString(text)
@@ -474,30 +474,39 @@ func (t *TUI) DisplayStats(stats *agent.Stats) {
 	max := t.maxContextSize
 	t.mu.Unlock()
 
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%sRuntime Statistics%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
-	fmt.Printf("  %sInput Tokens:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.InputTokens)
-	fmt.Printf("  %sOutput Tokens:%s     %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.OutputTokens)
-	fmt.Printf("  %sTokens/Second:%s     %.1f\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.TokensPerSecond)
-	fmt.Printf("  %sContext Size:%s      %d / %d", colors.GetColor("cyan"), colors.GetColor("reset"), size, max)
+	// A light box-drawn panel reads more cleanly than '=' rules and keeps
+	// label/value columns aligned.
+	border := colors.GetColor("border")
+	label := colors.GetColor("cyan")
+	value := colors.GetColor("bold")
+	reset := colors.GetColor("reset")
+
+	contextValue := fmt.Sprintf("%d / %d", size, max)
 	if max > 0 {
-		fmt.Printf(" (%.1f%%)", float64(size)/float64(max)*100)
+		contextValue += fmt.Sprintf("  (%.1f%%)", float64(size)/float64(max)*100)
 	}
-	fmt.Println()
-	fmt.Printf("  %sTool Calls:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.ToolCalls)
-	fmt.Printf("  %sFailed Calls:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.FailedToolCalls)
-	fmt.Printf("  %sIterations:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Iterations)
+
+	fmt.Printf("%s╭─ %sRuntime statistics%s %s%s%s╮%s\n", border, label, reset, border, "────────────────────────────────", border, reset)
+	statsRow := func(name, val string) {
+		fmt.Printf("%s│%s  %s%-14s%s %s%s%s\n", border, reset, label, name, reset, value, val, reset)
+	}
+	statsRow("input tokens", fmt.Sprintf("%d", stats.InputTokens))
+	statsRow("output tokens", fmt.Sprintf("%d", stats.OutputTokens))
+	statsRow("tokens/sec", fmt.Sprintf("%.1f", stats.TokensPerSecond))
+	statsRow("context", contextValue)
+	statsRow("tool calls", fmt.Sprintf("%d", stats.ToolCalls))
+	statsRow("failed calls", fmt.Sprintf("%d", stats.FailedToolCalls))
+	statsRow("iterations", fmt.Sprintf("%d", stats.Iterations))
 	if stats.CompressionCount > 0 {
-		fmt.Printf("  %sCompressions:%s      %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.CompressionCount)
+		statsRow("compressions", fmt.Sprintf("%d", stats.CompressionCount))
 	}
 	if stats.Schedules > 0 {
-		fmt.Printf("  %sSchedules:%s        %d\n", colors.GetColor("cyan"), colors.GetColor("reset"), stats.Schedules)
+		statsRow("schedules", fmt.Sprintf("%d", stats.Schedules))
 	}
 	if !stats.StartTime.IsZero() {
-		fmt.Printf("  %sUptime:%s            %s\n", colors.GetColor("cyan"), colors.GetColor("reset"), time.Since(stats.StartTime).Round(time.Second))
+		statsRow("uptime", time.Since(stats.StartTime).Round(time.Second).String())
 	}
-	fmt.Printf("%s==================================================%s\n", colors.GetColor("blue"), colors.GetColor("reset"))
+	fmt.Printf("%s╰─────────────────────────────────────────────────╯%s\n", border, reset)
 }
 
 // AddToHistory adds a prompt to the history.
@@ -630,7 +639,7 @@ func (t *TUI) printScheduleCountInternal() {
 func (t *TUI) redrawPromptLineInternal() {
 	fmt.Print("\033[2K\r")
 	t.printContextSizeInternal()
-	fmt.Printf("> %s", t.inputLine)
+	fmt.Print(promptGlyph() + t.inputLine)
 }
 
 // SetScheduleCount updates the scheduled-message counter shown on the prompt
@@ -680,4 +689,14 @@ const (
 // clearScreen clears the terminal screen.
 func clearScreen() {
 	fmt.Print(ClearScreen)
+}
+
+// promptGlyph returns the styled prompt marker. A bold cyan "❯" gives the
+// input line a clear, consistent anchor; it falls back to ASCII on the
+// rare terminals that mishandle wide glyphs (set CODING_AGENT_ASCII=1).
+func promptGlyph() string {
+	if os.Getenv("CODING_AGENT_ASCII") != "" {
+		return colors.GetColor("cyan") + "> " + colors.GetColor("reset")
+	}
+	return colors.GetColor("bold") + colors.GetColor("cyan") + "❯ " + colors.GetColor("reset")
 }

@@ -64,11 +64,43 @@
 
   function appendMessage(role, text) {
     var div = el("div", "msg msg-" + role);
-    div.appendChild(el("div", "msg-head", role === "user" ? "You" : role === "error" ? "Error" : "Assistant"));
-    div.appendChild(el("div", "msg-body", text));
+    var head = el("div", "msg-head");
+    var label = role === "user" ? "You" : role === "error" ? "Error" : "Assistant";
+    head.appendChild(el("span", "role-badge badge-" + role, label));
+    div.appendChild(head);
+    div.appendChild(messageBody(text));
     output.appendChild(div);
     scrollBottom();
     return div;
+  }
+
+  // messageBody builds the message body, rendering ``` fenced sections as
+  // styled <pre><code> blocks while keeping everything else as plain text
+  // (textContent, so nothing is ever interpreted as HTML).
+  function messageBody(text) {
+    var body = el("div", "msg-body");
+    var parts = String(text === undefined ? "" : text).split("```");
+    for (var i = 0; i < parts.length; i++) {
+      if (i % 2 === 1) {
+        var nl = parts[i].indexOf("\n");
+        var code = (nl >= 0 ? parts[i].slice(nl + 1) : parts[i]).replace(/^\n+|\s+$/g, "");
+        var pre = el("pre", "code-block");
+        pre.appendChild(el("code", "", code));
+        body.appendChild(pre);
+        (function (snippet) {
+          var cp = el("button", "copy-btn", "Copy");
+          cp.addEventListener("click", function () {
+            navigator.clipboard && navigator.clipboard.writeText(snippet);
+            cp.textContent = "Copied!";
+            setTimeout(function () { cp.textContent = "Copy"; }, 1500);
+          });
+          body.appendChild(cp);
+        })(code);
+      } else if (parts[i]) {
+        body.appendChild(document.createTextNode(parts[i]));
+      }
+    }
+    return body;
   }
 
   function toolCard(name, args) {
@@ -139,6 +171,7 @@
     div.appendChild(copy);
     output.appendChild(div);
     scrollBottom();
+  }
 
   // renderFinalResult renders the final result of a non-streaming run (or a
   // reconnect that missed the live stream) from the result event's fields,
@@ -158,8 +191,6 @@
     if (r.finalOutput) {
       appendMessage("assistant", stripAnsi(r.finalOutput));
     }
-  }
-
   }
 
   function reasoningBlock() {
@@ -208,6 +239,7 @@
   function renderState(st) {
     if (!st) return;
     state = st;
+    statusBar.classList.toggle("running", !!st.running);
     renderContext();
     setStatus(
       "Model: " + (st.model || "?") +
@@ -389,7 +421,9 @@
     if (c.contentType === 4) { // scheduled message delivery
       if (!streamBuf || !streamBuf.classList.contains("msg-schedule")) {
         streamBuf = el("div", "msg msg-schedule");
-        streamBuf.appendChild(el("div", "msg-head", "Scheduled message"));
+        var sHead = el("div", "msg-head");
+        sHead.appendChild(el("span", "role-badge badge-schedule", "Scheduled message"));
+        streamBuf.appendChild(sHead);
         streamBuf.appendChild(el("div", "msg-body"));
         output.appendChild(streamBuf);
       }
@@ -400,7 +434,9 @@
     if (c.contentType === 2 || c.contentType === 3) { // goal / compression
       if (!streamBuf || !streamBuf.classList.contains("msg-goal")) {
         streamBuf = el("div", "msg msg-goal");
-        streamBuf.appendChild(el("div", "msg-head", c.contentType === 2 ? "Goal" : "Compression"));
+        var gHead = el("div", "msg-head");
+        gHead.appendChild(el("span", "role-badge badge-goal", c.contentType === 2 ? "Goal" : "Compression"));
+        streamBuf.appendChild(gHead);
         streamBuf.appendChild(el("div", "msg-body"));
         output.appendChild(streamBuf);
       }
@@ -418,7 +454,9 @@
     }
     if (!streamBuf || !streamBuf.classList.contains("msg-assistant")) {
       streamBuf = el("div", "msg msg-assistant");
-      streamBuf.appendChild(el("div", "msg-head", "Assistant"));
+      var aHead = el("div", "msg-head");
+      aHead.appendChild(el("span", "role-badge badge-assistant", "Assistant"));
+      streamBuf.appendChild(aHead);
       streamBuf.appendChild(el("div", "msg-body"));
       output.appendChild(streamBuf);
     }
