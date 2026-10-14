@@ -171,6 +171,44 @@ func parseBoolParam(params map[string]interface{}, key string) bool {
 	return false
 }
 
+// requireStringParam reads a required string parameter. It distinguishes the
+// two failures a caller can make: not sending the parameter at all, and sending
+// it with the wrong type. Collapsing both into "missing required parameter"
+// sends whoever is reading the log hunting for a parameter that was there the
+// whole time -- just as a number, a null, or an array.
+func requireStringParam(params map[string]interface{}, key string) (string, string) {
+	v, ok := params[key]
+	if !ok {
+		return "", fmt.Sprintf("missing required parameter: %s", key)
+	}
+	str, ok := v.(string)
+	if !ok {
+		return "", fmt.Sprintf("%s must be a string, got %T", key, v)
+	}
+	return str, ""
+}
+
+// optionalStringParam reads an optional string parameter, falling back to def.
+// A present-but-wrong-typed value is still reported: silently taking the
+// default means the tool operates somewhere other than where the caller asked.
+func optionalStringParam(params map[string]interface{}, key, def string) (string, string) {
+	v, ok := params[key]
+	if !ok {
+		return def, ""
+	}
+	if v == nil {
+		return def, ""
+	}
+	str, ok := v.(string)
+	if !ok {
+		return def, fmt.Sprintf("%s must be a string, got %T", key, v)
+	}
+	if str == "" {
+		return def, ""
+	}
+	return str, ""
+}
+
 // parseIntParam extracts an integer from a map parameter value.
 func parseIntParam(params map[string]interface{}, key string, defaultValue int) int {
 	if v, ok := params[key]; ok {

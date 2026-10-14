@@ -42,12 +42,9 @@ func truncateBashOutput(output string, maxLines int) string {
 
 // executeBash executes a bash command with context support for cancellation.
 func (te *ToolExecutor) executeBash(ctx context.Context, params map[string]interface{}) *ToolResult {
-	command, ok := params["command"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: command",
-		}
+	command, paramErr := requireStringParam(params, "command")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	// Parse optional timeout parameter (in milliseconds), default to 30 seconds

@@ -20,10 +20,12 @@ type gitDiffParams struct {
 }
 
 // parseGitDiffParams extracts and validates git_diff parameters from the tool params map.
-func parseGitDiffParams(params map[string]interface{}) *gitDiffParams {
+func parseGitDiffParams(params map[string]interface{}) (*gitDiffParams, *ToolResult) {
 	path := "."
-	if p, ok := params["path"].(string); ok && p != "" {
-		path = p
+	if v, vErr := optionalStringParam(params, "path", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		path = v
 	}
 
 	reference1 := ""
@@ -48,7 +50,7 @@ func parseGitDiffParams(params map[string]interface{}) *gitDiffParams {
 
 	flags := parseFlagsParamToSlice(params)
 
-	return &gitDiffParams{path: path, reference1: reference1, reference2: reference2, flags: flags}
+	return &gitDiffParams{path: path, reference1: reference1, reference2: reference2, flags: flags}, nil
 }
 
 // gitDiffAllowedFlags lists the flags buildGitDiffArgs understands; it backs
@@ -144,7 +146,10 @@ func buildGitDiffArgs(gp *gitDiffParams) ([]string, error) {
 
 // executeGitDiff shows the diff between two commits, branches, or the working tree with context support.
 func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]interface{}) *ToolResult {
-	gp := parseGitDiffParams(params)
+	gp, errResult := parseGitDiffParams(params)
+	if errResult != nil {
+		return errResult
+	}
 
 	// Validate path exists and is accessible
 	if _, err := os.Stat(gp.path); err != nil {

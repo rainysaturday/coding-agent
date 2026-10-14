@@ -29,8 +29,13 @@ func TestExecuteSubagent_InvalidPrompt(t *testing.T) {
 	if result.Success {
 		t.Error("Expected failure when prompt is invalid")
 	}
-	if !strings.Contains(result.Error, "missing required parameter") {
-		t.Errorf("Expected 'missing required parameter' error, got: %s", result.Error)
+	// A present-but-wrong-typed prompt must not be reported as missing: the
+	// parameter is right there, it is the type that is wrong.
+	if !strings.Contains(result.Error, "prompt must be a string") {
+		t.Errorf("Expected a type-specific error, got: %s", result.Error)
+	}
+	if strings.Contains(result.Error, "missing required parameter") {
+		t.Errorf("Should not claim the parameter is missing, got: %s", result.Error)
 	}
 }
 
@@ -41,8 +46,8 @@ func TestExecuteSubagent_EmptyPrompt(t *testing.T) {
 	if result.Success {
 		t.Error("Expected failure when prompt is empty")
 	}
-	if !strings.Contains(result.Error, "missing required parameter") {
-		t.Errorf("Expected 'missing required parameter' error, got: %s", result.Error)
+	if !strings.Contains(result.Error, "prompt cannot be empty") {
+		t.Errorf("Expected an empty-value error, got: %s", result.Error)
 	}
 }
 

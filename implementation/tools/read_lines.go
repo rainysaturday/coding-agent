@@ -19,12 +19,9 @@ const maxReadLinesBytes = 20 * 1024 // 20KB
 
 // executeReadLines reads specific lines from a file.
 func (te *ToolExecutor) executeReadLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	startLine, errMsg := parseIntParamStrict(params, "start")

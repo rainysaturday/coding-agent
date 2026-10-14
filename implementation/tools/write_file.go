@@ -8,19 +8,14 @@ import (
 
 // executeWriteFile writes to a file.
 func (te *ToolExecutor) executeWriteFile(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
-	content, ok := params["content"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: content",
-		}
+
+	content, paramErr := requireStringParam(params, "content")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	// Create parent directories if needed

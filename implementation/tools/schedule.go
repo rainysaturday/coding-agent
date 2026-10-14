@@ -549,12 +549,9 @@ func parseScheduleTime(spec string) (time.Time, error) {
 // executeSchedule manages scheduled messages that are injected into the
 // conversation as user messages when they fire (requirement 048).
 func (te *ToolExecutor) executeSchedule(params map[string]interface{}) *ToolResult {
-	action, ok := params["action"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: action",
-		}
+	action, paramErr := requireStringParam(params, "action")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	action = strings.ToLower(strings.TrimSpace(action))
@@ -580,13 +577,11 @@ func (te *ToolExecutor) executeSchedule(params map[string]interface{}) *ToolResu
 
 // executeScheduleAdd registers a new scheduled message and returns immediately.
 func (te *ToolExecutor) executeScheduleAdd(params map[string]interface{}) *ToolResult {
-	message, ok := params["message"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: message",
-		}
+	message, paramErr := requireStringParam(params, "message")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
+
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return &ToolResult{

@@ -516,3 +516,75 @@ func TestExecute_FlagTools_DashedFormsWork(t *testing.T) {
 		t.Errorf("expected -n line numbers in output, got: %s", res.Output)
 	}
 }
+
+// TestExecute_WrongTypeParams_AreNotReportedAsMissing is the B4 guard: a
+// parameter that is present but has the wrong type must not be described as
+// missing. The old behaviour sent whoever read the log hunting for a parameter
+// that was there all along.
+func TestExecute_WrongTypeParams_AreNotReportedAsMissing(t *testing.T) {
+	te := NewToolExecutor()
+
+	cases := []struct {
+		tool   string
+		params map[string]interface{}
+		want   string
+	}{
+		{"read_file", map[string]interface{}{"path": 42}, "path must be a string, got int"},
+		{"write_file", map[string]interface{}{"path": "x.txt", "content": 7}, "content must be a string, got int"},
+		{"write_file", map[string]interface{}{"path": nil, "content": "x"}, "path must be a string, got <nil>"},
+		{"grep", map[string]interface{}{"pattern": []string{"a"}}, "pattern must be a string, got []string"},
+		{"read_lines", map[string]interface{}{"path": "x", "start": "first", "end": 3}, "start must be a number, got string"},
+		{"move_text", map[string]interface{}{"source_path": 1, "source_start": 1, "source_end": 2, "target_path": "t", "target_line": 1}, "source_path must be a string, got int"},
+		{"todo", map[string]interface{}{"action": "complete", "id": "three"}, "id must be a number, got string"},
+	}
+
+	for _, tc := range cases {
+		res := te.Execute(context.Background(), &ToolCall{Name: tc.tool, Parameters: tc.params})
+		if res.Success {
+			t.Errorf("%s: expected failure for %v, got output", tc.tool, tc.params)
+			continue
+		}
+		if !strings.Contains(res.Error, tc.want) {
+			t.Errorf("%s: error = %q, want it to contain %q", tc.tool, res.Error, tc.want)
+		}
+		if strings.Contains(res.Error, "missing required parameter") {
+			t.Errorf("%s: wrong-typed parameter reported as missing: %s", tc.tool, res.Error)
+		}
+	}
+}
+
+// A genuinely absent parameter is still reported as missing.
+func TestExecute_MissingParams_AreReportedAsMissing(t *testing.T) {
+	te := NewToolExecutor()
+	for _, tc := range []struct{ tool, key string }{
+		{"read_file", "path"},
+		{"write_file", "path"},
+		{"grep", "pattern"},
+		{"view_image", "path"},
+	} {
+		res := te.Execute(context.Background(), &ToolCall{Name: tc.tool, Parameters: map[string]interface{}{}})
+		if res.Success {
+			t.Errorf("%s: expected failure with no parameters", tc.tool)
+			continue
+		}
+		if !strings.Contains(res.Error, "missing required parameter: "+tc.key) {
+			t.Errorf("%s: error = %q, want a missing-parameter error for %q", tc.tool, res.Error, tc.key)
+		}
+	}
+}
+
+// An optional parameter with the wrong type must not silently fall back to the
+// default: the tool would operate somewhere other than where the caller asked.
+func TestExecute_OptionalParamWrongType_Errors(t *testing.T) {
+	te := NewToolExecutor()
+	res := te.Execute(context.Background(), &ToolCall{
+		Name:       "list_files",
+		Parameters: map[string]interface{}{"path": 42},
+	})
+	if res.Success {
+		t.Fatalf("list_files with path=42 should fail, got output: %s", res.Output)
+	}
+	if !strings.Contains(res.Error, "path must be a string") {
+		t.Errorf("expected a type error, got: %s", res.Error)
+	}
+}

@@ -25,9 +25,9 @@ type moveTextParams struct {
 
 // parseMoveTextParams extracts and validates move_text parameters from the tool params map.
 func parseMoveTextParams(params map[string]interface{}) (*moveTextParams, *ToolResult) {
-	sourcePath, ok := params["source_path"].(string)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: source_path"}
+	sourcePath, paramErr := requireStringParam(params, "source_path")
+	if paramErr != "" {
+		return nil, &ToolResult{Success: false, Error: paramErr}
 	}
 	sourceStart, errMsg := parseIntParamStrict(params, "source_start")
 	if errMsg != "" {
@@ -37,9 +37,9 @@ func parseMoveTextParams(params map[string]interface{}) (*moveTextParams, *ToolR
 	if errMsg != "" {
 		return nil, &ToolResult{Success: false, Error: errMsg}
 	}
-	targetPath, ok := params["target_path"].(string)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: target_path"}
+	targetPath, paramErr2 := requireStringParam(params, "target_path")
+	if paramErr2 != "" {
+		return nil, &ToolResult{Success: false, Error: paramErr2}
 	}
 	targetLine, errMsg := parseIntParamStrict(params, "target_line")
 	if errMsg != "" {

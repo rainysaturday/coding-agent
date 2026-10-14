@@ -26,17 +26,17 @@ const defaultSubagentTimeout = 5 * time.Minute
 // goal.
 // The provided ctx is propagated to the child so cancellation or timeout kills it.
 func executeSubagent(ctx context.Context, params map[string]interface{}, binaryPath string) *ToolResult {
-	prompt, ok := params["prompt"].(string)
-	if !ok || prompt == "" {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: prompt",
-		}
+	prompt, paramErr := requireStringParam(params, "prompt")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
+	}
+	if prompt == "" {
+		return &ToolResult{Success: false, Error: "prompt cannot be empty"}
 	}
 
-	persona := ""
-	if p, ok := params["persona"].(string); ok && p != "" {
-		persona = p
+	persona, personaErr := optionalStringParam(params, "persona", "")
+	if personaErr != "" {
+		return &ToolResult{Success: false, Error: personaErr}
 	}
 
 	// Get the binary path if not provided

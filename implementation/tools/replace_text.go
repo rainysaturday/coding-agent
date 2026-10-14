@@ -11,20 +11,14 @@ import (
 
 // executeReplaceText replaces text in a file by searching for a pattern.
 func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
-	searchText, ok := params["search"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: search",
-		}
+	searchText, paramErr := requireStringParam(params, "search")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	if searchText == "" {
@@ -34,12 +28,9 @@ func (te *ToolExecutor) executeReplaceText(params map[string]interface{}) *ToolR
 		}
 	}
 
-	replaceText, ok := params["replace"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: replace",
-		}
+	replaceText, paramErr := requireStringParam(params, "replace")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	countParam, hasCount := params["count"]

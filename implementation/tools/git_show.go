@@ -19,15 +19,19 @@ type gitShowParams struct {
 }
 
 // parseGitShowParams extracts and validates git_show parameters from the tool params map.
-func parseGitShowParams(params map[string]interface{}) *gitShowParams {
+func parseGitShowParams(params map[string]interface{}) (*gitShowParams, *ToolResult) {
 	path := "."
-	if p, ok := params["path"].(string); ok && p != "" {
-		path = p
+	if v, vErr := optionalStringParam(params, "path", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		path = v
 	}
 
 	commit := "HEAD"
-	if c, ok := params["commit"].(string); ok && c != "" {
-		commit = c
+	if v, vErr := optionalStringParam(params, "commit", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		commit = v
 	}
 	if commit == "HEAD" {
 		if c, ok := params["reference"].(string); ok && c != "" {
@@ -37,7 +41,7 @@ func parseGitShowParams(params map[string]interface{}) *gitShowParams {
 
 	flags := parseFlagsParamToSlice(params)
 
-	return &gitShowParams{path: path, commit: commit, flags: flags}
+	return &gitShowParams{path: path, commit: commit, flags: flags}, nil
 }
 
 // gitShowAllowedFlags lists the flags buildGitShowArgs understands; it backs
@@ -107,7 +111,10 @@ func buildGitShowArgs(gp *gitShowParams) ([]string, error) {
 
 // executeGitShow shows details of a specific commit with context support.
 func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]interface{}) *ToolResult {
-	gp := parseGitShowParams(params)
+	gp, errResult := parseGitShowParams(params)
+	if errResult != nil {
+		return errResult
+	}
 
 	// Validate path exists and is accessible
 	if _, err := os.Stat(gp.path); err != nil {

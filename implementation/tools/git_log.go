@@ -21,15 +21,19 @@ type gitLogParams struct {
 }
 
 // parseGitLogParams extracts and validates git_log parameters from the tool params map.
-func parseGitLogParams(params map[string]interface{}) *gitLogParams {
+func parseGitLogParams(params map[string]interface{}) (*gitLogParams, *ToolResult) {
 	path := "."
-	if p, ok := params["path"].(string); ok && p != "" {
-		path = p
+	if v, vErr := optionalStringParam(params, "path", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		path = v
 	}
 
 	reference := ""
-	if ref, ok := params["reference"].(string); ok && ref != "" {
-		reference = ref
+	if v, vErr := optionalStringParam(params, "reference", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		reference = v
 	}
 	if reference == "" {
 		if ref, ok := params["commit"].(string); ok && ref != "" {
@@ -48,11 +52,13 @@ func parseGitLogParams(params map[string]interface{}) *gitLogParams {
 	flags := parseFlagsParamToSlice(params)
 
 	grep := ""
-	if gp, ok := params["grep"].(string); ok && gp != "" {
-		grep = gp
+	if v, vErr := optionalStringParam(params, "grep", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		grep = v
 	}
 
-	return &gitLogParams{path: path, reference: reference, count: count, flags: flags, grep: grep}
+	return &gitLogParams{path: path, reference: reference, count: count, flags: flags, grep: grep}, nil
 }
 
 // gitLogAllowedFlags lists the flags buildGitLogArgs understands. Keep it in
@@ -148,7 +154,10 @@ func buildGitLogArgs(gp *gitLogParams) ([]string, error) {
 
 // executeGitLog views the commit history of a git repository with context support.
 func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]interface{}) *ToolResult {
-	gp := parseGitLogParams(params)
+	gp, errResult := parseGitLogParams(params)
+	if errResult != nil {
+		return errResult
+	}
 
 	// Validate path exists and is accessible
 	if _, err := os.Stat(gp.path); err != nil {

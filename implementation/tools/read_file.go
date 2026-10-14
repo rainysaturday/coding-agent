@@ -16,12 +16,9 @@ const (
 
 // executeReadFile reads a file.
 func (te *ToolExecutor) executeReadFile(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	// Check file size before reading

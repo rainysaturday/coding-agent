@@ -10,12 +10,9 @@ import (
 
 // executeInsertLines inserts lines at a specific position.
 func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	insertLine, errMsg := parseIntParamStrict(params, "line")
@@ -26,12 +23,9 @@ func (te *ToolExecutor) executeInsertLines(params map[string]interface{}) *ToolR
 		}
 	}
 
-	insertLines, ok := params["lines"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: lines",
-		}
+	insertLines, paramErr := requireStringParam(params, "lines")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	// Use splitLines (which strips a trailing empty element) so inserted text

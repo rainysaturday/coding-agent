@@ -14,12 +14,12 @@ import (
 // executeViewImage reads a local image file and returns it as a base64-encoded data URI
 // so that the agent can send it to a vision-capable model for analysis.
 func (te *ToolExecutor) executeViewImage(params map[string]interface{}) *ToolResult {
-	path, ok := params["path"].(string)
-	if !ok || path == "" {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: path",
-		}
+	path, paramErr := requireStringParam(params, "path")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
+	}
+	if path == "" {
+		return &ToolResult{Success: false, Error: "path cannot be empty"}
 	}
 
 	// Extract optional custom prompt for vision analysis

@@ -48,7 +48,6 @@ func TestExecute_Grep_SkipsOversizedFile(t *testing.T) {
 	}
 }
 
-
 // ===== Tests for grep tool =====
 
 func TestExecute_Grep_MissingPattern(t *testing.T) {

@@ -134,12 +134,9 @@ func FormatList(items []*TodoItem) string {
 
 // executeTodo manages a personal task list for tracking work-in-progress.
 func (te *ToolExecutor) executeTodo(params map[string]interface{}) *ToolResult {
-	action, ok := params["action"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: action",
-		}
+	action, paramErr := requireStringParam(params, "action")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	action = strings.ToLower(strings.TrimSpace(action))
@@ -163,12 +160,9 @@ func (te *ToolExecutor) executeTodo(params map[string]interface{}) *ToolResult {
 
 // executeTodoAdd creates a new todo item.
 func (te *ToolExecutor) executeTodoAdd(params map[string]interface{}) *ToolResult {
-	description, ok := params["description"].(string)
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: description",
-		}
+	description, paramErr := requireStringParam(params, "description")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	description = strings.TrimSpace(description)
@@ -192,25 +186,9 @@ func (te *ToolExecutor) executeTodoAdd(params map[string]interface{}) *ToolResul
 
 // executeTodoComplete marks a todo item as done.
 func (te *ToolExecutor) executeTodoComplete(params map[string]interface{}) *ToolResult {
-	idVal, ok := params["id"]
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: id",
-		}
-	}
-
-	var id int
-	switch v := idVal.(type) {
-	case float64:
-		id = int(v)
-	case int:
-		id = v
-	default:
-		return &ToolResult{
-			Success: false,
-			Error:   "id must be an integer",
-		}
+	id, paramErr := parseIntParamStrict(params, "id")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	item := te.todoStore.Complete(id)
@@ -229,25 +207,9 @@ func (te *ToolExecutor) executeTodoComplete(params map[string]interface{}) *Tool
 
 // executeTodoRemove deletes a todo item.
 func (te *ToolExecutor) executeTodoRemove(params map[string]interface{}) *ToolResult {
-	idVal, ok := params["id"]
-	if !ok {
-		return &ToolResult{
-			Success: false,
-			Error:   "missing required parameter: id",
-		}
-	}
-
-	var id int
-	switch v := idVal.(type) {
-	case float64:
-		id = int(v)
-	case int:
-		id = v
-	default:
-		return &ToolResult{
-			Success: false,
-			Error:   "id must be an integer",
-		}
+	id, paramErr := parseIntParamStrict(params, "id")
+	if paramErr != "" {
+		return &ToolResult{Success: false, Error: paramErr}
 	}
 
 	item := te.todoStore.Remove(id)

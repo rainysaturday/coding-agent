@@ -33,17 +33,19 @@ const grepAllowedFlags = "ircnvlaf"
 
 // parseGrepParams extracts and validates grep parameters from the tool params map.
 func parseGrepParams(params map[string]interface{}) (*grepParams, *ToolResult) {
-	pattern, ok := params["pattern"].(string)
-	if !ok {
-		return nil, &ToolResult{Success: false, Error: "missing required parameter: pattern"}
+	pattern, paramErr := requireStringParam(params, "pattern")
+	if paramErr != "" {
+		return nil, &ToolResult{Success: false, Error: paramErr}
 	}
 	if strings.TrimSpace(pattern) == "" {
 		return nil, &ToolResult{Success: false, Error: "pattern cannot be empty"}
 	}
 
 	path := "."
-	if p, ok := params["path"].(string); ok && p != "" {
-		path = p
+	if v, vErr := optionalStringParam(params, "path", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		path = v
 	}
 
 	flags, err := parseFlagsParamToMap(params, grepAllowedFlags)

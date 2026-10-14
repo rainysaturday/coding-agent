@@ -37,8 +37,10 @@ const listFilesAllowedFlags = "lahStrR"
 // parseListFilesParams extracts and validates list_files parameters from the tool params map.
 func parseListFilesParams(params map[string]interface{}) (*listFilesParams, *ToolResult) {
 	path := "."
-	if p, ok := params["path"].(string); ok && p != "" {
-		path = p
+	if v, vErr := optionalStringParam(params, "path", ""); vErr != "" {
+		return nil, &ToolResult{Success: false, Error: vErr}
+	} else if v != "" {
+		path = v
 	}
 
 	flags, err := parseFlagsParamToMap(params, listFilesAllowedFlags)
