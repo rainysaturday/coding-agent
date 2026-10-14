@@ -40,11 +40,26 @@ func parseGitShowParams(params map[string]interface{}) *gitShowParams {
 	return &gitShowParams{path: path, commit: commit, flags: flags}
 }
 
-// buildGitShowArgs builds the git show command arguments.
-func buildGitShowArgs(gp *gitShowParams) []string {
+// gitShowAllowedFlags lists the flags buildGitShowArgs understands; it backs
+// the "unsupported flag" error so a mistyped flag is reported instead of
+// silently dropped.
+var gitShowAllowedFlags = []string{
+	"M", "abbrev-commit", "decorate", "name-only", "name-status", "no-color",
+	"no-decorate", "no-patch", "numstat", "oneline", "p", "patch", "r", "s",
+	"shortstat", "stat", "stat-numstat", "summary",
+}
+
+// buildGitShowArgs builds the git show command arguments. Leading dashes on
+// flags are optional; unrecognised flags are reported as an error.
+func buildGitShowArgs(gp *gitShowParams) ([]string, error) {
 	args := []string{"show", gp.commit}
 
-	for _, flag := range gp.flags {
+	var unknown []string
+	for _, rawFlag := range gp.flags {
+		flag := normalizeGitFlag(rawFlag)
+		if flag == "" {
+			continue
+		}
 		switch flag {
 		case "stat":
 			args = append(args, "--stat")
@@ -56,7 +71,7 @@ func buildGitShowArgs(gp *gitShowParams) []string {
 			args = append(args, "--name-only")
 		case "shortstat":
 			args = append(args, "--shortstat")
-		case "stat-numstat":
+		case "stat-numstat", "numstat":
 			args = append(args, "--numstat")
 		case "oneline":
 			args = append(args, "--oneline")
@@ -66,14 +81,28 @@ func buildGitShowArgs(gp *gitShowParams) []string {
 			args = append(args, "--no-patch")
 		case "summary":
 			args = append(args, "--summary")
+		case "no-color":
+			args = append(args, "--no-color")
+		case "decorate":
+			args = append(args, "--decorate")
+		case "no-decorate":
+			args = append(args, "--no-decorate")
+		case "abbrev-commit":
+			args = append(args, "--abbrev-commit")
 		case "r":
 			args = append(args, "-C")
 		case "M":
 			args = append(args, "--find-copies")
+		default:
+			unknown = append(unknown, rawFlag)
 		}
 	}
 
-	return args
+	if len(unknown) > 0 {
+		return nil, unknownGitFlagsError("git_show", unknown, gitShowAllowedFlags)
+	}
+
+	return args, nil
 }
 
 // executeGitShow shows details of a specific commit with context support.
@@ -85,7 +114,10 @@ func (te *ToolExecutor) executeGitShow(ctx context.Context, params map[string]in
 		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found or not accessible: %s", gp.path)}
 	}
 
-	args := buildGitShowArgs(gp)
+	args, err := buildGitShowArgs(gp)
+	if err != nil {
+		return &ToolResult{Success: false, Error: err.Error()}
+	}
 
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>

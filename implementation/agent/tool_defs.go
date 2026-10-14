@@ -355,7 +355,7 @@ func AllToolDefinitions() map[string]ToolInfo {
 							},
 							"flags": {
 								Type:        "array",
-								Description: "List of git log flags to control output (e.g., 's' for short format, 'm' for merges, 'no-merges', 'stat', 'patch', 'oneline', 'shortstat', 'follow', 'grep' to search commit messages, 'decorate', 'graph', 'first-parent')",
+								Description: "List of git log flags to control output (e.g., 's' for short format, 'm' for merges, 'no-merges', 'stat', 'patch', 'oneline', 'shortstat', 'follow', 'grep' to search commit messages, 'decorate', 'graph', 'first-parent'). Leading dashes are optional ('stat' and '--stat' are the same); unsupported flags are reported as an error",
 								Items: &inference.Property{
 									Type: "string",
 								},
@@ -371,7 +371,7 @@ func AllToolDefinitions() map[string]ToolInfo {
      - path (string, optional): Path to the git repository (defaults to current directory)
      - reference (string, optional): Git reference to view log from (branch name, tag, or commit hash; defaults to HEAD)
      - count (integer, optional): Number of commits to display (defaults to 10)
-     - flags (array, optional): List of git log flags to control output (e.g., '--oneline', '--stat', '--patch', '--follow', '--grep')
+     - flags (array, optional): List of git log flags to control output; bare or dashed spellings are equivalent ('oneline'/'--oneline', 'stat', 'patch', 'shortstat', 'follow', 'grep' (requires the grep parameter), 'decorate', 'graph', 'first-parent', 'no-merges', 's', 'm'). Unsupported flags return an error
    How to call: Use git_log to view commit history and understand changes in the repository.
    Example use case: Reviewing recent changes, finding when a bug was introduced, understanding project history`,
 		},
@@ -394,7 +394,7 @@ func AllToolDefinitions() map[string]ToolInfo {
 							},
 							"flags": {
 								Type:        "array",
-								Description: "List of git show flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'oneline', 's' for short format, 'no-patch', 'summary', 'r' for rename detection, 'M' for copy detection)",
+								Description: "List of git show flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'oneline', 's' for short format, 'no-patch', 'summary', 'r' for rename detection, 'M' for copy detection). Leading dashes are optional ('stat' and '--stat' are the same); unsupported flags are reported as an error",
 								Items: &inference.Property{
 									Type: "string",
 								},
@@ -409,7 +409,7 @@ func AllToolDefinitions() map[string]ToolInfo {
    Parameters:
      - path (string, optional): Path to the git repository (defaults to current directory)
      - commit (string, optional): Commit to show (defaults to HEAD)
-     - flags (array, optional): List of git show flags to control output (e.g., '--stat', '--patch', '--name-status')
+     - flags (array, optional): List of git show flags to control output; bare or dashed spellings are equivalent ('stat', 'patch'/'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'oneline', 's', 'no-patch', 'summary', 'r', 'M'). Unsupported flags return an error
    How to call: Use git_show to examine the details of a specific commit, including its changes and metadata.
    Example use case: Examining a specific commit's changes, reviewing what was modified in a particular update`,
 		},
@@ -436,7 +436,7 @@ func AllToolDefinitions() map[string]ToolInfo {
 							},
 							"flags": {
 								Type:        "array",
-								Description: "List of git diff flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'color', 'summary', 'compact-summary', 'stat-width', 'ignore-space-at-eol', 'ignore-space-change', 'ignore-all-space', 'unified', 'raw', 'r' for rename detection, 'M' for copy detection, 'patience', 'minimal')",
+								Description: "List of git diff flags to control output (e.g., 'stat', 'patch', 'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'color', 'summary', 'compact-summary', 'stat-width=N', 'ignore-space-at-eol', 'ignore-space-change', 'ignore-all-space', 'unified=N', 'raw', 'r' for rename detection, 'M' for copy detection, 'patience', 'minimal'). Leading dashes are optional; value-taking flags use name=value ('unified=10'); unsupported flags are reported as an error",
 								Items: &inference.Property{
 									Type: "string",
 								},
@@ -452,7 +452,7 @@ func AllToolDefinitions() map[string]ToolInfo {
      - path (string, optional): Path to the git repository (defaults to current directory)
      - reference1 (string, optional): First git reference for comparison (commit hash, branch, tag; omit for working tree)
      - reference2 (string, optional): Second git reference for comparison (commit hash, branch, tag; omit for index or working tree)
-     - flags (array, optional): List of git diff flags to control output (e.g., '--stat', '--patch', '--name-status', '--numstat', '--summary', '--color')
+     - flags (array, optional): List of git diff flags to control output; bare or dashed spellings are equivalent ('stat', 'patch'/'p', 'name-status', 'name-only', 'shortstat', 'numstat', 'color', 'summary', 'compact-summary', 'stat-width=N', 'ignore-space-at-eol', 'ignore-space-change', 'ignore-all-space', 'unified=N', 'raw', 'r', 'M', 'patience', 'minimal'). Unsupported flags return an error
    How to call: Use git_diff to compare different versions of files, branches, or commits.
    Example use case: Comparing changes between two branches, viewing modifications in a specific commit, checking differences in the working tree`,
 		},

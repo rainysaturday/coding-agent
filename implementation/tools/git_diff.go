@@ -51,11 +51,28 @@ func parseGitDiffParams(params map[string]interface{}) *gitDiffParams {
 	return &gitDiffParams{path: path, reference1: reference1, reference2: reference2, flags: flags}
 }
 
-// buildGitDiffArgs builds the git diff command arguments.
-func buildGitDiffArgs(gp *gitDiffParams) []string {
+// gitDiffAllowedFlags lists the flags buildGitDiffArgs understands; it backs
+// the "unsupported flag" error so a mistyped flag is reported instead of
+// silently dropped.
+var gitDiffAllowedFlags = []string{
+	"M", "color", "compact-summary", "ignore-all-space",
+	"ignore-space-at-eol", "ignore-space-change", "minimal", "name-only",
+	"name-status", "numstat", "p", "patch", "patience", "r", "raw",
+	"shortstat", "stat", "stat-numstat", "stat-width", "summary", "unified",
+}
+
+// buildGitDiffArgs builds the git diff command arguments. Leading dashes on
+// flags are optional, value-taking flags accept "name=value", and unrecognised
+// flags are reported as an error.
+func buildGitDiffArgs(gp *gitDiffParams) ([]string, error) {
 	args := []string{"diff"}
 
-	for _, flag := range gp.flags {
+	var unknown []string
+	for _, rawFlag := range gp.flags {
+		flag, flagValue := splitGitFlag(normalizeGitFlag(rawFlag))
+		if flag == "" {
+			continue
+		}
 		switch flag {
 		case "stat":
 			args = append(args, "--stat")
@@ -71,20 +88,30 @@ func buildGitDiffArgs(gp *gitDiffParams) []string {
 			args = append(args, "--numstat")
 		case "color":
 			args = append(args, "--color=always")
-		case "stat-width", "stat-width=0":
-			args = append(args, "--stat-width=0")
+		case "stat-width":
+			width, err := parseFlagInt(flag, flagValue, 0)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, fmt.Sprintf("--stat-width=%d", width))
 		case "summary":
 			args = append(args, "--summary")
 		case "compact-summary":
 			args = append(args, "--compact-summary")
-		case "ignore-space-at-eol", "ignore-space-at-eol=":
+		case "ignore-space-at-eol":
 			args = append(args, "--ignore-space-at-eol")
 		case "ignore-space-change":
 			args = append(args, "-b")
 		case "ignore-all-space":
 			args = append(args, "-w")
-		case "unified", "unified=":
-			args = append(args, "--unified=3")
+		case "unified":
+			// Honour the requested width instead of always emitting 3, which
+			// made "unified=10" look like it worked while it did nothing.
+			lines, err := parseFlagInt(flag, flagValue, 3)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, fmt.Sprintf("--unified=%d", lines))
 		case "raw":
 			args = append(args, "--raw")
 		case "r":
@@ -95,7 +122,13 @@ func buildGitDiffArgs(gp *gitDiffParams) []string {
 			args = append(args, "--patience")
 		case "minimal":
 			args = append(args, "--minimal")
+		default:
+			unknown = append(unknown, rawFlag)
 		}
+	}
+
+	if len(unknown) > 0 {
+		return nil, unknownGitFlagsError("git_diff", unknown, gitDiffAllowedFlags)
 	}
 
 	if gp.reference1 != "" && gp.reference2 != "" {
@@ -106,7 +139,7 @@ func buildGitDiffArgs(gp *gitDiffParams) []string {
 		args = append(args, gp.reference2)
 	}
 
-	return args
+	return args, nil
 }
 
 // executeGitDiff shows the diff between two commits, branches, or the working tree with context support.
@@ -118,7 +151,10 @@ func (te *ToolExecutor) executeGitDiff(ctx context.Context, params map[string]in
 		return &ToolResult{Success: false, Error: fmt.Sprintf("path not found or not accessible: %s", gp.path)}
 	}
 
-	args := buildGitDiffArgs(gp)
+	args, err := buildGitDiffArgs(gp)
+	if err != nil {
+		return &ToolResult{Success: false, Error: err.Error()}
+	}
 
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>

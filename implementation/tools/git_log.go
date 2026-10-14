@@ -55,22 +55,41 @@ func parseGitLogParams(params map[string]interface{}) *gitLogParams {
 	return &gitLogParams{path: path, reference: reference, count: count, flags: flags, grep: grep}
 }
 
-// buildGitLogArgs builds the git log command arguments.
-func buildGitLogArgs(gp *gitLogParams) []string {
+// gitLogAllowedFlags lists the flags buildGitLogArgs understands. Keep it in
+// sync with the switch below: it is what the "unsupported flag" error shows the
+// caller, so a dropped flag becomes a readable mistake instead of a silently
+// different command.
+var gitLogAllowedFlags = []string{
+	"abbrev-commit", "decorate", "first-parent", "follow", "graph", "grep",
+	"m", "merges", "minimal", "no-color", "no-decorate", "no-merges",
+	"no-patch", "oneline", "p", "patch", "patience", "relative-dates", "s",
+	"shortstat", "stat", "summary", "unified",
+}
+
+// buildGitLogArgs builds the git log command arguments. Leading dashes on
+// flags are optional; unrecognised flags are reported as an error.
+func buildGitLogArgs(gp *gitLogParams) ([]string, error) {
 	args := []string{"log", fmt.Sprintf("--max-count=%d", gp.count)}
 
-	for _, flag := range gp.flags {
+	var unknown []string
+	for _, rawFlag := range gp.flags {
+		flag := normalizeGitFlag(rawFlag)
+		if flag == "" {
+			continue
+		}
 		switch flag {
 		case "s":
 			args = append(args, "--no-patch")
-		case "m":
+		case "m", "merges":
 			args = append(args, "--merges")
 		case "no-merges":
 			args = append(args, "--no-merges")
 		case "stat":
 			args = append(args, "--stat")
-		case "patch":
+		case "patch", "p":
 			args = append(args, "-p")
+		case "no-patch":
+			args = append(args, "--no-patch")
 		case "oneline":
 			args = append(args, "--oneline")
 		case "shortstat":
@@ -78,23 +97,53 @@ func buildGitLogArgs(gp *gitLogParams) []string {
 		case "follow":
 			args = append(args, "--follow")
 		case "grep":
-			if gp.grep != "" {
-				args = append(args, "--grep="+gp.grep)
+			if gp.grep == "" {
+				// Asking for --grep with no pattern is a no-op for git, so say
+				// so instead of returning an unfiltered log.
+				return nil, fmt.Errorf("the %q flag requires the \"grep\" parameter to be set", rawFlag)
 			}
+			args = append(args, "--grep="+gp.grep)
 		case "decorate":
 			args = append(args, "--decorate")
+		case "no-decorate":
+			args = append(args, "--no-decorate")
 		case "graph":
 			args = append(args, "--graph")
 		case "first-parent":
 			args = append(args, "--first-parent")
+		case "summary":
+			args = append(args, "--summary")
+		case "no-color":
+			args = append(args, "--no-color")
+		case "abbrev-commit":
+			args = append(args, "--abbrev-commit")
+		case "relative-dates":
+			args = append(args, "--relative-dates")
+		case "minimal":
+			args = append(args, "--minimal")
+		case "patience":
+			args = append(args, "--patience")
+		case "unified":
+			flagName, value := splitGitFlag(rawFlag)
+			n, err := parseFlagInt(flagName, value, 3)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, fmt.Sprintf("--unified=%d", n))
+		default:
+			unknown = append(unknown, rawFlag)
 		}
+	}
+
+	if len(unknown) > 0 {
+		return nil, unknownGitFlagsError("git_log", unknown, gitLogAllowedFlags)
 	}
 
 	if gp.reference != "" {
 		args = append(args, gp.reference)
 	}
 
-	return args
+	return args, nil
 }
 
 // executeGitLog views the commit history of a git repository with context support.
@@ -119,7 +168,10 @@ func (te *ToolExecutor) executeGitLog(ctx context.Context, params map[string]int
 		}
 	}
 
-	args := buildGitLogArgs(gp)
+	args, err := buildGitLogArgs(gp)
+	if err != nil {
+		return &ToolResult{Success: false, Error: err.Error()}
+	}
 
 	// Resolve path: if it's a git repo root, use it as cmd.Dir;
 	// if it's a subdirectory within a repo, find the repo root and use -- <subpath>

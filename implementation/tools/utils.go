@@ -101,10 +101,52 @@ func formatFileError(err error, path string) string {
 	return fmt.Sprintf("file error: %v", err)
 }
 
-// hasFlag checks if a flag is present in a slice of flags.
+// normalizeGitFlag strips surrounding whitespace and leading dashes from a
+// user-supplied git flag. The tool descriptions teach the dashed form
+// ("--stat") while the allowlist switches match bare names ("stat");
+// normalising once means both spellings work instead of one being dropped.
+func normalizeGitFlag(flag string) string {
+	return strings.TrimLeft(strings.TrimSpace(flag), "-")
+}
+
+// splitGitFlag splits a "name=value" flag into its parts. value is empty when
+// the flag carries no value.
+func splitGitFlag(flag string) (name, value string) {
+	if i := strings.Index(flag, "="); i >= 0 {
+		return flag[:i], flag[i+1:]
+	}
+	return flag, ""
+}
+
+// parseFlagInt parses the value of a value-taking flag, falling back to
+// defValue when the caller supplied no value.
+func parseFlagInt(name, value string, defValue int) (int, error) {
+	if value == "" {
+		return defValue, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid value for flag %q: %q is not a number", name, value)
+	}
+	return n, nil
+}
+
+// unknownGitFlagsError reports flags a git tool does not understand together
+// with the ones it does, so a typo surfaces as an error instead of a silently
+// different command.
+func unknownGitFlagsError(tool string, unknown, allowed []string) error {
+	return fmt.Errorf("unsupported flag(s) for %s: %s; supported flags: %s",
+		tool, strings.Join(unknown, ", "), strings.Join(allowed, ", "))
+}
+
+// hasFlag checks if a flag is present in a slice of flags. Both spellings of a
+// flag match, so hasFlag(flags, "oneline") also finds a user-supplied
+// "--oneline" (otherwise the conflict checks below the allowlist are bypassed
+// by exactly the form the tool documentation recommends).
 func hasFlag(flags []string, flag string) bool {
+	want := normalizeGitFlag(flag)
 	for _, f := range flags {
-		if f == flag {
+		if normalizeGitFlag(f) == want {
 			return true
 		}
 	}

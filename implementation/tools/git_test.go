@@ -855,3 +855,206 @@ func TestExecuteGitDiff(t *testing.T) {
 		t.Logf("Git diff error (may be expected outside git repo): %s", result.Error)
 	}
 }
+
+// ===== Flag handling: dashed vs bare spellings, unknown flags =====
+
+func TestBuildGitLogArgs_AcceptsDashedAndBareSpellings(t *testing.T) {
+	// The tool description teaches "--stat"; the allowlist used to match only
+	// "stat", so documented usage was silently dropped.
+	args, err := buildGitLogArgs(&gitLogParams{
+		count: 5,
+		flags: []string{"--oneline", "oneline", "--stat", "stat", "--no-merges"},
+	})
+	if err != nil {
+		t.Fatalf("buildGitLogArgs() error: %v", err)
+	}
+	for _, want := range []string{"--oneline", "--stat", "--no-merges"} {
+		if !containsString(args, want) {
+			t.Errorf("args %v missing %q", args, want)
+		}
+	}
+}
+
+func TestBuildGitLogArgs_UnknownFlagIsReported(t *testing.T) {
+	_, err := buildGitLogArgs(&gitLogParams{count: 5, flags: []string{"--nope"}})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported flag, got nil (flag was silently dropped)")
+	}
+	if !strings.Contains(err.Error(), "--nope") {
+		t.Errorf("error must name the offending flag, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "supported flags") {
+		t.Errorf("error must list the supported flags, got: %v", err)
+	}
+}
+
+func TestBuildGitLogArgs_GrepFlagWithoutPattern(t *testing.T) {
+	// --grep with no pattern is a no-op for git; it must not look like a
+	// filtered log.
+	_, err := buildGitLogArgs(&gitLogParams{count: 5, flags: []string{"grep"}})
+	if err == nil {
+		t.Fatal("expected an error when the grep flag is used without the grep parameter")
+	}
+	if !strings.Contains(err.Error(), "grep") {
+		t.Errorf("error should mention grep, got: %v", err)
+	}
+}
+
+// setupFlagRepo creates a git repository with two commits for flag tests.
+func setupFlagRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v: %s", err, out)
+	}
+	for i := 0; i < 2; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("x\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		if out, err := exec.Command("git", "-C", repo, "add", name).CombinedOutput(); err != nil {
+			t.Fatalf("git add: %v: %s", err, out)
+		}
+		if out, err := exec.Command("git", "-C", repo, "-c", "user.email=t@example.com",
+			"-c", "user.name=Test", "commit", "-m", "commit "+name).CombinedOutput(); err != nil {
+			t.Fatalf("git commit: %v: %s", err, out)
+		}
+	}
+	return repo
+}
+
+func runGitLog(t *testing.T, repo string, flags []string) *ToolResult {
+	t.Helper()
+	te := NewToolExecutor()
+	return te.Execute(context.Background(), &ToolCall{
+		Name:       "git_log",
+		Parameters: map[string]interface{}{"path": repo, "flags": flags},
+	})
+}
+
+func TestGitLog_ConflictCheckSeesDashedFlags(t *testing.T) {
+	// The conflict guard compares bare names; a dashed "--oneline" used to slip
+	// past it and reach git as a confusing git error.
+	result := runGitLog(t, setupFlagRepo(t), []string{"--oneline", "--stat"})
+	if result.Success {
+		t.Fatalf("expected the oneline/stat conflict to be reported, got output: %s", result.Output)
+	}
+	if !strings.Contains(result.Error, "conflicting flags") {
+		t.Errorf("expected a conflict error, got: %s", result.Error)
+	}
+}
+
+// The point of the fix: a documented dashed flag must actually change what git
+// prints, instead of vanishing into a plain log.
+func TestGitLog_DashedFlagReachesGit(t *testing.T) {
+	repo := setupFlagRepo(t)
+
+	want, err := exec.Command("git", "-C", repo, "log", "--oneline", "--no-color").CombinedOutput()
+	if err != nil {
+		t.Fatalf("reference git invocation failed: %v", err)
+	}
+
+	result := runGitLog(t, repo, []string{"--oneline"})
+	if !result.Success {
+		t.Fatalf("git_log failed: %s", result.Error)
+	}
+	if got := strings.TrimRight(result.Output, "\n"); got != strings.TrimRight(string(want), "\n") {
+		t.Errorf("dashed --oneline did not produce git's own oneline output\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestGitLog_UnknownFlagIsReportedToEndOfLine(t *testing.T) {
+	result := runGitLog(t, setupFlagRepo(t), []string{"--follow-everything"})
+	if result.Success {
+		t.Fatalf("expected an error for an unsupported flag, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Error, "unsupported flag") {
+		t.Errorf("expected an unsupported-flag error, got: %s", result.Error)
+	}
+}
+
+func TestBuildGitShowArgs_UnknownFlagAndNumstatAlias(t *testing.T) {
+	if _, err := buildGitShowArgs(&gitShowParams{commit: "HEAD", flags: []string{"bogus"}}); err == nil {
+		t.Error("expected an error for an unsupported git_show flag")
+	}
+
+	args, err := buildGitShowArgs(&gitShowParams{commit: "HEAD", flags: []string{"numstat", "--stat"}})
+	if err != nil {
+		t.Fatalf("buildGitShowArgs() error: %v", err)
+	}
+	if !containsString(args, "--numstat") || !containsString(args, "--stat") {
+		t.Errorf("args %v must contain --numstat and --stat", args)
+	}
+}
+
+func TestBuildGitDiffArgs_ValueFlags(t *testing.T) {
+	args, err := buildGitDiffArgs(&gitDiffParams{flags: []string{"--unified=10", "stat-width=80"}})
+	if err != nil {
+		t.Fatalf("buildGitDiffArgs() error: %v", err)
+	}
+	if !containsString(args, "--unified=10") {
+		t.Errorf("unified=10 was ignored, args: %v", args)
+	}
+	if !containsString(args, "--stat-width=80") {
+		t.Errorf("stat-width=80 was ignored, args: %v", args)
+	}
+
+	// Bare forms keep their documented defaults.
+	args, err = buildGitDiffArgs(&gitDiffParams{flags: []string{"unified"}})
+	if err != nil {
+		t.Fatalf("buildGitDiffArgs() error: %v", err)
+	}
+	if !containsString(args, "--unified=3") {
+		t.Errorf("bare unified should default to 3, args: %v", args)
+	}
+
+	// A non-numeric value is an error, not a silently dropped flag.
+	if _, err := buildGitDiffArgs(&gitDiffParams{flags: []string{"unified=lots"}}); err == nil {
+		t.Error("expected an error for a non-numeric unified value")
+	}
+
+	// Unknown flags are reported.
+	if _, err := buildGitDiffArgs(&gitDiffParams{flags: []string{"--nonsense"}}); err == nil {
+		t.Error("expected an error for an unsupported git_diff flag")
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestGitAllowedFlags_AreAllSupported keeps the "unsupported flag" error honest:
+// every flag named in the allowlist must actually be understood by the builder,
+// otherwise the error message would send the caller in circles.
+func TestGitAllowedFlags_AreAllSupported(t *testing.T) {
+	cases := []struct {
+		name    string
+		allowed []string
+		build   func(flag string) error
+	}{
+		{"git_log", gitLogAllowedFlags, func(f string) error {
+			_, err := buildGitLogArgs(&gitLogParams{count: 5, flags: []string{f}, grep: "x"})
+			return err
+		}},
+		{"git_show", gitShowAllowedFlags, func(f string) error {
+			_, err := buildGitShowArgs(&gitShowParams{commit: "HEAD", flags: []string{f}})
+			return err
+		}},
+		{"git_diff", gitDiffAllowedFlags, func(f string) error {
+			_, err := buildGitDiffArgs(&gitDiffParams{flags: []string{f}})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		for _, flag := range tc.allowed {
+			if err := tc.build(flag); err != nil {
+				t.Errorf("%s: allowlist advertises %q but the builder rejects it: %v", tc.name, flag, err)
+			}
+		}
+	}
+}
