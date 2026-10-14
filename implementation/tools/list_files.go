@@ -28,21 +28,30 @@ type listFilesParams struct {
 	flags map[string]bool
 }
 
+// listFilesAllowedFlags lists the list_files flags that are understood. Keep it
+// in sync with the flags map below: it is what an unsupported-flag error
+// advertises.
+// (l=long, a=all, h=human sizes, S=size sort, t=time sort, r=reverse, R=recursive)
+const listFilesAllowedFlags = "lahStrR"
+
 // parseListFilesParams extracts and validates list_files parameters from the tool params map.
-func parseListFilesParams(params map[string]interface{}) *listFilesParams {
+func parseListFilesParams(params map[string]interface{}) (*listFilesParams, *ToolResult) {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
 	}
 
-	flags := parseFlagsParamToMap(params)
+	flags, err := parseFlagsParamToMap(params, listFilesAllowedFlags)
+	if err != nil {
+		return nil, &ToolResult{Success: false, Error: err.Error()}
+	}
 	for _, k := range []string{"l", "a", "h", "t", "S", "r", "R"} {
 		if _, ok := flags[k]; !ok {
 			flags[k] = false
 		}
 	}
 
-	return &listFilesParams{path: path, flags: flags}
+	return &listFilesParams{path: path, flags: flags}, nil
 }
 
 // sortDirEntries sorts directory entries by sort criteria.
@@ -122,7 +131,10 @@ func filterHiddenEntries(entries []os.DirEntry, showHidden bool) []os.DirEntry {
 // executeListFiles lists files and directories, formatted like ls.
 // Supports context cancellation and various flags similar to ls.
 func (te *ToolExecutor) executeListFiles(ctx context.Context, params map[string]interface{}) *ToolResult {
-	lp := parseListFilesParams(params)
+	lp, errResult := parseListFilesParams(params)
+	if errResult != nil {
+		return errResult
+	}
 
 	info, err := os.Stat(lp.path)
 	if err != nil {

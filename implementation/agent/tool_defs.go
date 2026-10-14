@@ -273,7 +273,7 @@ func AllToolDefinitions() map[string]ToolInfo {
 							},
 							"flags": {
 								Type:        "array",
-								Description: "List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted, 'R' for recursive)",
+								Description: "List of ls-style flags to control output; bare or dashed spellings are equivalent and may be clustered ('-la'). Supported: -l long format, -a all including hidden, -h human-readable sizes, -t time-sorted, -S size-sorted, -r reverse order, -R recursive. Any other flag returns an error listing the supported set",
 								Items: &inference.Property{
 									Type: "string",
 								},
@@ -286,7 +286,7 @@ func AllToolDefinitions() map[string]ToolInfo {
    Description: List files and directories in a path, similar to the ls command
    Parameters:
      - path (string, optional): The path to the file or directory to list (defaults to current directory if not specified)
-     - flags (array, optional): List of ls-style flags to control output (e.g., 'l' for long format, 'a' for all including hidden, 'h' for human-readable sizes, 't' for time-sorted, 'S' for size-sorted, 'R' for recursive)
+     - flags (array, optional): List of ls-style flags to control output; bare or dashed spellings are equivalent and may be clustered ('-la'). Supported: -l long format, -a all including hidden, -h human-readable sizes, -t time-sorted, -S size-sorted, -r reverse order, -R recursive. Any other flag returns an error listing the supported set
    How to call: Use list_files to see files, folders, sizes, permissions, and other information formatted like a simple ls command.
    Example use case: Listing directory contents with details, checking file sizes, viewing hidden files`,
 		},
@@ -309,7 +309,7 @@ func AllToolDefinitions() map[string]ToolInfo {
 							},
 							"flags": {
 								Type:        "array",
-								Description: "List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive, '-f' for pattern file, '-a' for all including hidden, '-c' for count, '-v' for invert match, '-l' for filenames only)",
+								Description: "List of grep-style flags to control output; bare or dashed spellings are equivalent and may be clustered ('-nir'). Supported: -n line numbers, -i case insensitive, -r recursive, -f pattern file, -a all including hidden, -c count, -v invert match, -l filenames only. Any other flag returns an error listing the supported set",
 								Items: &inference.Property{
 									Type: "string",
 								},
@@ -324,7 +324,7 @@ func AllToolDefinitions() map[string]ToolInfo {
    Parameters:
      - path (string, optional): Path to search (defaults to current directory if not specified)
      - pattern (string, required): Pattern to search for (supports regex)
-     - flags (array, optional): List of grep-style flags to control output (e.g., '-n' for line numbers, '-i' for case insensitive, '-r' for recursive, '-f' for pattern file, '-a' for all including hidden, '-c' for count, '-v' for invert match, '-l' for filenames only)
+     - flags (array, optional): List of grep-style flags to control output; bare or dashed spellings are equivalent and may be clustered ('-nir'). Supported: -n line numbers, -i case insensitive, -r recursive, -f pattern file, -a all including hidden, -c count, -v invert match, -l filenames only. Any other flag returns an error listing the supported set
    How to call: Use grep to find specific patterns or text within files.
    Example use case: Finding where a function is defined, searching for error messages, locating configuration values`,
 		},

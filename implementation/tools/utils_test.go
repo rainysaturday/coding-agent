@@ -328,7 +328,6 @@ func TestExecuteCtx_Bash_Cancelled(t *testing.T) {
 	}
 }
 
-
 func TestTruncateBytesAtRuneBoundary(t *testing.T) {
 	// A 2-byte UTF-8 character whose cut lands mid-rune must not be split (I-11).
 	// "ä" is 0xC3 0xA9. Repeating it and cutting at an odd byte offset used to
@@ -375,33 +374,59 @@ func TestParseFlagsParamToMap(t *testing.T) {
 	params := map[string]interface{}{
 		"flags": []interface{}{"-n", "-r", "-i"},
 	}
-	flags := parseFlagsParamToMap(params)
-	if !flags["n"] {
-		t.Error("Expected flag 'n' to be set for '-n'")
+	flags, err := parseFlagsParamToMap(params, grepAllowedFlags)
+	if err != nil {
+		t.Fatalf("dash-prefixed flags rejected: %v", err)
 	}
-	if !flags["r"] {
-		t.Error("Expected flag 'r' to be set for '-r'")
-	}
-	if !flags["i"] {
-		t.Error("Expected flag 'i' to be set for '-i'")
+	for _, k := range []string{"n", "r", "i"} {
+		if !flags[k] {
+			t.Errorf("Expected flag %q to be set, got %v", k, flags)
+		}
 	}
 
-	// Bare single-char forms should still work.
+	// Bare single-char forms work too.
 	params = map[string]interface{}{"flags": []string{"l", "a"}}
-	flags = parseFlagsParamToMap(params)
+	flags, err = parseFlagsParamToMap(params, listFilesAllowedFlags)
+	if err != nil {
+		t.Fatalf("bare flags rejected: %v", err)
+	}
 	if !flags["l"] || !flags["a"] {
 		t.Errorf("Expected bare single-char flags to be set, got %v", flags)
 	}
 
-	// Multi-char flags (used by other tools) are intentionally not matched here.
-	params = map[string]interface{}{"flags": []interface{}{"oneline", "stat"}}
-	flags = parseFlagsParamToMap(params)
-	if len(flags) != 0 {
-		t.Errorf("Expected no single-char flags from multi-char flags, got %v", flags)
+	// A cluster of single-char flags expands into its members.
+	flags, err = parseFlagsParamToMap(map[string]interface{}{"flags": []string{"-nir"}}, grepAllowedFlags)
+	if err != nil {
+		t.Fatalf("flag cluster rejected: %v", err)
+	}
+	if !flags["n"] || !flags["i"] || !flags["r"] {
+		t.Errorf("cluster -nir should set n, i and r, got %v", flags)
+	}
+
+	// A flag the tool does not implement is an error, not a silent no-op. This
+	// is the grep/list_files version of the git flag hole: a caller who writes
+	// "--line-numbers" or "oneline" must be told, not quietly ignored.
+	for _, bad := range []string{"--line-numbers", "oneline", "stat", "z"} {
+		if _, err := parseFlagsParamToMap(map[string]interface{}{"flags": []string{bad}}, grepAllowedFlags); err == nil {
+			t.Errorf("expected an error for unsupported flag %q, got none", bad)
+		} else if !strings.Contains(err.Error(), bad) {
+			t.Errorf("error must name the offending flag %q, got: %v", bad, err)
+		} else if !strings.Contains(err.Error(), "supported flags") {
+			t.Errorf("error must list the supported flags, got: %v", err)
+		}
+	}
+
+	// A non-string flag entry is reported rather than dropped.
+	if _, err := parseFlagsParamToMap(map[string]interface{}{"flags": []interface{}{7}}, grepAllowedFlags); err == nil {
+		t.Error("expected an error for a non-string flag entry")
 	}
 
 	// Missing flags param yields an empty map.
-	if got := parseFlagsParamToMap(map[string]interface{}{}); len(got) != 0 {
+	got, err := parseFlagsParamToMap(map[string]interface{}{}, grepAllowedFlags)
+	if err != nil {
+		t.Fatalf("missing flags param should be fine, got: %v", err)
+	}
+	if len(got) != 0 {
 		t.Errorf("Expected empty map without flags param, got %v", got)
 	}
 }
@@ -431,5 +456,63 @@ func TestParseIntParamStrict(t *testing.T) {
 	// Wrong type reports a type-aware error.
 	if _, err := parseIntParamStrict(map[string]interface{}{"n": true}, "n"); !strings.Contains(err, "n must be a number, got bool") {
 		t.Errorf("bad type: got %q, want type-aware error", err)
+	}
+}
+
+// TestExecute_FlagTools_RejectUnknownFlags covers the caller-visible behaviour:
+// a flag the tool does not implement must fail loudly instead of producing
+// output that looks like the flag was applied.
+func TestExecute_FlagTools_RejectUnknownFlags(t *testing.T) {
+	te := NewToolExecutor()
+
+	cases := []struct {
+		tool  string
+		flags []string
+	}{
+		{"grep", []string{"--line-numbers"}},
+		{"grep", []string{"stat"}},
+		{"list_files", []string{"--recursive"}},
+		{"list_files", []string{"oneline"}},
+	}
+	for _, tc := range cases {
+		res := te.Execute(context.Background(), &ToolCall{
+			Name: tc.tool,
+			Parameters: map[string]interface{}{
+				"pattern": "x",
+				"path":    t.TempDir(),
+				"flags":   tc.flags,
+			},
+		})
+		if res.Success {
+			t.Errorf("%s: expected failure for unsupported flag %q, got output: %s", tc.tool, tc.flags[0], res.Output)
+			continue
+		}
+		if !strings.Contains(res.Error, "unsupported flag") {
+			t.Errorf("%s: expected an unsupported-flag error, got: %s", tc.tool, res.Error)
+		}
+	}
+}
+
+// The documented dashed forms must keep working for grep and list_files.
+func TestExecute_FlagTools_DashedFormsWork(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	te := NewToolExecutor()
+	res := te.Execute(context.Background(), &ToolCall{
+		Name: "grep",
+		Parameters: map[string]interface{}{
+			"pattern": "world",
+			"path":    dir,
+			"flags":   []string{"-n"},
+		},
+	})
+	if !res.Success {
+		t.Fatalf("grep failed: %s", res.Error)
+	}
+	if !strings.Contains(res.Output, "2:") {
+		t.Errorf("expected -n line numbers in output, got: %s", res.Output)
 	}
 }

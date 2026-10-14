@@ -27,6 +27,10 @@ type grepParams struct {
 	flags   map[string]bool
 }
 
+// grepAllowedFlags lists the grep flags that are understood. Keep it in sync
+// with the flags map below: it is what an unsupported-flag error advertises.
+const grepAllowedFlags = "ircnvlaf"
+
 // parseGrepParams extracts and validates grep parameters from the tool params map.
 func parseGrepParams(params map[string]interface{}) (*grepParams, *ToolResult) {
 	pattern, ok := params["pattern"].(string)
@@ -42,7 +46,10 @@ func parseGrepParams(params map[string]interface{}) (*grepParams, *ToolResult) {
 		path = p
 	}
 
-	flags := parseFlagsParamToMap(params)
+	flags, err := parseFlagsParamToMap(params, grepAllowedFlags)
+	if err != nil {
+		return nil, &ToolResult{Success: false, Error: err.Error()}
+	}
 	for _, k := range []string{"i", "r", "c", "n", "v", "l", "a", "f"} {
 		if _, ok := flags[k]; !ok {
 			flags[k] = false

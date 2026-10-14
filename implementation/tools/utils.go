@@ -281,33 +281,71 @@ func isGitRepo(path string) bool {
 	return true
 }
 
-// parseFlagsParamToMap extracts flags from the "flags" parameter and stores them in a map[string]bool.
-// This is used by tools like grep and list_files that use single-char flags.
-// The documented flag forms are dash-prefixed (e.g. "-n", "-r"), so a leading
-// "-" is stripped before matching the single-character flag key.
-func parseFlagsParamToMap(params map[string]interface{}) map[string]bool {
+// parseFlagsParamToMap extracts the "flags" parameter into a map[string]bool.
+//
+// The documented forms are dash-prefixed ("-n"), so leading dashes are
+// stripped; bare ("n") works too. A cluster of single-character flags ("-nir")
+// is expanded into its members. Anything that is not one of `allowed` is
+// reported as an error rather than dropped: silently ignoring a flag means the
+// tool quietly does something other than what the caller asked for, which is
+// close to impossible to spot from the output.
+func parseFlagsParamToMap(params map[string]interface{}, allowed string) (map[string]bool, error) {
 	flags := make(map[string]bool)
-	if flagsParam, ok := params["flags"]; ok {
-		switch v := flagsParam.(type) {
-		case []interface{}:
-			for _, f := range v {
-				if flagStr, ok := f.(string); ok {
-					name := strings.TrimPrefix(flagStr, "-")
-					if len(name) == 1 {
-						flags[name] = true
-					}
-				}
-			}
-		case []string:
-			for _, flagStr := range v {
-				name := strings.TrimPrefix(flagStr, "-")
-				if len(name) == 1 {
-					flags[name] = true
-				}
+
+	var entries []string
+	switch v := params["flags"].(type) {
+	case []interface{}:
+		for _, f := range v {
+			if flagStr, ok := f.(string); ok {
+				entries = append(entries, flagStr)
+			} else {
+				return nil, fmt.Errorf("flags must be strings, got %T", f)
 			}
 		}
+	case []string:
+		entries = v
+	case nil:
+		// no flags requested
+	default:
+		return nil, fmt.Errorf("flags must be an array of strings, got %T", v)
 	}
-	return flags
+
+	var unknown []string
+	for _, entry := range entries {
+		name := strings.TrimLeft(strings.TrimSpace(entry), "-")
+		if name == "" {
+			continue
+		}
+		known := true
+		for _, r := range name {
+			if !strings.ContainsRune(allowed, r) {
+				known = false
+				break
+			}
+		}
+		if !known {
+			unknown = append(unknown, entry)
+			continue
+		}
+		for _, r := range name {
+			flags[string(r)] = true
+		}
+	}
+
+	if len(unknown) > 0 {
+		return nil, fmt.Errorf("unsupported flag(s) %s; supported flags: %s",
+			strings.Join(unknown, ", "), formatAllowedFlags(allowed))
+	}
+	return flags, nil
+}
+
+// formatAllowedFlags renders a single-character flag set for an error message.
+func formatAllowedFlags(allowed string) string {
+	quoted := make([]string, 0, len(allowed))
+	for _, r := range allowed {
+		quoted = append(quoted, "-"+string(r))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // parseFlagsParamToSlice extracts flags from the "flags" parameter and returns them as a []string.
