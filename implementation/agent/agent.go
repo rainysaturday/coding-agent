@@ -623,11 +623,10 @@ func (a *Agent) runLoop(ctx context.Context, stream bool) (*Result, error) {
 						// Update step output before appending to steps (avoid post-append mutation)
 						step.ToolResult.Output = visionResult
 					} else {
-						// Use full output for LLM context (not truncated)
-						resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, result.Output)
+						resultMessage = fmt.Sprintf("Tool '%s' executed successfully:\n%s", tc.Name, boundToolOutputForContext(tc.Name, result.Output))
 					}
 				} else {
-					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, result.Error)
+					resultMessage = fmt.Sprintf("Tool '%s' failed: %s", tc.Name, boundToolOutputForContext(tc.Name, result.Error))
 				}
 
 				// Add step to the list (output is already finalized)

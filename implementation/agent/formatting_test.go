@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/coding-agent/harness/inference"
 	"github.com/coding-agent/harness/tools"
@@ -465,5 +466,37 @@ func TestFormatParamValue_Array(t *testing.T) {
 	}
 	if !strings.Contains(result, "a") {
 		t.Errorf("Expected 'a' in result, got '%s'", result)
+	}
+}
+
+func TestBoundToolOutputForContext(t *testing.T) {
+	// Small results must pass through untouched.
+	short := "total 24\ndrwxr-xr-x 2 user user 4096 Jan 1 00:00 ."
+	if got := boundToolOutputForContext("list_files", short); got != short {
+		t.Errorf("short output changed: %q", got)
+	}
+
+	// Oversized results are capped and the truncation is announced in-band.
+	long := strings.Repeat("x", maxToolResultBytes+5000)
+	got := boundToolOutputForContext("bash", long)
+	if len(got) > maxToolResultBytes+512 {
+		t.Errorf("capped output is %d bytes, want at most %d", len(got), maxToolResultBytes+512)
+	}
+	if !strings.Contains(got, "output truncated for context") {
+		t.Error("truncation must be announced so the model knows the result is partial")
+	}
+	if !strings.Contains(got, "re-run 'bash'") {
+		t.Error("the notice must name the tool so the model can narrow the call")
+	}
+	if !strings.Contains(got, "of 70536 bytes") {
+		t.Errorf("the notice must report the original size, got: %s", got[len(got)-200:])
+	}
+
+	// Multi-byte content must not be cut mid-rune (the truncated result has to
+	// stay valid UTF-8 or the API request can fail on encoding).
+	multi := strings.Repeat("é", maxToolResultBytes+10)
+	capped := boundToolOutputForContext("grep", multi)
+	if !utf8.ValidString(capped) {
+		t.Error("truncated output is not valid UTF-8")
 	}
 }

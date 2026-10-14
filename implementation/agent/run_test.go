@@ -327,3 +327,86 @@ func TestRun_ContextCancellation(t *testing.T) {
 }
 
 // ===== Tests for NewAgent with different config options =====
+
+// A tool result must not be able to grow the LLM context without bound. bash
+// with max_output_lines=0 returns its whole output, and a single huge line is
+// enough to evict or compress the rest of the conversation; the failure then
+// surfaces much later as an opaque context error.
+func TestRun_LargeToolOutputIsBoundedInContext(t *testing.T) {
+	callCount := 0
+	var toolContents []string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			for _, m := range req.Messages {
+				if m.Role == "tool" {
+					toolContents = append(toolContents, m.Content)
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			w.Write([]byte(`{
+				"choices": [{
+					"index": 0,
+					"message": {
+						"role": "assistant",
+						"content": "",
+						"tool_calls": [{
+							"id": "call-1",
+							"type": "function",
+							"function": {
+								"name": "bash",
+								"arguments": "{\"command\": \"head -c 200000 /dev/zero | tr '\\\\0' 'x'\", \"max_output_lines\": 0}"
+							}
+						}]
+					},
+					"finish_reason": "tool_calls"
+				}]
+			}`))
+			return
+		}
+		w.Write([]byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.APIEndpoint = server.URL + "/v1"
+	cfg.Streaming = false
+	cfg.MaxTokens = 10000
+	// Keep the context limit well above the cap so compression cannot interfere
+	// with what this test measures.
+	cfg.ContextSize = 200000
+
+	ag := NewAgent(cfg)
+	// Capture the user-facing status instead of letting it print a 200 KB blob
+	// to the test output.
+	ag.SetStreamCallback(func(inference.StreamingChunk) {})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if _, err := ag.Run(ctx, "print a lot"); err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+
+	if len(toolContents) == 0 {
+		t.Fatal("expected the tool result to be sent back to the model")
+	}
+	// The tool really did return an oversized, untruncated result.
+	if len(toolContents[len(toolContents)-1]) > maxToolResultBytes+1024 {
+		t.Errorf("tool result in context is %d bytes, want at most %d (+ notice)",
+			len(toolContents[len(toolContents)-1]), maxToolResultBytes)
+	}
+	if !strings.Contains(toolContents[len(toolContents)-1], "output truncated for context") {
+		t.Error("truncation must be announced in-band so the model knows the result is partial")
+	}
+}

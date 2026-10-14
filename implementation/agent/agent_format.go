@@ -9,6 +9,26 @@ import (
 	"github.com/coding-agent/harness/tools"
 )
 
+// maxToolResultBytes bounds how much of a tool result is placed into the LLM
+// context. Individual tools bound their own output, but not all of them bound
+// it in bytes: bash's max_output_lines=0 explicitly means "no line limit", and
+// even a few lines can be megabytes. An unbounded result evicts or compresses
+// the rest of the conversation, and the failure only surfaces later as an
+// opaque context/API error far away from the tool call that caused it.
+const maxToolResultBytes = 64 * 1024
+
+// boundToolOutputForContext caps a tool result before it enters the
+// conversation and states the truncation in-band, so the model can re-run the
+// tool with narrower parameters instead of silently acting on partial output.
+func boundToolOutputForContext(toolName, output string) string {
+	if len(output) <= maxToolResultBytes {
+		return output
+	}
+	notice := fmt.Sprintf("\n... [output truncated for context: showing first %d of %d bytes; re-run '%s' with narrower parameters to see the rest]",
+		maxToolResultBytes, len(output), toolName)
+	return tools.TruncateBytesAtRuneBoundary(output, maxToolResultBytes, notice)
+}
+
 // getToolParamStr extracts a string parameter from tool params map.
 func getToolParamStr(key string, params map[string]interface{}) string {
 	if p, ok := params[key].(string); ok {
