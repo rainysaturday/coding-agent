@@ -666,3 +666,73 @@ func TestLogStreamingComplete_Disabled(t *testing.T) {
 	// Should return early without doing anything
 	d.LogStreamingComplete()
 }
+
+// ===== Nested (subagent) sessions must not destroy the parent's log =====
+
+func TestNewDebugLogger_TopLevelTruncatesSharedLog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "debug.log")
+
+	if err := os.WriteFile(logPath, []byte("PARENT DATA\n"), 0600); err != nil {
+		t.Fatalf("seed log: %v", err)
+	}
+	t.Setenv(NestedDebugEnv, "")
+
+	logger, err := NewDebugLogger(logPath, "v1.0.0")
+	if err != nil {
+		t.Fatalf("NewDebugLogger() error: %v", err)
+	}
+	logger.LogUserMessage("from top-level session", 5)
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	// Requirement 028: a new top-level session starts the log fresh.
+	if strings.Contains(string(data), "PARENT DATA") {
+		t.Error("top-level session should truncate the log, but previous content survived")
+	}
+}
+
+func TestNewDebugLogger_NestedAppendsInsteadOfTruncating(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "debug.log")
+
+	// Simulate a parent session that has already written to the log.
+	parent, err := NewDebugLogger(logPath, "v1.0.0")
+	if err != nil {
+		t.Fatalf("parent NewDebugLogger() error: %v", err)
+	}
+	parent.LogUserMessage("parent message that must survive", 5)
+	if err := parent.Close(); err != nil {
+		t.Fatalf("parent Close() error: %v", err)
+	}
+
+	// A subagent inherits CODING_AGENT_DEBUG_LOG and must append, not truncate.
+	t.Setenv(NestedDebugEnv, "1")
+	child, err := NewDebugLogger(logPath, "v1.0.0")
+	if err != nil {
+		t.Fatalf("child NewDebugLogger() error: %v", err)
+	}
+	child.LogUserMessage("child message", 5)
+	if err := child.Close(); err != nil {
+		t.Fatalf("child Close() error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "parent message that must survive") {
+		t.Error("subagent truncated the parent's debug log")
+	}
+	if !strings.Contains(content, "child message") {
+		t.Error("subagent output was not recorded")
+	}
+	// Interleaved sessions are only debuggable if each one is identifiable.
+	if !strings.Contains(content, "Process: main") || !strings.Contains(content, "Process: subagent") {
+		t.Errorf("log banner must identify the process role, got:\n%s", content)
+	}
+}

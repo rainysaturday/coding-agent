@@ -632,3 +632,70 @@ func TestBuildCreateSkillPrompt_EmptyDescription(t *testing.T) {
 		t.Error("prompt should include the description section marker")
 	}
 }
+
+// ===== Config inheritance for subagents =====
+
+// exportedEnvVars lists every variable exportResolvedConfigToEnv may write, so
+// the test can pin them with t.Setenv and leave the process env clean afterwards
+// (t.Setenv restores the previous value — including "unset" — on cleanup).
+var exportedEnvVars = []string{
+	"CODING_AGENT_MODEL", "CODING_AGENT_TEMPERATURE", "CODING_AGENT_MAX_TOKENS",
+	"CODING_AGENT_API_ENDPOINT", "CODING_AGENT_API_KEY", "CODING_AGENT_TOOLS",
+	"CODING_AGENT_READ_ONLY", "CODING_AGENT_EXPERIMENTAL", "CODING_AGENT_THEME",
+	"CODING_AGENT_PERSONA", "CODING_AGENT_CONTEXT_SIZE", "CODING_AGENT_MAX_ITERATIONS",
+	"CODING_AGENT_INITIAL_TOKEN_TIMEOUT", "CODING_AGENT_CONNECTION_TIMEOUT",
+	"CODING_AGENT_READ_TIMEOUT", "CODING_AGENT_STREAMING", "CODING_AGENT_DEBUG",
+	"CODING_AGENT_DEBUG_LOG", "CODING_AGENT_DEBUG_VERBOSE",
+	"CODING_AGENT_DEBUG_VERBOSE_VERBOSE", "CODING_AGENT_SUMMARY_ONLY",
+	"CODING_AGENT_GOAL", "CODING_AGENT_WEB", "CODING_AGENT_WEB_ADDR",
+	"CODING_AGENT_WEB_PORT", "CODING_AGENT_SKILLS", "CODING_AGENT_SKILLS_DIRS",
+	"CODING_AGENT_TRUST_DIRS",
+}
+
+func TestExportResolvedConfigToEnv(t *testing.T) {
+	for _, name := range exportedEnvVars {
+		t.Setenv(name, "")
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Model = "resolved-model"
+	cfg.APIEndpoint = "http://127.0.0.1:1/v1"
+	cfg.Goal = "finish the refactor"
+	cfg.Debug = true
+	cfg.DebugLog = "/tmp/resolved-debug.log"
+
+	exportResolvedConfigToEnv(cfg)
+
+	// Settings the subagent needs to reproduce the parent's behaviour.
+	for _, tc := range []struct{ name, want string }{
+		{"CODING_AGENT_MODEL", "resolved-model"},
+		{"CODING_AGENT_API_ENDPOINT", "http://127.0.0.1:1/v1"},
+		{"CODING_AGENT_DEBUG", "true"},
+		{"CODING_AGENT_DEBUG_LOG", "/tmp/resolved-debug.log"},
+	} {
+		if got := os.Getenv(tc.name); got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	// The goal is per-session state, not configuration. Exporting it makes every
+	// subagent adopt the parent's goal and run its own goal loop.
+	if got := os.Getenv("CODING_AGENT_GOAL"); got != "" {
+		t.Errorf("CODING_AGENT_GOAL must not be exported, got %q", got)
+	}
+}
+
+func TestExportResolvedConfigToEnv_KeepsUserSetGoal(t *testing.T) {
+	// A goal set by the user in the environment is honoured by config.Load and
+	// must survive the export untouched.
+	t.Setenv("CODING_AGENT_GOAL", "user supplied goal")
+
+	cfg := config.DefaultConfig()
+	cfg.Goal = "cli goal"
+
+	exportResolvedConfigToEnv(cfg)
+
+	if got := os.Getenv("CODING_AGENT_GOAL"); got != "user supplied goal" {
+		t.Errorf("CODING_AGENT_GOAL = %q, want the user's value to be left alone", got)
+	}
+}

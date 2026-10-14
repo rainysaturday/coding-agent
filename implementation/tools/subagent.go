@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/coding-agent/harness/debug"
 )
 
 // defaultSubagentTimeout is the maximum time a subagent may run before it is
@@ -18,7 +20,10 @@ const defaultSubagentTimeout = 5 * time.Minute
 
 // executeSubagent runs a subagent by spawning a subprocess of the coding-agent binary.
 // It passes the prompt and persona to the subagent and captures only the summary output.
-// Configuration is inherited from the parent process via environment variables and CLI flags.
+// Configuration is inherited from the parent process via environment variables and CLI
+// flags, except for per-session state such as the goal, which is deliberately not
+// forwarded: a subagent must work on the task it was given, not loop on the parent's
+// goal.
 // The provided ctx is propagated to the child so cancellation or timeout kills it.
 func executeSubagent(ctx context.Context, params map[string]interface{}, binaryPath string) *ToolResult {
 	prompt, ok := params["prompt"].(string)
@@ -78,7 +83,10 @@ func executeSubagent(ctx context.Context, params map[string]interface{}, binaryP
 		args = append(args, "--theme", theme)
 	}
 
-	// Debug settings are inherited via environment variables automatically
+	// Debug settings are inherited via environment variables automatically, but
+	// the child must be told it is nested: it shares the parent's debug log
+	// file, and opening it in truncate mode would erase everything the parent
+	// has already logged.
 
 	// Build the command with inherited environment. Use a child context that
 	// respects both the parent cancellation and the subagent timeout so a hung
@@ -86,6 +94,9 @@ func executeSubagent(ctx context.Context, params map[string]interface{}, binaryP
 	childCtx, cancel := context.WithTimeout(ctx, defaultSubagentTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(childCtx, binaryPath, args...)
+	// Mark the child as nested so it appends to the shared debug log instead of
+	// truncating the parent's session out of existence.
+	cmd.Env = append(os.Environ(), debug.NestedDebugEnv+"=1")
 
 	// Set working directory to current directory
 	cwd, err := os.Getwd()

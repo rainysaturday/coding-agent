@@ -34,6 +34,26 @@ type DebugLogger struct {
 	version  string
 }
 
+// NestedDebugEnv is set in the environment of processes spawned by the
+// subagent tool. It marks the process as a child that shares its parent's
+// debug log file.
+const NestedDebugEnv = "CODING_AGENT_DEBUG_NESTED"
+
+// logOpenFlags returns the flags used to open the debug log.
+//
+// The debug log is truncated when a new session starts, but that is only safe
+// for a top-level session: a subagent inherits CODING_AGENT_DEBUG_LOG and would
+// otherwise erase everything the parent had already recorded, destroying the
+// very history a debugger enabled the log to inspect. Nested processes
+// therefore append, and every session writes a banner identifying its process.
+func logOpenFlags() int {
+	flags := os.O_CREATE | os.O_WRONLY
+	if os.Getenv(NestedDebugEnv) != "" {
+		return flags | os.O_APPEND
+	}
+	return flags | os.O_TRUNC
+}
+
 // NewDebugLogger creates a new debug logger.
 func NewDebugLogger(filePath string, version string) (*DebugLogger, error) {
 	// If debug is disabled, return a no-op logger
@@ -43,8 +63,10 @@ func NewDebugLogger(filePath string, version string) (*DebugLogger, error) {
 		}, nil
 	}
 
+	nested := os.Getenv(NestedDebugEnv) != ""
+
 	// Open or create the log file with restrictive permissions
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(filePath, logOpenFlags(), 0600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open debug log file: %w", err)
 	}
@@ -56,7 +78,7 @@ func NewDebugLogger(filePath string, version string) (*DebugLogger, error) {
 		enabled:  true,
 		version:  version,
 		session: &SessionSummary{
-			SessionID:         fmt.Sprintf("sess_%d", now.UnixNano()),
+			SessionID:         fmt.Sprintf("sess_%d_%d", os.Getpid(), now.UnixNano()),
 			StartTime:         now,
 			TotalMessages:     0,
 			TotalInputTokens:  0,
@@ -67,10 +89,17 @@ func NewDebugLogger(filePath string, version string) (*DebugLogger, error) {
 		},
 	}
 
-	// Write header
+	// Write a session banner. Because nested processes append to a shared log
+	// file, the banner is the only way to tell which process produced the
+	// entries that follow.
+	role := "main"
+	if nested {
+		role = "subagent"
+	}
 	logger.writeLog("================================================================================\n")
 	logger.writeLog("CODING AGENT DEBUG LOG\n")
 	logger.writeLog("Session: %s\n", now.Format(time.RFC3339))
+	logger.writeLog("Process: %s (pid %d)\n", role, os.Getpid())
 	logger.writeLog("Version: %s\n", version)
 	logger.writeLog("Log File: %s\n", filePath)
 	logger.writeLog("================================================================================\n")

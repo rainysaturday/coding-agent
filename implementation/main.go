@@ -201,9 +201,11 @@ func exportResolvedConfigToEnv(cfg *config.Config) {
 	if cfg.SummaryOnly {
 		os.Setenv("CODING_AGENT_SUMMARY_ONLY", "true")
 	}
-	if cfg.Goal != "" {
-		os.Setenv("CODING_AGENT_GOAL", cfg.Goal)
-	}
+	// cfg.Goal is deliberately NOT exported. The goal is per-session state, not
+	// configuration: CODING_AGENT_GOAL exists so a *user* can start a session in
+	// goal mode, so exporting it would make every subagent silently adopt the
+	// parent's goal and start its own goal loop on top of the task it was asked
+	// to do.
 	// Web UI settings
 	if cfg.Web {
 		os.Setenv("CODING_AGENT_WEB", "true")

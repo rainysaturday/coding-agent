@@ -548,3 +548,32 @@ func TestExtractSummary_StripsANSICodes(t *testing.T) {
 		t.Errorf("Expected no ANSI escapes in summary, got %q", summary)
 	}
 }
+
+// ===== Child process environment =====
+
+// A subagent inherits CODING_AGENT_DEBUG_LOG and therefore writes to the same
+// file as its parent. It must be told it is nested, otherwise it opens the log
+// in truncate mode and erases the parent's session.
+func TestExecuteSubagent_MarksChildAsNested(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeBinary := filepath.Join(tmpDir, "coding-agent")
+
+	script := `#!/bin/bash
+echo "=== Final Output ==="
+echo "NESTED=[${CODING_AGENT_DEBUG_NESTED-unset}]"
+`
+	if err := os.WriteFile(fakeBinary, []byte(script), 0755); err != nil {
+		t.Skipf("Cannot create test binary: %v", err)
+	}
+
+	result := executeSubagent(context.Background(), map[string]interface{}{
+		"prompt": "Test task",
+	}, fakeBinary)
+
+	if result == nil {
+		t.Fatal("Expected result, got nil")
+	}
+	if !strings.Contains(result.Output, "NESTED=[1]") {
+		t.Errorf("child env must set CODING_AGENT_DEBUG_NESTED=1, got output: %s", result.Output)
+	}
+}
