@@ -3,7 +3,9 @@ package tui
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -65,6 +67,16 @@ func NewTUI(cfg *config.Config) *TUI {
 	}
 }
 
+// ErrCancelled is returned when the user aborts the prompt with Ctrl+C.
+// It is a sentinel so callers can match it with errors.Is instead of
+// comparing error strings -- a reworded message would otherwise turn a clean
+// exit into a reported failure.
+var ErrCancelled = errors.New("cancelled")
+
+// ErrEOF is returned when standard input ends (Ctrl+D). It wraps io.EOF so
+// errors.Is(err, io.EOF) keeps working.
+var ErrEOF = fmt.Errorf("%w", io.EOF)
+
 // Prompt displays the prompt and reads user input with history navigation.
 // Ctrl+C can be pressed during agent operation to cancel.
 func (t *TUI) Prompt() (string, error) {
@@ -93,7 +105,7 @@ func (t *TUI) Prompt() (string, error) {
 
 	if err != nil {
 		if t.cancelled {
-			return "", fmt.Errorf("cancelled")
+			return "", ErrCancelled
 		}
 		return "", err
 	}
@@ -142,6 +154,9 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			t.mu.Lock()
 			current := t.inputLine
 			t.mu.Unlock()
+			if errors.Is(err, io.EOF) {
+				return current, ErrEOF
+			}
 			return current, err
 		}
 		b := buf[0]
@@ -180,7 +195,7 @@ func (t *TUI) readLineWithHistory() (string, error) {
 			t.cancelled = true
 			t.mu.Unlock()
 			fmt.Printf("%s[Cancelled]%s\n", colors.GetColor("yellow"), colors.GetColor("reset"))
-			return "", fmt.Errorf("cancelled")
+			return "", ErrCancelled
 		case 16: // Ctrl+P - Previous history
 			t.handleHistoryUp()
 			continue

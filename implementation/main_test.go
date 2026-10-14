@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/coding-agent/harness/agent"
 	"github.com/coding-agent/harness/config"
 	"github.com/coding-agent/harness/tools"
+	"github.com/coding-agent/harness/tui"
 )
 
 func TestExitCodeForError(t *testing.T) {
@@ -697,5 +699,31 @@ func TestExportResolvedConfigToEnv_KeepsUserSetGoal(t *testing.T) {
 
 	if got := os.Getenv("CODING_AGENT_GOAL"); got != "user supplied goal" {
 		t.Errorf("CODING_AGENT_GOAL = %q, want the user's value to be left alone", got)
+	}
+}
+
+// TestIsPromptExit covers B6: the REPL treats Ctrl+C and Ctrl+D as a normal
+// exit. Matching on error strings meant any rewording of those messages turned
+// a clean exit into a reported failure.
+func TestIsPromptExit(t *testing.T) {
+	if !isPromptExit(tui.ErrCancelled) {
+		t.Error("ErrCancelled should be treated as a normal exit")
+	}
+	if !isPromptExit(tui.ErrEOF) {
+		t.Error("ErrEOF should be treated as a normal exit")
+	}
+	if !isPromptExit(fmt.Errorf("read line: %w", io.EOF)) {
+		t.Error("a wrapped io.EOF should be treated as a normal exit")
+	}
+	if !isPromptExit(fmt.Errorf("wrap: %w", tui.ErrCancelled)) {
+		t.Error("a wrapped ErrCancelled should be treated as a normal exit")
+	}
+	if isPromptExit(errors.New("permission denied")) {
+		t.Error("an unrelated error must not be swallowed as a normal exit")
+	}
+	// The old string comparison would have accepted this as a normal exit even
+	// though it is an unrelated failure that merely mentions the word.
+	if isPromptExit(fmt.Errorf("context cancelled by timeout: %w", context.DeadlineExceeded)) {
+		t.Error("an error that only contains the word 'cancelled' is not a prompt exit")
 	}
 }

@@ -829,6 +829,14 @@ func runAgentWithStreaming(ctx context.Context, ag *agent.Agent, tuiInstance *tu
 	}
 }
 
+// isPromptExit reports whether a prompt error is a normal way to leave the
+// REPL -- Ctrl+C or Ctrl+D -- rather than a failure worth reporting. Matching
+// sentinels rather than error text means rewording a message cannot silently
+// turn a clean exit into a reported error.
+func isPromptExit(err error) bool {
+	return errors.Is(err, tui.ErrCancelled) || errors.Is(err, io.EOF)
+}
+
 func runInteractiveMode(cfg *config.Config) error {
 	// Display welcome screen
 	displayVersion()
@@ -1003,8 +1011,8 @@ func runInteractiveMode(cfg *config.Config) error {
 
 		// Handle prompt errors
 		if err != nil {
-			if err.Error() == "cancelled" || err.Error() == "EOF" {
-				if err.Error() == "EOF" {
+			if isPromptExit(err) {
+				if errors.Is(err, io.EOF) {
 					fmt.Printf("%sGoodbye!%s\n", colors.GetColor("dim"), colors.GetColor("reset"))
 				}
 				signal.Stop(sigChan)
