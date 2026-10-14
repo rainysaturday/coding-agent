@@ -42,6 +42,13 @@ func TestNewAgent_SkillsDisabled(t *testing.T) {
 }
 
 func TestNewAgent_SkillsDiscovered(t *testing.T) {
+	// Make discovery hermetic: discoverSkills() also scans the user scope
+	// ($HOME/.agents/skills, $HOME/.claude/skills), which exists on real
+	// developer machines and CI images. Without isolating $HOME the exact
+	// count asserted below depends on the host, so the test fails for
+	// reasons unrelated to the code under test.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := writeTempSkill(t, "review", "Review code for issues", "# Review\nDo a thorough review.")
 	cfg := config.DefaultConfig()
 	cfg.Skills = true
