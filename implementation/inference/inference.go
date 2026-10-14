@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/coding-agent/harness/config"
+	"github.com/coding-agent/harness/debug"
 	"github.com/coding-agent/harness/tools"
 )
 
@@ -357,12 +358,15 @@ func (ic *InferenceClient) request(ctx context.Context, messages []*Message, sys
 				if !first {
 					fmt.Fprintf(os.Stderr, ", ")
 				}
-				fmt.Fprintf(os.Stderr, "%s=%s", k, strings.Join(v, ";"))
+				// Header values may carry the API key (Authorization,
+				// X-Api-Key, ...), so redact sensitive ones before printing.
+				fmt.Fprintf(os.Stderr, "%s=%s", k, debug.RedactHeader(k, strings.Join(v, ";")))
 				first = false
 			}
 			fmt.Fprintln(os.Stderr)
-			// Log body (redact authorization)
-			bodyStr := string(jsonData)
+			// Log body: the payload can quote credentials that appeared in the
+			// conversation, so redact credential-shaped substrings.
+			bodyStr := debug.RedactSecrets(string(jsonData))
 			fmt.Fprintf(os.Stderr, "[DEBUG-VERBOSE] >>> Body (%d bytes): %s\n", len(jsonData), truncateJSON(bodyStr, 1000))
 		}
 
