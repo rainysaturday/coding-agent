@@ -899,3 +899,71 @@ func TestExecute_MoveText_CrossFile_TargetWriteFailureNoDataLoss(t *testing.T) {
 		t.Errorf("source was modified despite failed move: %q", string(srcContent))
 	}
 }
+
+// TestMoveText_SourceEndPastEOF is the B5 guard: an out-of-range source_end
+// used to be clamped to the file length, so a caller asking for lines 1-50 of a
+// 10-line file got 10 lines moved and a success message, with no hint that the
+// request was truncated.
+func TestMoveText_SourceEndPastEOF(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	if err := os.WriteFile(src, []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	te := NewToolExecutor()
+	res := te.Execute(context.Background(), &ToolCall{
+		Name: "move_text",
+		Parameters: map[string]interface{}{
+			"source_path":  src,
+			"source_start": 1,
+			"source_end":   50,
+			"target_path":  src,
+			"target_line":  1,
+		},
+	})
+	if res.Success {
+		t.Fatalf("expected an error for source_end past EOF, got: %s", res.Output)
+	}
+	if !strings.Contains(res.Error, "out of bounds") {
+		t.Errorf("expected an out-of-bounds error, got: %s", res.Error)
+	}
+	for _, want := range []string{"50", "3"} {
+		if !strings.Contains(res.Error, want) {
+			t.Errorf("error should mention the requested end (%s) and the file length, got: %s", want, res.Error)
+		}
+	}
+
+	// The file must be untouched: a rejected move cannot half-apply.
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(data) != "a\nb\nc\n" {
+		t.Errorf("source file was modified by a rejected move: %q", data)
+	}
+}
+
+// A range that exactly covers the file is still accepted.
+func TestMoveText_SourceEndAtEOF(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	if err := os.WriteFile(src, []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	te := NewToolExecutor()
+	res := te.Execute(context.Background(), &ToolCall{
+		Name: "move_text",
+		Parameters: map[string]interface{}{
+			"source_path":  src,
+			"source_start": 1,
+			"source_end":   3,
+			"target_path":  filepath.Join(dir, "dst.txt"),
+			"target_line":  1,
+		},
+	})
+	if !res.Success {
+		t.Fatalf("a full-file range should work, got: %s", res.Error)
+	}
+}

@@ -96,12 +96,15 @@ func (te *ToolExecutor) executeMoveText(params map[string]interface{}) *ToolResu
 
 	sourceLines := splitLines(string(sourceContent))
 
-	// Validate line range
+	// Validate line range. Both bounds are checked rather than clamping the
+	// end: move_text mutates files, and quietly moving fewer lines than were
+	// asked for leaves the caller believing a block was relocated when part of
+	// it is still where it started.
 	if mp.sourceStart > len(sourceLines) {
 		return &ToolResult{Success: false, Error: fmt.Sprintf("source line range out of bounds: requested lines %d-%d but file has only %d lines", mp.sourceStart, mp.sourceEnd, len(sourceLines))}
 	}
 	if mp.sourceEnd > len(sourceLines) {
-		mp.sourceEnd = len(sourceLines)
+		return &ToolResult{Success: false, Error: fmt.Sprintf("source line range out of bounds: requested lines %d-%d but file has only %d lines", mp.sourceStart, mp.sourceEnd, len(sourceLines))}
 	}
 
 	sourceStartIdx := mp.sourceStart - 1
