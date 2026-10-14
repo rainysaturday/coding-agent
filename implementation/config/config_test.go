@@ -760,3 +760,115 @@ func TestParseArgs_SkillsEnvVars(t *testing.T) {
 		t.Errorf("Expected SkillsDirs [/x /y], got %v", cfg.SkillsDirs)
 	}
 }
+
+// ===== B3: bad config values must be reported, not silently ignored =====
+
+// clearAgentEnv neutralises CODING_AGENT_* variables inherited from the
+// environment. loadEnv applies them on top of config-file values, so a stray
+// CODING_AGENT_MAX_ITERATIONS in the shell makes config tests depend on the
+// machine they run on.
+func clearAgentEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"CODING_AGENT_MODEL", "CODING_AGENT_TEMPERATURE", "CODING_AGENT_MAX_TOKENS",
+		"CODING_AGENT_MAX_ITERATIONS", "CODING_AGENT_CONTEXT_SIZE", "CODING_AGENT_API_ENDPOINT",
+		"CODING_AGENT_API_KEY", "CODING_AGENT_INITIAL_TOKEN_TIMEOUT", "CODING_AGENT_CONNECTION_TIMEOUT",
+		"CODING_AGENT_READ_TIMEOUT", "CODING_AGENT_STREAMING", "CODING_AGENT_DEBUG",
+		"CODING_AGENT_DEBUG_LOG", "CODING_AGENT_DEBUG_VERBOSE", "CODING_AGENT_DEBUG_VERBOSE_VERBOSE",
+		"CODING_AGENT_READ_ONLY", "CODING_AGENT_EXPERIMENTAL", "CODING_AGENT_PERSONA",
+		"CODING_AGENT_THEME", "CODING_AGENT_SUMMARY_ONLY", "CODING_AGENT_GOAL",
+		"CODING_AGENT_TOOLS", "CODING_AGENT_WEB", "CODING_AGENT_WEB_ADDR", "CODING_AGENT_WEB_PORT",
+		"CODING_AGENT_WEB_SESSION_IDLE_TIMEOUT", "CODING_AGENT_SKILLS", "CODING_AGENT_SKILLS_DIRS",
+		"CODING_AGENT_TRUST_DIRS",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestParseArgs_ConfigFile_BadNumberIsAnError(t *testing.T) {
+	clearAgentEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.txt")
+	if err := os.WriteFile(path, []byte("model = test-model\nmax_iterations = lots\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ParseArgs([]string{"--config", path, "-p", "hi"})
+	if err == nil {
+		t.Fatalf("expected an error for a non-numeric max_iterations, got config with MaxIterations=%d", cfg.MaxIterations)
+	}
+	for _, want := range []string{"max_iterations", "lots", path} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestParseArgs_Env_BadNumberIsAnError(t *testing.T) {
+	// A typo in an environment variable used to be indistinguishable from the
+	// variable never having been set.
+	t.Setenv("CODING_AGENT_MAX_ITERATIONS", "ten")
+
+	cfg, err := ParseArgs([]string{"-p", "hi"})
+	if err == nil {
+		t.Fatalf("expected an error for a non-numeric CODING_AGENT_MAX_ITERATIONS, got MaxIterations=%d", cfg.MaxIterations)
+	}
+	if !strings.Contains(err.Error(), "CODING_AGENT_MAX_ITERATIONS") {
+		t.Errorf("error should name the variable, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ten") {
+		t.Errorf("error should show the offending value, got: %v", err)
+	}
+}
+
+func TestParseArgs_BadTemperatureIsAnError(t *testing.T) {
+	t.Setenv("CODING_AGENT_TEMPERATURE", "hot")
+	if _, err := ParseArgs([]string{"-p", "hi"}); err == nil {
+		t.Fatal("expected an error for a non-numeric CODING_AGENT_TEMPERATURE")
+	}
+}
+
+func TestParseArgs_BoolValues_AreParsedStrictly(t *testing.T) {
+	clearAgentEnv(t)
+	// "off" used to be treated as "not true", leaving streaming enabled.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.txt")
+	if err := os.WriteFile(path, []byte("streaming = off\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := ParseArgs([]string{"--config", path, "-p", "hi"})
+	if err != nil {
+		t.Fatalf("streaming=off should be accepted: %v", err)
+	}
+	if cfg.Streaming {
+		t.Error("streaming=off should disable streaming")
+	}
+
+	// A value that is neither true nor false must not silently mean false.
+	t.Setenv("CODING_AGENT_READ_ONLY", "maybe")
+	if _, err := ParseArgs([]string{"-p", "hi"}); err == nil {
+		t.Error("expected an error for CODING_AGENT_READ_ONLY=maybe")
+	}
+}
+
+func TestParseArgs_ValidNumericOverridesStillApply(t *testing.T) {
+	clearAgentEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.txt")
+	if err := os.WriteFile(path, []byte("max_iterations = 7\ntemperature = 0.3\nweb_port = 9000\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := ParseArgs([]string{"--config", path, "-p", "hi"})
+	if err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	if cfg.MaxIterations != 7 {
+		t.Errorf("MaxIterations = %d, want 7", cfg.MaxIterations)
+	}
+	if cfg.Temperature == nil || *cfg.Temperature != 0.3 {
+		t.Errorf("Temperature = %v, want 0.3", cfg.Temperature)
+	}
+	if cfg.WebPort != 9000 {
+		t.Errorf("WebPort = %d, want 9000", cfg.WebPort)
+	}
+}

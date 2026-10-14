@@ -155,7 +155,9 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	// Load from environment variables (overrides config file)
-	loadEnv(cfg)
+	if err := loadEnv(cfg); err != nil {
+		return nil, err
+	}
 
 	// Parse command-line arguments (overrides env and config file)
 	for i := 0; i < len(args); i++ {
@@ -404,6 +406,40 @@ func ParseArgs(args []string) (*Config, error) {
 	return cfg, nil
 }
 
+// parseConfigInt parses a numeric setting, reporting the key and the offending
+// value. A bad number used to be swallowed, so the setting silently kept its
+// default and the run behaved differently from what the config said.
+func parseConfigInt(source, key, value string) (int, error) {
+	v, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s for %s: %q is not a number", key, source, value)
+	}
+	return v, nil
+}
+
+// parseConfigFloat parses a floating point setting.
+func parseConfigFloat(source, key, value string) (float64, error) {
+	v, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s for %s: %q is not a number", key, source, value)
+	}
+	return v, nil
+}
+
+// parseConfigBool parses a boolean setting. Only the documented spellings are
+// accepted: anything else is an error rather than an implicit false, which is
+// how "streaming=off" used to leave streaming on.
+func parseConfigBool(source, key, value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s for %s: %q is not a boolean (use true/false)", key, source, value)
+	}
+}
+
 // loadConfigFile loads configuration from a config file.
 // Supports simple KEY=VALUE format (one per line, # for comments).
 func loadConfigFile(path string, cfg *Config) error {
@@ -434,49 +470,82 @@ func loadConfigFile(path string, cfg *Config) error {
 		case "model":
 			cfg.Model = value
 		case "temperature":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				tempVal := v
-				cfg.Temperature = &tempVal
+			v, err := parseConfigFloat("config file", "temperature", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			tempVal := v
+			cfg.Temperature = &tempVal
 		case "max_tokens":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxTokens = v
+			v, err := parseConfigInt("config file", "max_tokens", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.MaxTokens = v
 		case "max_iterations":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.MaxIterations = v
+			v, err := parseConfigInt("config file", "max_iterations", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.MaxIterations = v
 		case "context_size":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ContextSize = v
+			v, err := parseConfigInt("config file", "context_size", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.ContextSize = v
 		case "streaming":
-			cfg.Streaming = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "streaming", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Streaming = v
 		case "api_endpoint":
 			cfg.APIEndpoint = value
 		case "api_key":
 			cfg.APIKey = value
 		case "initial_token_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.InitialTokenTimeout = v
+			v, err := parseConfigInt("config file", "initial_token_timeout", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.InitialTokenTimeout = v
 		case "connection_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ConnectionTimeout = v
+			v, err := parseConfigInt("config file", "connection_timeout", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.ConnectionTimeout = v
 		case "read_timeout":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.ReadTimeout = v
-
+			v, err := parseConfigInt("config file", "read_timeout", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.ReadTimeout = v
 		case "verbose":
-			cfg.Verbose = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "verbose", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Verbose = v
 		case "quiet":
-			cfg.Quiet = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "quiet", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Quiet = v
 		case "debug":
-			cfg.Debug = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "debug", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Debug = v
 		case "skills":
-			cfg.Skills = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "skills", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Skills = v
 		case "skills_dirs", "skills-dirs":
 			cfg.SkillsDirs = splitList(value)
 		case "trust_dirs", "trust-dirs":
@@ -484,7 +553,11 @@ func loadConfigFile(path string, cfg *Config) error {
 		case "debug_log":
 			cfg.DebugLog = value
 		case "read_only", "read-only":
-			cfg.ReadOnly = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "read_only", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.ReadOnly = v
 		case "theme":
 			cfg.Theme = value
 		case "goal":
@@ -496,13 +569,19 @@ func loadConfigFile(path string, cfg *Config) error {
 				cfg.Tools[j] = strings.TrimSpace(t)
 			}
 		case "web":
-			cfg.Web = value == "true" || value == "1"
+			v, err := parseConfigBool("config file", "web", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Web = v
 		case "web_addr":
 			cfg.WebAddr = value
 		case "web_port":
-			if v, err := strconv.Atoi(value); err == nil {
-				cfg.WebPort = v
+			v, err := parseConfigInt("config file", "web_port", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
 			}
+			cfg.WebPort = v
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown config key '%s' in config file\n", key)
 		}
@@ -512,29 +591,37 @@ func loadConfigFile(path string, cfg *Config) error {
 }
 
 // loadEnv loads configuration from environment variables.
-func loadEnv(cfg *Config) {
+func loadEnv(cfg *Config) error {
 	if val := os.Getenv("CODING_AGENT_MODEL"); val != "" {
 		cfg.Model = val
 	}
 	if val := os.Getenv("CODING_AGENT_TEMPERATURE"); val != "" {
-		if tempVal, err := strconv.ParseFloat(val, 64); err == nil {
-			cfg.Temperature = &tempVal
+		v, err := parseConfigFloat("environment", "CODING_AGENT_TEMPERATURE", val)
+		if err != nil {
+			return err
 		}
+		cfg.Temperature = &v
 	}
 	if val := os.Getenv("CODING_AGENT_MAX_TOKENS"); val != "" {
-		if maxTokens, err := strconv.Atoi(val); err == nil {
-			cfg.MaxTokens = maxTokens
+		v, err := parseConfigInt("environment", "CODING_AGENT_MAX_TOKENS", val)
+		if err != nil {
+			return err
 		}
+		cfg.MaxTokens = v
 	}
 	if val := os.Getenv("CODING_AGENT_MAX_ITERATIONS"); val != "" {
-		if maxIterations, err := strconv.Atoi(val); err == nil {
-			cfg.MaxIterations = maxIterations
+		v, err := parseConfigInt("environment", "CODING_AGENT_MAX_ITERATIONS", val)
+		if err != nil {
+			return err
 		}
+		cfg.MaxIterations = v
 	}
 	if val := os.Getenv("CODING_AGENT_CONTEXT_SIZE"); val != "" {
-		if ctxSize, err := strconv.Atoi(val); err == nil {
-			cfg.ContextSize = ctxSize
+		v, err := parseConfigInt("environment", "CODING_AGENT_CONTEXT_SIZE", val)
+		if err != nil {
+			return err
 		}
+		cfg.ContextSize = v
 	}
 	if val := os.Getenv("CODING_AGENT_API_ENDPOINT"); val != "" {
 		cfg.APIEndpoint = val
@@ -543,46 +630,74 @@ func loadEnv(cfg *Config) {
 		cfg.APIKey = val
 	}
 	if val := os.Getenv("CODING_AGENT_INITIAL_TOKEN_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.InitialTokenTimeout = timeout
+		v, err := parseConfigInt("environment", "CODING_AGENT_INITIAL_TOKEN_TIMEOUT", val)
+		if err != nil {
+			return err
 		}
+		cfg.InitialTokenTimeout = v
 	}
 	if val := os.Getenv("CODING_AGENT_CONNECTION_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ConnectionTimeout = timeout
+		v, err := parseConfigInt("environment", "CODING_AGENT_CONNECTION_TIMEOUT", val)
+		if err != nil {
+			return err
 		}
+		cfg.ConnectionTimeout = v
 	}
 	if val := os.Getenv("CODING_AGENT_READ_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil {
-			cfg.ReadTimeout = timeout
+		v, err := parseConfigInt("environment", "CODING_AGENT_READ_TIMEOUT", val)
+		if err != nil {
+			return err
 		}
+		cfg.ReadTimeout = v
 	}
 	// Streaming can be disabled via env var
 	if val := os.Getenv("CODING_AGENT_STREAMING"); val != "" {
-		if val == "false" || val == "0" {
-			cfg.Streaming = false
+		v, err := parseConfigBool("environment", "CODING_AGENT_STREAMING", val)
+		if err != nil {
+			return err
 		}
+		cfg.Streaming = v
 	}
 	// Debug settings
 	if val := os.Getenv("CODING_AGENT_DEBUG"); val != "" {
-		cfg.Debug = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_DEBUG", val)
+		if err != nil {
+			return err
+		}
+		cfg.Debug = v
 	}
 	if val := os.Getenv("CODING_AGENT_DEBUG_LOG"); val != "" {
 		cfg.DebugLog = val
 	}
 	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE"); val != "" {
-		cfg.DebugVerbose = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_DEBUG_VERBOSE", val)
+		if err != nil {
+			return err
+		}
+		cfg.DebugVerbose = v
 	}
 	if val := os.Getenv("CODING_AGENT_DEBUG_VERBOSE_VERBOSE"); val != "" {
-		cfg.DebugVerboseVerbose = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_DEBUG_VERBOSE_VERBOSE", val)
+		if err != nil {
+			return err
+		}
+		cfg.DebugVerboseVerbose = v
 	}
 	// Read-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_READ_ONLY"); val != "" {
-		cfg.ReadOnly = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_READ_ONLY", val)
+		if err != nil {
+			return err
+		}
+		cfg.ReadOnly = v
 	}
 	// Experimental mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_EXPERIMENTAL"); val != "" {
-		cfg.Experimental = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_EXPERIMENTAL", val)
+		if err != nil {
+			return err
+		}
+		cfg.Experimental = v
 	}
 	// Persona can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_PERSONA"); val != "" {
@@ -594,7 +709,11 @@ func loadEnv(cfg *Config) {
 	}
 	// Summary-only mode can be enabled via environment variable
 	if val := os.Getenv("CODING_AGENT_SUMMARY_ONLY"); val != "" {
-		cfg.SummaryOnly = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_SUMMARY_ONLY", val)
+		if err != nil {
+			return err
+		}
+		cfg.SummaryOnly = v
 	}
 	// Goal can be set via environment variable
 	if val := os.Getenv("CODING_AGENT_GOAL"); val != "" {
@@ -609,24 +728,36 @@ func loadEnv(cfg *Config) {
 	}
 	// Web UI settings via environment variables
 	if val := os.Getenv("CODING_AGENT_WEB"); val != "" {
-		cfg.Web = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_WEB", val)
+		if err != nil {
+			return err
+		}
+		cfg.Web = v
 	}
 	if val := os.Getenv("CODING_AGENT_WEB_ADDR"); val != "" {
 		cfg.WebAddr = val
 	}
 	if val := os.Getenv("CODING_AGENT_WEB_PORT"); val != "" {
-		if v, err := strconv.Atoi(val); err == nil {
-			cfg.WebPort = v
+		v, err := parseConfigInt("environment", "CODING_AGENT_WEB_PORT", val)
+		if err != nil {
+			return err
 		}
+		cfg.WebPort = v
 	}
 	if val := os.Getenv("CODING_AGENT_WEB_SESSION_IDLE_TIMEOUT"); val != "" {
-		if v, err := strconv.Atoi(val); err == nil {
-			cfg.WebSessionIdleTimeout = v
+		v, err := parseConfigInt("environment", "CODING_AGENT_WEB_SESSION_IDLE_TIMEOUT", val)
+		if err != nil {
+			return err
 		}
+		cfg.WebSessionIdleTimeout = v
 	}
 	// Skills settings via environment variables
 	if val := os.Getenv("CODING_AGENT_SKILLS"); val != "" {
-		cfg.Skills = val == "true" || val == "1"
+		v, err := parseConfigBool("environment", "CODING_AGENT_SKILLS", val)
+		if err != nil {
+			return err
+		}
+		cfg.Skills = v
 	}
 	if val := os.Getenv("CODING_AGENT_SKILLS_DIRS"); val != "" {
 		cfg.SkillsDirs = splitList(val)
@@ -644,6 +775,7 @@ func loadEnv(cfg *Config) {
 			}
 		}
 	}
+	return nil
 }
 
 // Validate validates the configuration.
