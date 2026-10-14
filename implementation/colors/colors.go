@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -78,15 +79,121 @@ func GetCurrentTheme() *Theme {
 	return &cp
 }
 
+// colorSlots lists every semantic slot GetColor understands. Keep it in sync
+// with themeColor/defaultColor below: it is what an unknown-slot warning
+// advertises.
+var colorSlots = []string{"reset", "dim", "red", "green", "yellow", "blue", "magenta", "cyan", "border", "bold"}
+
+// Slots returns the semantic color slot names accepted by GetColor.
+func Slots() []string {
+	out := make([]string, len(colorSlots))
+	copy(out, colorSlots)
+	return out
+}
+
+// themeColor resolves a slot against the active theme.
+func themeColor(t *Theme, slot string) (string, bool) {
+	switch slot {
+	case "reset":
+		return t.Reset, true
+	case "dim":
+		return t.Dim, true
+	case "red":
+		return t.Red, true
+	case "green":
+		return t.Green, true
+	case "yellow":
+		return t.Yellow, true
+	case "blue":
+		return t.Blue, true
+	case "magenta":
+		return t.Magenta, true
+	case "cyan":
+		return t.Cyan, true
+	case "border":
+		return t.Border, true
+	}
+	return "", false
+}
+
+// defaultColor resolves a slot against the built-in palette.
+func defaultColor(slot string) (string, bool) {
+	switch slot {
+	case "reset":
+		return ColorReset, true
+	case "dim":
+		return ColorDim, true
+	case "red":
+		return ColorRed, true
+	case "green":
+		return ColorGreen, true
+	case "yellow":
+		return ColorYellow, true
+	case "blue":
+		return ColorBlue, true
+	case "magenta":
+		return ColorMagenta, true
+	case "cyan":
+		return ColorCyan, true
+	case "border":
+		return ColorDim, true
+	}
+	return "", false
+}
+
+// warnedSlots records which unknown slot names have already been reported, so
+// a typo in a hot rendering path warns once instead of on every call.
+var warnedSlots sync.Map
+
+// warnUnknownSlot reports a slot name that no theme can satisfy. Without this,
+// GetColor("grey") quietly returned the reset code and the text simply lost
+// its styling -- indistinguishable from a theme that legitimately has no such
+// colour.
+func warnUnknownSlot(slot string) {
+	if _, loaded := warnedSlots.LoadOrStore(slot, true); loaded {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "colors: unknown color slot %q; valid slots are: %s\n",
+		slot, strings.Join(colorSlots, ", "))
+}
+
+// LookupColor returns the ANSI code for a semantic slot and whether the slot is
+// known. Use it when the caller wants to handle a bad slot itself instead of
+// relying on the warning.
+func LookupColor(slot string) (string, bool) {
+	if slot == "bold" {
+		return ColorBold, true
+	}
+	if currentTheme != nil {
+		if code, ok := themeColor(currentTheme, slot); ok {
+			return code, true
+		}
+	}
+	code, ok := defaultColor(slot)
+	if !ok {
+		return "", false
+	}
+	return code, true
+}
+
 // GetColor returns the ANSI code for the given semantic color slot under the active theme.
 // Supported slots: "reset", "dim", "red", "green", "yellow", "blue", "magenta", "cyan",
 // "border" (muted tone for box drawing), plus the theme-independent attribute
 // slot "bold".
-// If no theme is active or the slot is unknown, the built-in default is returned.
+//
+// An unknown slot is reported once on stderr and rendered with the reset code.
+// It used to fall through to ColorReset silently, which made a typo in a slot
+// name look like a deliberate choice to print unstyled text.
 func GetColor(slot string) string {
 	// When color output is disabled, return an empty string for every slot so
-	// callers emit plain text with no ANSI escape sequences.
+	// callers emit plain text with no ANSI escape sequences. The slot name is
+	// still worth reporting: it is wrong either way.
 	if !enabled {
+		if slot != "bold" {
+			if _, ok := defaultColor(slot); !ok {
+				warnUnknownSlot(slot)
+			}
+		}
 		return ""
 	}
 	// "bold" is a text attribute rather than a palette color, so it is the
@@ -94,50 +201,17 @@ func GetColor(slot string) string {
 	if slot == "bold" {
 		return ColorBold
 	}
+	code, ok := defaultColor(slot)
+	if !ok {
+		warnUnknownSlot(slot)
+		return ColorReset
+	}
 	if currentTheme != nil {
-		switch slot {
-		case "reset":
-			return currentTheme.Reset
-		case "dim":
-			return currentTheme.Dim
-		case "red":
-			return currentTheme.Red
-		case "green":
-			return currentTheme.Green
-		case "yellow":
-			return currentTheme.Yellow
-		case "blue":
-			return currentTheme.Blue
-		case "magenta":
-			return currentTheme.Magenta
-		case "cyan":
-			return currentTheme.Cyan
-		case "border":
-			return currentTheme.Border
+		if themed, ok := themeColor(currentTheme, slot); ok {
+			return themed
 		}
 	}
-	// Fall back to built-in defaults
-	switch slot {
-	case "reset":
-		return ColorReset
-	case "dim":
-		return ColorDim
-	case "red":
-		return ColorRed
-	case "green":
-		return ColorGreen
-	case "yellow":
-		return ColorYellow
-	case "blue":
-		return ColorBlue
-	case "magenta":
-		return ColorMagenta
-	case "cyan":
-		return ColorCyan
-	case "border":
-		return ColorDim
-	}
-	return ColorReset
+	return code
 }
 
 func joinThemeNames(names []string) string {

@@ -1,6 +1,7 @@
 package colors
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -317,4 +318,103 @@ func TestGetColor_DisabledReturnsEmpty(t *testing.T) {
 	if got := GetColor("reset"); got != "" {
 		t.Errorf("Expected empty reset when disabled, got %q", got)
 	}
+}
+
+// ===== Unknown color slots =====
+
+// captureStderr redirects os.Stderr to a temp file for the duration of fn and
+// returns what was written.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatalf("temp file: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = f
+	defer func() { os.Stderr = old }()
+	fn()
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	data, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(data)
+}
+
+// TestGetColor_UnknownSlotWarnsOnce is the B7 guard: an unknown slot used to
+// return the reset code silently, so a typo looked like unstyled text.
+func TestGetColor_UnknownSlotWarnsOnce(t *testing.T) {
+	SetEnabled(true)
+	ResetTheme()
+
+	out := captureStderr(t, func() {
+		for i := 0; i < 5; i++ {
+			if got := GetColor("grey"); got != ColorReset {
+				t.Errorf("unknown slot should still render as reset, got %q", got)
+			}
+		}
+	})
+	if !strings.Contains(out, `"grey"`) {
+		t.Errorf("stderr should name the unknown slot, got: %q", out)
+	}
+	if !strings.Contains(out, "valid slots") {
+		t.Errorf("stderr should list the valid slots, got: %q", out)
+	}
+	if n := strings.Count(out, "unknown color slot"); n != 1 {
+		t.Errorf("the warning should appear once, appeared %d times: %q", n, out)
+	}
+}
+
+// The warning must fire even with colors disabled: the slot name is wrong
+// either way, but no escape code may leak into the output.
+func TestGetColor_UnknownSlotWarnsWithColorsDisabled(t *testing.T) {
+	SetEnabled(false)
+	defer SetEnabled(true)
+
+	var got string
+	out := captureStderr(t, func() {
+		got = GetColor("purpel")
+	})
+	if got != "" {
+		t.Errorf("disabled colors must return an empty string, got %q", got)
+	}
+	if !strings.Contains(out, `"purpel"`) {
+		t.Errorf("stderr should name the unknown slot, got: %q", out)
+	}
+}
+
+// Every advertised slot must actually resolve, and every slot used in the
+// codebase must be advertised.
+func TestSlots_AllAdvertisedSlotsResolve(t *testing.T) {
+	SetEnabled(true)
+	ResetTheme()
+
+	for _, slot := range Slots() {
+		code, ok := LookupColor(slot)
+		if !ok {
+			t.Errorf("Slots() advertises %q but LookupColor does not resolve it", slot)
+		}
+		if code == "" {
+			t.Errorf("slot %q resolved to an empty code with colors enabled", slot)
+		}
+	}
+	if _, ok := LookupColor("nope"); ok {
+		t.Error("LookupColor should report an unknown slot as unresolved")
+	}
+
+	// The same must hold under a real theme.
+	for name := range BuiltInThemes {
+		if err := SetTheme(name); err != nil {
+			t.Fatalf("SetTheme(%q): %v", name, err)
+		}
+		for _, slot := range Slots() {
+			if _, ok := LookupColor(slot); !ok {
+				t.Errorf("theme %q does not resolve advertised slot %q", name, slot)
+			}
+		}
+	}
+	ResetTheme()
 }
