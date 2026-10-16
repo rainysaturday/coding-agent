@@ -344,11 +344,22 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(data)
 }
 
+// resetSlotWarnings clears the package-level "already warned" memory. It is
+// process state, so a repeated run of the same test (-count>1) would otherwise
+// see the warning suppressed and read an empty stderr.
+func resetSlotWarnings() {
+	warnedSlots.Range(func(k, _ interface{}) bool {
+		warnedSlots.Delete(k)
+		return true
+	})
+}
+
 // TestGetColor_UnknownSlotWarnsOnce is the B7 guard: an unknown slot used to
 // return the reset code silently, so a typo looked like unstyled text.
 func TestGetColor_UnknownSlotWarnsOnce(t *testing.T) {
 	SetEnabled(true)
 	ResetTheme()
+	resetSlotWarnings()
 
 	out := captureStderr(t, func() {
 		for i := 0; i < 5; i++ {
@@ -373,6 +384,7 @@ func TestGetColor_UnknownSlotWarnsOnce(t *testing.T) {
 func TestGetColor_UnknownSlotWarnsWithColorsDisabled(t *testing.T) {
 	SetEnabled(false)
 	defer SetEnabled(true)
+	resetSlotWarnings()
 
 	var got string
 	out := captureStderr(t, func() {
