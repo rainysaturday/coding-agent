@@ -292,6 +292,7 @@ func displayHelp() {
 	fmt.Println("      --output file        Write results to file")
 	fmt.Println("      --no-dump-on-exit     Disable automatic context dump on exit")
 	fmt.Println("      --no-stream          Disable streaming output")
+	fmt.Println("      --no-typewriter      Print streamed tokens immediately instead of animating them")
 	fmt.Println("  -h, --help               Show this help message")
 	fmt.Println("  -v, --version            Show version information")
 	fmt.Println("      --tools string       Comma-separated list of tool names to make available (overrides defaults for the mode)")
@@ -415,35 +416,42 @@ func runOneShotMode(cfg *config.Config) error {
 	startTime := time.Now()
 	transitionedFromReasoning := false
 	lastContentWasToolCall := false
+	// Tokens are buffered briefly and released one character at a time, which
+	// turns the bursty arrival of tokens into a smooth, lively stream
+	// (requirement 049). Everything that has to appear in order -- the reasoning
+	// separator, in-place tool-call updates -- goes through the same queue.
+	tw := tui.NewTypewriter(cfg.Typewriter, func(s string) { fmt.Print(s) })
 	result, err := ag.RunStream(ctx, prompt, func(chunk inference.StreamingChunk) {
 		// Stream LLM responses to stdout with appropriate coloring
 		switch chunk.ContentType {
 		case inference.StreamingContentTypeReasoning:
-			fmt.Printf("%s%s%s", colors.GetColor("dim"), chunk.Text, colors.GetColor("reset"))
+			tw.Push(chunk.Text, colors.GetColor("dim"))
 		case inference.StreamingContentTypeGoal:
 			// Goal messages are displayed in magenta to stand out
-			fmt.Printf("%s%s%s", colors.GetColor("magenta"), chunk.Text, colors.GetColor("reset"))
+			tw.PushNow(chunk.Text, colors.GetColor("magenta"))
 		default:
 			// Add separator when transitioning from reasoning to normal content
 			if !transitionedFromReasoning && chunk.Text != "" {
-				fmt.Println()
-				fmt.Printf("%s ─── thinking complete ───%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
+				tw.PushRaw("\n" + colors.GetColor("dim") + " ─── thinking complete ───" + colors.GetColor("reset") + "\n\n")
 				transitionedFromReasoning = true
 			}
 			// Handle tool call parameter updates in-place using ANSI cursor positioning,
 			// matching the behavior of interactive mode.
 			if strings.HasPrefix(chunk.Text, "[Tool Call] ") {
-				fmt.Print("\033[2K\r" + chunk.Text)
+				tw.PushRaw("\033[2K\r" + chunk.Text)
 				lastContentWasToolCall = true
 			} else {
 				if lastContentWasToolCall {
-					fmt.Print("\n")
+					tw.PushRaw("\n")
 				}
-				fmt.Print(chunk.Text)
+				tw.Push(chunk.Text, "")
 				lastContentWasToolCall = false
 			}
 		}
 	})
+	// The result below is printed directly, so the animation has to finish
+	// first.
+	tw.Flush()
 	duration := time.Since(startTime)
 
 	// Close debug logger at the end of one-shot mode

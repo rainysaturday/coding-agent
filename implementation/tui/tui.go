@@ -43,6 +43,10 @@ type TUI struct {
 	// a newline, so a repaint after an asynchronous run does not erase output
 	// that is still mid-line (requirement 048).
 	lastOutputNewline bool
+	// tw renders streamed model output one character at a time (requirement
+	// 049). It is the only writer for streamed text, so ordering between tokens,
+	// separators and tool-call lines survives the buffering.
+	tw *Typewriter
 }
 
 // NewTUI creates a new TUI instance.
@@ -54,7 +58,7 @@ func NewTUI(cfg *config.Config) *TUI {
 		}
 	}
 
-	return &TUI{
+	t := &TUI{
 		config:         cfg,
 		output:         make([]string, 0),
 		history:        make([]string, 0),
@@ -65,6 +69,29 @@ func NewTUI(cfg *config.Config) *TUI {
 		contextSize:    0,
 		maxContextSize: cfg.ContextSize,
 	}
+
+	// Streamed model output is buffered briefly and released a character at a
+	// time (requirement 049). The typewriter takes t.mu itself, so its callers
+	// must never hold it.
+	t.tw = NewTypewriter(cfg.Typewriter, func(s string) {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		fmt.Print(s)
+	})
+	t.tw.SetSegmentEndHook(func(lineEnd bool) {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.lastOutputNewline = lineEnd
+		// A scheduled run can print model output while the user is sitting at
+		// the prompt, which would otherwise leave the input line garbled.
+		// Repaint at line boundaries only, to avoid flicker while streaming
+		// (requirement 048).
+		if t.promptActive && lineEnd {
+			t.redrawPromptLineInternal()
+		}
+	})
+
+	return t
 }
 
 // ErrCancelled is returned when the user aborts the prompt with Ctrl+C.
@@ -80,6 +107,10 @@ var ErrEOF = fmt.Errorf("%w", io.EOF)
 // Prompt displays the prompt and reads user input with history navigation.
 // Ctrl+C can be pressed during agent operation to cancel.
 func (t *TUI) Prompt() (string, error) {
+	// The prompt bar is drawn on its own line, so the previous stream must be
+	// fully on screen first.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	t.cancelled = false
 	t.mu.Unlock()
@@ -304,6 +335,9 @@ func (t *TUI) handleHistoryDown() {
 
 // AddOutput adds output to be displayed.
 func (t *TUI) AddOutput(message string) {
+	// Anything still animating belongs to the stream and has to appear first.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -323,73 +357,92 @@ func (t *TUI) StreamChunk(text string) {
 }
 
 // StreamChunkWithType outputs a chunk of streaming text with a specific content type.
-// For tool call parameter updates (indicated by "[Tool Call] " prefix), it uses
-// ANSI cursor positioning to update the line in place instead of appending.
+//
+// Model output (normal and reasoning) is handed to the typewriter, which buffers
+// it briefly and releases it one character at a time (requirement 049). Single
+// messages -- goal, compression and scheduled-delivery notices -- are not a
+// token stream, so they are queued as a whole and written in one step; animating
+// them would only make them late. Tool call parameter updates (recognised by the
+// "[Tool Call] " prefix) rewrite their line in place with ANSI cursor
+// positioning and are queued verbatim for the same reason. Queued rather than
+// written immediately, because they must not overtake the text ahead of them.
+//
+// t.mu must not be held here: the typewriter's writer and hook take it
+// themselves, and Flush waits for the printer goroutine.
 func (t *TUI) StreamChunkWithType(text string, contentType inference.StreamingContentType) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	// Apply appropriate color and buffer based on content type
 	switch contentType {
 	case inference.StreamingContentTypeReasoning:
+		t.mu.Lock()
 		t.reasoningBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("dim"), text, colors.GetColor("reset"))
+		t.mu.Unlock()
+		t.tw.Push(text, colors.GetColor("dim"))
+
 	case inference.StreamingContentTypeGoal:
 		// Goal messages are displayed in magenta to stand out
+		t.mu.Lock()
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
+		t.mu.Unlock()
+		t.tw.PushNow(text, colors.GetColor("magenta"))
+
 	case inference.StreamingContentTypeCompression:
 		// Context compression messages are displayed in magenta to stand out
+		t.mu.Lock()
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("magenta"), text, colors.GetColor("reset"))
+		t.mu.Unlock()
+		t.tw.PushNow(text, colors.GetColor("magenta"))
+
 	case inference.StreamingContentTypeSchedule:
 		// Scheduled message deliveries are shown in cyan so they are clearly
 		// distinguishable from model output (requirement 048).
+		t.mu.Lock()
 		t.streamBuffer.WriteString(text)
-		fmt.Printf("%s%s%s", colors.GetColor("cyan"), text, colors.GetColor("reset"))
-		t.lastOutputNewline = strings.HasSuffix(text, "\n")
-		// A delivery can arrive while the user is typing at the prompt; repaint
-		// the prompt bar and the typed text so the input line stays intact.
-		if t.promptActive {
-			t.redrawPromptLineInternal()
-		}
+		t.mu.Unlock()
+		// A delivery can arrive while the user is typing at the prompt; the
+		// segment hook repaints the prompt bar and the typed text so the input
+		// line stays intact.
+		t.tw.PushNow(text, colors.GetColor("cyan"))
+
 	default:
+		toolCall := strings.HasPrefix(text, "[Tool Call] ")
+
+		t.mu.Lock()
 		// Transitioning from reasoning to normal content - add separator
-		if t.transitionedFromReasoning == false && t.reasoningBuffer.Len() > 0 {
-			fmt.Println()
-			fmt.Printf("%s ─── thinking complete ───%s\n\n", colors.GetColor("dim"), colors.GetColor("reset"))
+		separator := !t.transitionedFromReasoning && t.reasoningBuffer.Len() > 0
+		if separator {
 			t.transitionedFromReasoning = true
 		}
+		// For non-tool-call content: ensure we start on a new line if the
+		// previous content was a tool call.
+		newlineBefore := t.lastContentWasToolCall && !toolCall
+		t.lastContentWasToolCall = toolCall
 		t.streamBuffer.WriteString(text)
+		t.mu.Unlock()
 
-		// Check if this is a tool call parameter update
-		// Tool call updates start with "[Tool Call] " prefix (e.g., "[Tool Call] bash (command: "value")")
-		// We want to update the previous [Tool Call] line in place using ANSI cursor positioning
-		if strings.HasPrefix(text, "[Tool Call] ") {
+		if separator {
+			t.tw.PushRaw("\n" + colors.GetColor("dim") + " ─── thinking complete ───" + colors.GetColor("reset") + "\n\n")
+		}
+
+		if toolCall {
 			// Use ANSI cursor positioning to update the line in place:
 			// \033[2K - Clear entire current line
 			// \r - Return cursor to start of line
 			// Then print the new full tool call with parameters
-			fmt.Print("\033[2K\r" + text)
-			t.lastContentWasToolCall = true
-		} else {
-			// For non-tool-call content: ensure we start on a new line if previous content was a tool call
-			if t.lastContentWasToolCall {
-				fmt.Print("\n")
-			}
-			// Regular content - just print it
-			fmt.Print(text)
-			t.lastContentWasToolCall = false
-			t.lastOutputNewline = strings.HasSuffix(text, "\n")
-			// A scheduled run can print model output while the user is sitting at
-			// the prompt, which would otherwise leave the input line garbled.
-			// Repaint at line boundaries only, to avoid flicker while streaming
-			// (requirement 048).
-			if t.promptActive && strings.HasSuffix(text, "\n") {
-				t.redrawPromptLineInternal()
-			}
+			t.tw.PushRaw("\033[2K\r" + text)
+			return
 		}
+
+		if newlineBefore {
+			t.tw.PushRaw("\n")
+		}
+		// Regular content - animate it
+		t.tw.Push(text, "")
 	}
+}
+
+// FlushStream blocks until all buffered streaming text has been written. It is
+// used by tests and by anything that must know the stream is fully on screen.
+func (t *TUI) FlushStream() {
+	t.tw.Flush()
 }
 
 // StreamReasoningChunk streams reasoning/thinking content with dim color.
@@ -412,6 +465,10 @@ func (t *TUI) StreamScheduleChunk(text string) {
 // Model output can end without a trailing newline, which would otherwise leave
 // the prompt glued to the answer (requirement 048).
 func (t *TUI) EndScheduledOutput() {
+	// The run is over: drain the animation before deciding whether the output
+	// line still needs closing.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.promptActive {
@@ -431,6 +488,10 @@ func (t *TUI) StreamGoalChunk(text string) {
 
 // StreamEnd finalizes a streaming session.
 func (t *TUI) StreamEnd() {
+	// Let the animation finish: the closing newline and the history entry must
+	// not overtake the last tokens still in the buffer.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -457,6 +518,9 @@ func (t *TUI) StreamEnd() {
 
 // StartStream begins a new streaming session.
 func (t *TUI) StartStream() {
+	// Nothing should still be animating from a previous session.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -475,6 +539,10 @@ func (t *TUI) IsStreaming() bool {
 
 // ClearOutput clears the output display.
 func (t *TUI) ClearOutput() {
+	// Finish painting before erasing, otherwise the buffer lands on the cleared
+	// screen.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -484,6 +552,9 @@ func (t *TUI) ClearOutput() {
 
 // DisplayStats displays the runtime statistics.
 func (t *TUI) DisplayStats(stats *agent.Stats) {
+	// The panel is drawn directly, so anything still animating goes first.
+	t.tw.Flush()
+
 	t.mu.Lock()
 	size := t.contextSize
 	max := t.maxContextSize
@@ -591,6 +662,8 @@ func (t *TUI) SetContextSize(size, max int) {
 
 // ShowContextSize displays the current context size to the user.
 func (t *TUI) ShowContextSize() {
+	t.tw.Flush()
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.printContextSizeInternal()

@@ -101,6 +101,7 @@ func TestStreamChunkWithTypeSchedule(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		tui.StreamChunkWithType("\n[Scheduled message #1] check the build\n", inference.StreamingContentTypeSchedule)
+		tui.FlushStream()
 	})
 	if !strings.Contains(out, "[Scheduled message #1] check the build") {
 		t.Errorf("schedule notice was not printed: %q", out)
@@ -125,6 +126,7 @@ func TestScheduleDeliveryRepaintsPromptLine(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		tui.StreamChunkWithType("\n[Scheduled message #2] stand up\n", inference.StreamingContentTypeSchedule)
+		tui.FlushStream()
 	})
 
 	if !strings.Contains(out, "\033[2K") {
@@ -181,6 +183,9 @@ func TestScheduledRunOutputRepaintsPromptLine(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		tui.StreamChunkWithType("\nbuild is green now\n", inference.StreamingContentTypeNormal)
+		// Model output is animated (requirement 049); drain the buffer so the
+		// capture sees the whole line.
+		tui.FlushStream()
 	})
 	if !strings.Contains(out, "build is green now") {
 		t.Errorf("model output was not printed: %q", out)
@@ -204,7 +209,11 @@ func TestStreamedOutputRepaintOnlyAtLineBoundaries(t *testing.T) {
 
 	out := captureStdout(t, func() {
 		tui.StreamChunkWithType("partial", inference.StreamingContentTypeNormal)
+		tui.FlushStream()
 	})
+	if !strings.Contains(out, "partial") {
+		t.Errorf("streamed chunk was not printed: %q", out)
+	}
 	if strings.Contains(out, "\033[2K") {
 		t.Errorf("mid-word chunks should not repaint the prompt, got %q", out)
 	}
@@ -214,6 +223,7 @@ func TestStreamedOutputRepaintOnlyAtLineBoundaries(t *testing.T) {
 	tui.mu.Unlock()
 	out = captureStdout(t, func() {
 		tui.StreamChunkWithType("a full line\n", inference.StreamingContentTypeNormal)
+		tui.FlushStream()
 	})
 	if strings.Contains(out, "\033[2K") {
 		t.Errorf("no repaint should happen while a run owns the terminal, got %q", out)
@@ -232,6 +242,9 @@ func TestEndScheduledOutputRestoresPrompt(t *testing.T) {
 
 	// Output without a trailing newline leaves the cursor mid-line.
 	tui.StreamChunkWithType("done, all tests pass", inference.StreamingContentTypeNormal)
+	// The chunk is animated (requirement 049); drain it before capturing so the
+	// printer goroutine cannot be writing while os.Stdout is swapped.
+	tui.FlushStream()
 
 	out := captureStdout(t, func() {
 		tui.EndScheduledOutput()

@@ -8,6 +8,7 @@ A minimal coding agent harness written in Go with a basic TUI supporting tool ca
 - **Tool Calling**: Support for bash, file read/write, line insertion, text replacement, file search, task tracking, and image viewing (vision) tools
 - **Read-Only Mode**: `--read-only` flag restricts the agent to read-only operations (only `read_file`, `read_lines`, `list_files`, `grep`, `git_log`, `git_show`, `git_diff`, and `view_image`)
 - **Streaming Inference**: Real-time token streaming for better UX
+- **Typewriter Streaming**: Streamed tokens are buffered and released one letter at a time, paced so the buffer always drains within 0.1 seconds (`--no-typewriter` to disable)
 - **Context Management**: Automatic context compression when limits are approached
 - **Goal Mode**: Set a goal with `/goal` and the agent will automatically check if it's achieved
 - **Scheduled Messages**: Schedule a message to be delivered to the LLM once at a future time or repeatedly on a cron/interval schedule (`schedule` tool, `/schedule` command)
@@ -45,6 +46,7 @@ export CODING_AGENT_API_KEY="your-api-key"  # Optional
 export CODING_AGENT_MODEL="llama3"
 export CODING_AGENT_CONTEXT_SIZE=128000
 export CODING_AGENT_MAX_ITERATIONS=1000
+export CODING_AGENT_TYPEWRITER=false   # print streamed tokens as they arrive
 ```
 
 Or use a config file:
@@ -69,6 +71,9 @@ max_iterations=1000
 
 # Disable streaming
 ./coding-agent --no-stream
+
+# Disable the typewriter effect on streamed output
+./coding-agent --no-typewriter
 ```
 
 ### Running One-Shot Mode
@@ -317,6 +322,7 @@ Detailed specifications for all features are documented in the `requirements/` f
 - **033-read-only-mode.md**: Read-only mode
 - **043-todo-tool.md**: Todo tool for task tracking
 - **048-schedule-ping-tool.md**: Schedule tool for delivering messages to the LLM later
+- **049-typewriter-streaming.md**: Typewriter rendering of streamed output (buffered, one letter at a time, 0.1 s drain window)
 
 ## Development
 

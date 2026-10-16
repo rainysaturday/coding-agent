@@ -79,6 +79,10 @@ type Config struct {
 	Verbose    bool
 	Quiet      bool
 	OutputFile string
+	// Typewriter animates streamed tokens in the terminal UI: they are buffered
+	// briefly and released one character at a time (requirement 049). Disable
+	// it for plain, immediate output.
+	Typewriter bool
 
 	// Theme settings
 	Theme string
@@ -121,6 +125,7 @@ func DefaultConfig() *Config {
 		MaxTokens:             64000,
 		ContextSize:           128000,
 		Streaming:             true,
+		Typewriter:            true,                    // streamed tokens animate unless disabled
 		InitialTokenTimeout:   24 * 60 * 60,            // 24 hours default
 		ConnectionTimeout:     24 * 60 * 60,            // 24 hours default
 		ReadTimeout:           24 * 60 * 60,            // 24 hours default
@@ -261,6 +266,8 @@ func ParseArgs(args []string) (*Config, error) {
 			cfg.ContextSize = ctxSize
 		case "--no-stream":
 			cfg.Streaming = false
+		case "--no-typewriter":
+			cfg.Typewriter = false
 		case "--api-endpoint":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("--api-endpoint requires an argument")
@@ -500,6 +507,12 @@ func loadConfigFile(path string, cfg *Config) error {
 				return fmt.Errorf("%s: %w", path, err)
 			}
 			cfg.Streaming = v
+		case "typewriter":
+			v, err := parseConfigBool("config file", "typewriter", value)
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			cfg.Typewriter = v
 		case "api_endpoint":
 			cfg.APIEndpoint = value
 		case "api_key":
@@ -657,6 +670,14 @@ func loadEnv(cfg *Config) error {
 			return err
 		}
 		cfg.Streaming = v
+	}
+	// The token animation can be disabled via env var
+	if val := os.Getenv("CODING_AGENT_TYPEWRITER"); val != "" {
+		v, err := parseConfigBool("environment", "CODING_AGENT_TYPEWRITER", val)
+		if err != nil {
+			return err
+		}
+		cfg.Typewriter = v
 	}
 	// Debug settings
 	if val := os.Getenv("CODING_AGENT_DEBUG"); val != "" {

@@ -773,7 +773,7 @@ func clearAgentEnv(t *testing.T) {
 		"CODING_AGENT_MODEL", "CODING_AGENT_TEMPERATURE", "CODING_AGENT_MAX_TOKENS",
 		"CODING_AGENT_MAX_ITERATIONS", "CODING_AGENT_CONTEXT_SIZE", "CODING_AGENT_API_ENDPOINT",
 		"CODING_AGENT_API_KEY", "CODING_AGENT_INITIAL_TOKEN_TIMEOUT", "CODING_AGENT_CONNECTION_TIMEOUT",
-		"CODING_AGENT_READ_TIMEOUT", "CODING_AGENT_STREAMING", "CODING_AGENT_DEBUG",
+		"CODING_AGENT_READ_TIMEOUT", "CODING_AGENT_STREAMING", "CODING_AGENT_TYPEWRITER", "CODING_AGENT_DEBUG",
 		"CODING_AGENT_DEBUG_LOG", "CODING_AGENT_DEBUG_VERBOSE", "CODING_AGENT_DEBUG_VERBOSE_VERBOSE",
 		"CODING_AGENT_READ_ONLY", "CODING_AGENT_EXPERIMENTAL", "CODING_AGENT_PERSONA",
 		"CODING_AGENT_THEME", "CODING_AGENT_SUMMARY_ONLY", "CODING_AGENT_GOAL",
@@ -870,5 +870,66 @@ func TestParseArgs_ValidNumericOverridesStillApply(t *testing.T) {
 	}
 	if cfg.WebPort != 9000 {
 		t.Errorf("WebPort = %d, want 9000", cfg.WebPort)
+	}
+}
+
+// ===== Token animation (requirement 049) =====
+
+func TestDefaultConfig_TypewriterEnabled(t *testing.T) {
+	if !DefaultConfig().Typewriter {
+		t.Error("streamed tokens animate by default")
+	}
+}
+
+func TestParseArgs_NoTypewriter(t *testing.T) {
+	clearAgentEnv(t)
+	cfg, err := ParseArgs([]string{"--no-typewriter", "-p", "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Typewriter {
+		t.Error("--no-typewriter should disable the token animation")
+	}
+}
+
+func TestParseArgs_EnvDisablesTypewriter(t *testing.T) {
+	clearAgentEnv(t)
+	t.Setenv("CODING_AGENT_TYPEWRITER", "false")
+	cfg, err := ParseArgs([]string{"-p", "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Typewriter {
+		t.Error("CODING_AGENT_TYPEWRITER=false should disable the token animation")
+	}
+}
+
+func TestParseArgs_ConfigFileTypewriter(t *testing.T) {
+	clearAgentEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.txt")
+	if err := os.WriteFile(path, []byte("typewriter = false\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := ParseArgs([]string{"--config", path, "-p", "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Typewriter {
+		t.Error("typewriter = false in the config file should disable the animation")
+	}
+}
+
+func TestParseArgs_ConfigFileBadTypewriterIsAnError(t *testing.T) {
+	clearAgentEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.txt")
+	if err := os.WriteFile(path, []byte("typewriter = maybe\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := ParseArgs([]string{"--config", path, "-p", "hi"}); err == nil {
+		t.Fatal("expected an error for a non-boolean typewriter value")
 	}
 }
